@@ -176,6 +176,10 @@ changed module
 
 [docs/design/go-bff-impact-analysis-design.md](docs/design/go-bff-impact-analysis-design.md)
 
+给下一个 agent 的交接提示词见：
+
+[docs/handoff/next-agent-prompt.md](docs/handoff/next-agent-prompt.md)
+
 ## 后续路线
 
 第一阶段先验证 BFF diff 到 HTTP 接口的静态分析闭环。等这个闭环稳定后，再考虑：
