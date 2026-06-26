@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,7 +71,35 @@ index 1111111..2222222 100644
 	}
 }
 
+func TestSchemaCommandWritesFactsSchema(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"schema", "--type", "facts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"title": "go-analyzer facts output"`)) {
+		t.Fatalf("schema output = %s", out)
+	}
+}
+
+func TestHelpCommandListsCommands(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"help"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"facts", "impact", "schema", "absolute paths"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("help output missing %q: %s", want, out)
+		}
+	}
+}
+
 func runWithCapturedStdout(t *testing.T, args []string) error {
+	t.Helper()
+	_, err := runWithCapturedStdoutBytes(t, args)
+	return err
+}
+
+func runWithCapturedStdoutBytes(t *testing.T, args []string) ([]byte, error) {
 	t.Helper()
 	original := os.Stdout
 	reader, writer, err := os.Pipe()
@@ -79,8 +108,9 @@ func runWithCapturedStdout(t *testing.T, args []string) error {
 	}
 	os.Stdout = writer
 	done := make(chan error, 1)
+	var buf bytes.Buffer
 	go func() {
-		_, err := io.Copy(io.Discard, reader)
+		_, err := io.Copy(&buf, reader)
 		done <- err
 	}()
 	defer func() {
@@ -97,5 +127,5 @@ func runWithCapturedStdout(t *testing.T, args []string) error {
 	if err := reader.Close(); err != nil {
 		t.Fatal(err)
 	}
-	return runErr
+	return buf.Bytes(), runErr
 }
