@@ -31,7 +31,7 @@ print(
 PY
 }
 
-run_project "sc1-bff-service" "../sc1-bff-service"
-run_project "sc1-admin-bff" "../sc1-admin-bff"
+run_project "sc1-bff-service" "$(cd "${ROOT_DIR}/../sc1-bff-service" && pwd)"
+run_project "sc1-admin-bff" "$(cd "${ROOT_DIR}/../sc1-admin-bff" && pwd)"
 
 echo "smoke outputs written to ${OUT_DIR}"

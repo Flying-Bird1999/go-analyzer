@@ -1416,8 +1416,8 @@ MVP 所需能力已有成熟参考：
 对真实项目跑 smoke：
 
 ```bash
-go-analyzer facts --project ../sc1-bff-service --format json
-go-analyzer facts --project ../sc1-admin-bff --format json
+go-analyzer facts --project /absolute/path/to/sc1-bff-service --format json
+go-analyzer facts --project /absolute/path/to/sc1-admin-bff --format json
 ```
 
 验收不要求完全无 diagnostics，但要求：

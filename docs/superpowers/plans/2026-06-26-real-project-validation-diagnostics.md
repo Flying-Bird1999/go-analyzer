@@ -196,8 +196,8 @@ git commit -m "test: add golden fact output"
 Script should run:
 
 ```bash
-go run ./cmd/go-analyzer facts --project ../sc1-bff-service --format json
-go run ./cmd/go-analyzer facts --project ../sc1-admin-bff --format json
+go run ./cmd/go-analyzer facts --project /absolute/path/to/sc1-bff-service --format json
+go run ./cmd/go-analyzer facts --project /absolute/path/to/sc1-admin-bff --format json
 ```
 
 Write outputs to an ignored temp directory such as `.analyzer-smoke/`.

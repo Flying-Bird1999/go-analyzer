@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/app"
 )
@@ -22,6 +23,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "facts":
 		return runFacts(args[1:])
+	case "impact":
+		return runImpact(args[1:])
 	default:
 		return fmt.Errorf("unsupported command %q", args[0])
 	}
@@ -35,6 +38,9 @@ func runFacts(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := validateAbsPath("project path", *projectPath); err != nil {
+		return err
+	}
 	out, err := app.RunFacts(app.Options{
 		ProjectPath: *projectPath,
 		Format:      *format,
@@ -44,4 +50,41 @@ func runFacts(args []string) error {
 	}
 	_, err = os.Stdout.Write(out)
 	return err
+}
+
+func runImpact(args []string) error {
+	fs := flag.NewFlagSet("impact", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projectPath := fs.String("project", "", "absolute project path")
+	diffPath := fs.String("diff", "", "absolute unified diff file path")
+	format := fs.String("format", "json", "output format")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateAbsPath("project path", *projectPath); err != nil {
+		return err
+	}
+	if err := validateAbsPath("diff path", *diffPath); err != nil {
+		return err
+	}
+	out, err := app.RunImpact(app.ImpactOptions{
+		ProjectPath: *projectPath,
+		DiffPath:    *diffPath,
+		Format:      *format,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(out)
+	return err
+}
+
+func validateAbsPath(name string, path string) error {
+	if path == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s must be an absolute path: %s", name, path)
+	}
+	return nil
 }

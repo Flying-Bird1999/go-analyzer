@@ -2,8 +2,8 @@
 
 This document tracks smoke validation for the first two target BFF projects:
 
-- `../sc1-bff-service`
-- `../sc1-admin-bff`
+- `sc1-bff-service`
+- `sc1-admin-bff`
 
 Run:
 
@@ -11,8 +11,9 @@ Run:
 bash scripts/smoke-real-projects.sh
 ```
 
-The smoke script writes JSON outputs to `.analyzer-smoke/` and validates that
-each output is parseable JSON.
+The CLI accepts absolute paths at the command boundary. The smoke script
+resolves the sibling demo projects to absolute paths, writes JSON outputs to
+`.analyzer-smoke/`, and validates that each output is parseable JSON.
 
 ## Current Expectations
 
@@ -31,8 +32,8 @@ Last local smoke run:
 
 | Project | Symbols | Annotations | Routes | Diagnostics |
 | --- | ---: | ---: | ---: | ---: |
-| `../sc1-bff-service` | 781 | 32 | 32 | 0 |
-| `../sc1-admin-bff` | 5120 | 463 | 490 | 0 |
+| `sc1-bff-service` | 781 | 32 | 32 | 0 |
+| `sc1-admin-bff` | 5120 | 463 | 490 | 0 |
 
 ## Known Unsupported Patterns
 

@@ -2,9 +2,11 @@ package app
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/impact"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 )
 
@@ -91,5 +93,41 @@ func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	}
 	if len(doc.References) == 0 {
 		t.Fatal("expected references")
+	}
+}
+
+func TestRunImpactMapsDiffToEndpoint(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	diff := []byte(`diff --git a/service/common.go b/service/common.go
+index 1111111..2222222 100644
+--- a/service/common.go
++++ b/service/common.go
+@@ -2,3 +2,4 @@ package service
+func CheckIn() string {
++	_ = "changed"
+    return "ok"
+ }
+`)
+	if err := os.WriteFile(diffPath, diff, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result impact.Result
+	if err := json.Unmarshal(got, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ImpactedEndpoints) != 1 {
+		t.Fatalf("impacted endpoints = %d: %#v", len(result.ImpactedEndpoints), result.ImpactedEndpoints)
+	}
+	if result.ImpactedEndpoints[0].Path != "/api/bff-web/common/checkIn" {
+		t.Fatalf("endpoint path = %q", result.ImpactedEndpoints[0].Path)
 	}
 }

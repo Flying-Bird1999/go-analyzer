@@ -50,8 +50,8 @@ MVP 暂不覆盖：
 
 第一批分析对象是前端团队维护的两个 Go BFF：
 
-- `../sc1-admin-bff`
-- `../sc1-bff-service`
+- `sc1-admin-bff`
+- `sc1-bff-service`
 
 两个项目都大致遵循：
 
