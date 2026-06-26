@@ -1066,53 +1066,41 @@ go-analyzer facts --project /path/to/sc1-bff-service --format json
 
 ## 9. 配置设计
 
-MVP 应内置默认规则，同时允许项目覆盖。
+MVP 应内置默认规则，同时允许项目扩展。当前实现使用 JSON 配置文件，CLI 的 `--config`
+参数同样要求绝对路径；下方结构与内部配置模型一致，后续如果需要 YAML，只替换 loader，
+不改变 pipeline 和 extractor 接口。
 
-```yaml
-project:
-  routeEntries:
-    - file: router/router.go
-      func: InitRouter
-  skipDirs:
-    - .git
-    - vendor
-    - node_modules
-    - testdata
-
-route:
-  httpMethods:
-    - GET
-    - POST
-    - PUT
-    - DELETE
-    - PATCH
-  handlerWrappers:
-    - ControllerWithReqResp
-    - ControllerWithResp
-    - Controller
-    - MiddlewareController
-  routeGroupWrappers:
-    - prefix: Add
-    - contains: Guard
-    - contains: Validator
-  generatedRouteCalls:
-    - RegisterRouters
-    - RegisterRouter
-
-annotation:
-  methods:
-    - Get
-    - Post
-    - Put
-    - Delete
-    - Patch
+```json
+{
+  "project": {
+    "skipDirs": [".git", "vendor", "node_modules", "testdata"]
+  },
+  "route": {
+    "httpMethods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    "handlerWrappers": [
+      "ControllerWithReqResp",
+      "ControllerWithResp",
+      "Controller",
+      "MiddlewareController"
+    ],
+    "routeGroupWrappers": [
+      {"prefix": "Add"},
+      {"contains": "Guard"},
+      {"contains": "Validator"}
+    ],
+    "generatedRouteCalls": ["RegisterRouters", "RegisterRouter"]
+  },
+  "annotation": {
+    "methods": ["Get", "Post", "Put", "Delete", "Patch"]
+  }
+}
 ```
 
 配置原则：
 
 - 默认覆盖 `sc1-admin-bff` 和 `sc1-bff-service` 的主要模式。
 - 不为某一个仓库写死业务路径。
-- 特殊项目可以通过配置扩展 wrapper 和 route entry。
+- 特殊项目可以通过配置扩展 wrapper、HTTP method、annotation method 和 skip dirs。
 
 ## 10. 与参考项目的关系
 

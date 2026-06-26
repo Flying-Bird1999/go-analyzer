@@ -7,11 +7,16 @@ import (
 	"strconv"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
 func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
+	return ExtractWithConfig(p, nil, store, config.Default())
+}
+
+func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store, cfg config.Config) error {
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
 			for _, decl := range file.AST.Decls {
@@ -20,7 +25,7 @@ func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 					continue
 				}
 				handler := handlerSymbolID(pkg.Path, fn)
-				parsed := ParseAPIAnnotations(fn.Doc)
+				parsed := ParseAPIAnnotationsWithConfig(fn.Doc, cfg)
 				for i, item := range parsed {
 					span := astindex.SourceSpanFor(file.FileSet, fn.Pos(), fn.End())
 					if rel, err := filepath.Rel(p.Root, span.File); err == nil {

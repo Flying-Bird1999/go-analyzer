@@ -3,6 +3,8 @@ package annotation
 import (
 	"go/ast"
 	"strings"
+
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 )
 
 type ParsedAnnotation struct {
@@ -12,13 +14,17 @@ type ParsedAnnotation struct {
 }
 
 func ParseAPIAnnotations(doc *ast.CommentGroup) []ParsedAnnotation {
+	return ParseAPIAnnotationsWithConfig(doc, config.Default())
+}
+
+func ParseAPIAnnotationsWithConfig(doc *ast.CommentGroup, cfg config.Config) []ParsedAnnotation {
 	if doc == nil {
 		return nil
 	}
 	var out []ParsedAnnotation
 	for _, comment := range doc.List {
 		line := cleanComment(comment.Text)
-		annotation, ok := parseLine(line)
+		annotation, ok := parseLine(line, cfg)
 		if ok {
 			out = append(out, annotation)
 		}
@@ -26,7 +32,7 @@ func ParseAPIAnnotations(doc *ast.CommentGroup) []ParsedAnnotation {
 	return out
 }
 
-func parseLine(line string) (ParsedAnnotation, bool) {
+func parseLine(line string, cfg config.Config) (ParsedAnnotation, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "@") {
 		return ParsedAnnotation{}, false
@@ -36,7 +42,7 @@ func parseLine(line string) (ParsedAnnotation, bool) {
 		return ParsedAnnotation{}, false
 	}
 	method := strings.ToUpper(strings.TrimPrefix(fields[0], "@"))
-	if !isHTTPMethod(method) {
+	if !cfg.IsAnnotationMethod(method) {
 		return ParsedAnnotation{}, false
 	}
 	path := fields[1]
@@ -52,13 +58,4 @@ func cleanComment(text string) string {
 	text = strings.TrimPrefix(text, "/*")
 	text = strings.TrimSuffix(text, "*/")
 	return strings.TrimSpace(text)
-}
-
-func isHTTPMethod(method string) bool {
-	switch method {
-	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
-		return true
-	default:
-		return false
-	}
 }

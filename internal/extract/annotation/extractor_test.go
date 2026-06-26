@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -36,6 +37,29 @@ func CheckIn() {}
 	}
 	if got[0].Raw == "" {
 		t.Fatal("raw comment line should be preserved")
+	}
+}
+
+func TestParseAPIAnnotationsUsesConfiguredMethods(t *testing.T) {
+	src := `package p
+// @Search /ready
+// @Post /ignored
+func CheckIn() {}
+`
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := file.Decls[0].(*ast.FuncDecl)
+	cfg := config.Config{Annotation: config.AnnotationConfig{Methods: []string{"SEARCH"}}}
+
+	got := ParseAPIAnnotationsWithConfig(decl.Doc, cfg)
+
+	if len(got) != 1 {
+		t.Fatalf("annotation count = %d: %#v", len(got), got)
+	}
+	if got[0].Method != "SEARCH" || got[0].Path != "/ready" {
+		t.Fatalf("annotation = %#v", got[0])
 	}
 }
 

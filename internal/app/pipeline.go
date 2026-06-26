@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
@@ -27,7 +28,11 @@ func RunFacts(opts Options) ([]byte, error) {
 	if opts.Format != "json" {
 		return nil, fmt.Errorf("unsupported format %q", opts.Format)
 	}
-	store, err := buildFactStore(opts.ProjectPath)
+	cfg, err := loadConfig(opts.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	store, err := buildFactStore(opts.ProjectPath, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +52,11 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if opts.Format != "json" {
 		return nil, fmt.Errorf("unsupported format %q", opts.Format)
 	}
-	store, err := buildFactStore(opts.ProjectPath)
+	cfg, err := loadConfig(opts.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	store, err := buildFactStore(opts.ProjectPath, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +73,16 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	return output.RenderImpactJSON(result)
 }
 
-func buildFactStore(projectPath string) (*facts.Store, error) {
-	p, err := project.Load(projectPath, project.Options{})
+func loadConfig(path string) (config.Config, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("load config: %w", err)
+	}
+	return cfg, nil
+}
+
+func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error) {
+	p, err := project.Load(projectPath, project.Options{ExcludeDirs: cfg.Project.SkipDirs})
 	if err != nil {
 		return nil, err
 	}
@@ -77,10 +94,10 @@ func buildFactStore(projectPath string) (*facts.Store, error) {
 	for _, symbol := range idx.Symbols {
 		store.AddSymbol(symbol)
 	}
-	if err := annotation.Extract(p, idx, store); err != nil {
+	if err := annotation.ExtractWithConfig(p, idx, store, cfg); err != nil {
 		return nil, err
 	}
-	if err := route.Extract(p, idx, store); err != nil {
+	if err := route.ExtractWithConfig(p, idx, store, cfg); err != nil {
 		return nil, err
 	}
 	if err := link.Run(idx, store); err != nil {

@@ -75,6 +75,21 @@ diff
   -> 受影响 HTTP 接口
 ```
 
+## CLI 使用
+
+CLI 边界要求输入路径使用绝对路径：
+
+```bash
+go-analyzer facts --project /absolute/path/to/sc1-bff-service --format json
+go-analyzer impact --project /absolute/path/to/sc1-bff-service --diff /absolute/path/to/change.diff --format json
+```
+
+如项目存在特殊 HTTP method、handler wrapper 或 route group wrapper，可以传入 JSON 配置文件扩展默认规则：
+
+```bash
+go-analyzer facts --project /absolute/path/to/sc1-bff-service --config /absolute/path/to/go-analyzer.json --format json
+```
+
 关键设计点是：Go BFF 不能只做调用图分析。route 注册里 controller 通常不是被调用，而是作为函数值被传给注册函数：
 
 ```go

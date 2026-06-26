@@ -34,6 +34,7 @@ func runFacts(args []string) error {
 	fs := flag.NewFlagSet("facts", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "project path")
+	configPath := fs.String("config", "", "absolute analyzer config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,8 +42,12 @@ func runFacts(args []string) error {
 	if err := validateAbsPath("project path", *projectPath); err != nil {
 		return err
 	}
+	if err := validateOptionalAbsPath("config path", *configPath); err != nil {
+		return err
+	}
 	out, err := app.RunFacts(app.Options{
 		ProjectPath: *projectPath,
+		ConfigPath:  *configPath,
 		Format:      *format,
 	})
 	if err != nil {
@@ -57,6 +62,7 @@ func runImpact(args []string) error {
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "absolute project path")
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
+	configPath := fs.String("config", "", "absolute analyzer config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -67,9 +73,13 @@ func runImpact(args []string) error {
 	if err := validateAbsPath("diff path", *diffPath); err != nil {
 		return err
 	}
+	if err := validateOptionalAbsPath("config path", *configPath); err != nil {
+		return err
+	}
 	out, err := app.RunImpact(app.ImpactOptions{
 		ProjectPath: *projectPath,
 		DiffPath:    *diffPath,
+		ConfigPath:  *configPath,
 		Format:      *format,
 	})
 	if err != nil {
@@ -87,4 +97,11 @@ func validateAbsPath(name string, path string) error {
 		return fmt.Errorf("%s must be an absolute path: %s", name, path)
 	}
 	return nil
+}
+
+func validateOptionalAbsPath(name string, path string) error {
+	if path == "" {
+		return nil
+	}
+	return validateAbsPath(name, path)
 }

@@ -3,10 +3,11 @@ package route
 import (
 	"go/ast"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
-func groupForExpr(groups map[string]groupContext, expr ast.Expr) (groupContext, []facts.WrapperFact, bool) {
+func groupForExpr(groups map[string]groupContext, expr ast.Expr, cfg config.Config) (groupContext, []facts.WrapperFact, bool) {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		group, ok := groups[x.Name]
@@ -16,7 +17,10 @@ func groupForExpr(groups map[string]groupContext, expr ast.Expr) (groupContext, 
 		if len(x.Args) == 0 {
 			return groupContext{}, nil, false
 		}
-		group, wrappers, ok := groupForExpr(groups, x.Args[0])
+		if !cfg.IsRouteGroupWrapper(name) {
+			return groupContext{}, nil, false
+		}
+		group, wrappers, ok := groupForExpr(groups, x.Args[0], cfg)
 		if !ok {
 			return groupContext{}, nil, false
 		}

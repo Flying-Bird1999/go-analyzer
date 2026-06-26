@@ -96,6 +96,42 @@ func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	}
 }
 
+func TestRunFactsUsesConfigFile(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "configurable-rules"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "go-analyzer.json")
+	configBody := []byte(`{
+  "route": {
+    "httpMethods": ["SEARCH"],
+    "handlerWrappers": ["CustomController"],
+    "routeGroupWrappers": [{"contains": "Shield"}]
+  },
+  "annotation": {
+    "methods": ["Search"]
+  }
+}`)
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunFacts(Options{ProjectPath: root, ConfigPath: configPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.Document
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Annotations) != 1 || doc.Annotations[0].Method != "SEARCH" {
+		t.Fatalf("annotations = %#v", doc.Annotations)
+	}
+	if len(doc.Routes) != 1 || doc.Routes[0].Method != "SEARCH" {
+		t.Fatalf("routes = %#v", doc.Routes)
+	}
+}
+
 func TestRunImpactMapsDiffToEndpoint(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout"))
 	if err != nil {
@@ -107,9 +143,9 @@ index 1111111..2222222 100644
 --- a/service/common.go
 +++ b/service/common.go
 @@ -2,3 +2,4 @@ package service
-func CheckIn() string {
+ func CheckIn() string {
 +	_ = "changed"
-    return "ok"
+     return "ok"
  }
 `)
 	if err := os.WriteFile(diffPath, diff, 0o644); err != nil {

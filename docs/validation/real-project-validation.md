@@ -14,6 +14,7 @@ bash scripts/smoke-real-projects.sh
 The CLI accepts absolute paths at the command boundary. The smoke script
 resolves the sibling demo projects to absolute paths, writes JSON outputs to
 `.analyzer-smoke/`, and validates that each output is parseable JSON.
+Optional `--config` files are JSON and must also be passed as absolute paths.
 
 ## Current Expectations
 
