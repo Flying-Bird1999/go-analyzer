@@ -86,7 +86,7 @@ Rules:
 - [ ] **Step 3: Run annotation tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/annotation -v
 ```
 
@@ -135,7 +135,7 @@ Include annotations in JSON root output, sorted by ID.
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/annotation ./internal/output -v
 ```
 
@@ -209,7 +209,7 @@ group.GET/POST/PUT/DELETE/PATCH(path, handler)
 - [ ] **Step 5: Run route tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/route -v
 ```
 
@@ -275,7 +275,7 @@ Generate `MiddlewareBindingFact` for:
 - [ ] **Step 5: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/route -v
 ```
 
@@ -328,7 +328,7 @@ When route function calls another function with a known route group arg, visit c
 - [ ] **Step 4: Run full extraction tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/annotation ./internal/extract/route ./internal/output -v
 ```
 

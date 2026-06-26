@@ -15,7 +15,6 @@
 Read first:
 
 - `docs/design/go-analyzer-mvp-architecture.md`
-- `docs/design/go-bff-impact-analysis-design.md` sections 6-10
 
 ## File Structure
 
@@ -77,7 +76,7 @@ Add stable sorting by source ID and span.
 - [ ] **Step 3: Run graph tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/graph -v
 ```
 
@@ -130,7 +129,7 @@ means binding affects route.
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/graph -v
 ```
 
@@ -174,7 +173,7 @@ Include:
 - [ ] **Step 3: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/graph -v
 ```
 
@@ -217,7 +216,7 @@ Rules:
 - [ ] **Step 4: Run impact tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/impact -v
 ```
 
@@ -261,7 +260,7 @@ Map:
 - [ ] **Step 5: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/impact -v
 ```
 
@@ -314,7 +313,7 @@ Shape:
 - [ ] **Step 5: Run full tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./...
 ```
 

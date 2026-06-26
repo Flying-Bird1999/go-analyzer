@@ -84,7 +84,7 @@ Collector should dedupe by code + source span + message.
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/diagnostics -v
 ```
 
@@ -131,7 +131,7 @@ Emit:
 - [ ] **Step 4: Run extraction tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/... ./internal/diagnostics -v
 ```
 
@@ -171,7 +171,7 @@ Golden output should use stable relative fixture paths, or test helper should no
 - [ ] **Step 4: Run golden tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/output -v
 ```
 
@@ -218,7 +218,7 @@ In `docs/validation/real-project-validation.md`, record:
 - [ ] **Step 4: Run smoke manually**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 bash scripts/smoke-real-projects.sh
 ```
 
@@ -241,7 +241,7 @@ git commit -m "test: add real project smoke validation"
 - [ ] **Step 1: Run smoke and inspect diagnostics**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 bash scripts/smoke-real-projects.sh
 ```
 
@@ -260,7 +260,7 @@ Precision improvements such as annotation-route mismatch validation belong to fu
 - [ ] **Step 5: Run full tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./...
 bash scripts/smoke-real-projects.sh
 ```

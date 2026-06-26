@@ -50,8 +50,8 @@ MVP 暂不覆盖：
 
 第一批分析对象是前端团队维护的两个 Go BFF：
 
-- `/Users/bird/Desktop/agent-factory/projects/sc1-admin-bff`
-- `/Users/bird/Desktop/agent-factory/projects/sc1-bff-service`
+- `../sc1-admin-bff`
+- `../sc1-bff-service`
 
 两个项目都大致遵循：
 
@@ -172,13 +172,13 @@ changed module
 
 ## 文档
 
-详细技术方案见：
+最终架构技术方案见：
 
-[docs/design/go-bff-impact-analysis-design.md](docs/design/go-bff-impact-analysis-design.md)
+[docs/design/go-analyzer-mvp-architecture.md](docs/design/go-analyzer-mvp-architecture.md)
 
-给下一个 agent 的交接提示词见：
+模块级开发计划见：
 
-[docs/handoff/next-agent-prompt.md](docs/handoff/next-agent-prompt.md)
+[docs/superpowers/plans](docs/superpowers/plans)
 
 ## 后续路线
 

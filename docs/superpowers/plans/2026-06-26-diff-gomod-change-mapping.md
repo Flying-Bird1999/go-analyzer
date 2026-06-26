@@ -82,7 +82,7 @@ Return:
 - [ ] **Step 3: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/diff -v
 ```
 
@@ -145,7 +145,7 @@ Use source spans from facts:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/diff ./internal/facts ./internal/output -v
 ```
 
@@ -195,7 +195,7 @@ Extract:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/gomod -v
 ```
 
@@ -236,7 +236,7 @@ func DiffModules(oldMod, newMod []byte) ([]facts.ModuleChangeFact, error)
 - [ ] **Step 3: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/gomod -v
 ```
 
@@ -302,7 +302,7 @@ For each changed module:
 - [ ] **Step 5: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/gomod -v
 ```
 

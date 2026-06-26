@@ -15,7 +15,6 @@
 Read first:
 
 - `docs/design/go-analyzer-mvp-architecture.md`
-- `docs/design/go-bff-impact-analysis-design.md`
 - `../nexus/internal/transform/bff/openapi/project.go`
 - `../nexus/internal/transform/go-sdk/collector/scanner.go`
 
@@ -103,7 +102,7 @@ For this task, return a clear error for unsupported commands.
 Run:
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./...
 ```
 
@@ -181,7 +180,7 @@ Assert:
 - [ ] **Step 6: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/project -v
 ```
 
@@ -252,7 +251,7 @@ Create helpers:
 - [ ] **Step 5: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/astindex ./internal/facts -v
 ```
 
@@ -309,7 +308,7 @@ Use `json.MarshalIndent` after sorting every slice.
 - [ ] **Step 5: Run full tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./...
 ```
 

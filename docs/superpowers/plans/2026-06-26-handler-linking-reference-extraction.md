@@ -75,7 +75,7 @@ Include references and links in root JSON.
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/facts ./internal/output -v
 ```
 
@@ -140,7 +140,7 @@ Use AST index vars:
 - [ ] **Step 5: Run link tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/link -v
 ```
 
@@ -189,7 +189,7 @@ If route method and annotation method differ, still link by handler and do not e
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/link ./internal/extract/... -v
 ```
 
@@ -249,7 +249,7 @@ Add low-confidence refs when precise symbol resolution is unavailable.
 - [ ] **Step 5: Run reference tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./internal/extract/reference -v
 ```
 
@@ -296,7 +296,7 @@ render JSON
 - [ ] **Step 3: Run full tests**
 
 ```bash
-cd /Users/bird/Desktop/go-analyzer-factory/go-analyzer
+cd go-analyzer
 go test ./...
 ```
 
