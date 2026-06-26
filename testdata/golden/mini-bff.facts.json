@@ -1,0 +1,127 @@
+{
+  "annotations": [],
+  "changes": [],
+  "diagnostics": [],
+  "links": [],
+  "middleware": [],
+  "module_changes": [],
+  "module_usages": [],
+  "modules": [],
+  "project": {
+    "module_path": "example.com/mini-bff",
+    "root": "testdata/fixtures/mini-bff"
+  },
+  "references": [
+    {
+      "confidence": "high",
+      "from_symbol": "method:example.com/mini-bff/controller:CommonController:CheckIn",
+      "id": "ref:method:example.com/mini-bff/controller:CommonController:CheckIn:func:example.com/mini-bff/service::CheckIn:0",
+      "kind": "call",
+      "span": {
+        "end_col": 19,
+        "end_line": 12,
+        "file": "controller/common.go",
+        "start_col": 2,
+        "start_line": 12
+      },
+      "to_raw": "service.CheckIn",
+      "to_symbol": "func:example.com/mini-bff/service::CheckIn"
+    }
+  ],
+  "route_groups": [],
+  "routes": [],
+  "symbols": [
+    {
+      "id": "const:example.com/mini-bff/controller::DefaultChannel",
+      "kind": "const",
+      "name": "DefaultChannel",
+      "package_path": "example.com/mini-bff/controller",
+      "span": {
+        "end_col": 21,
+        "end_line": 5,
+        "file": "controller/common.go",
+        "start_col": 7,
+        "start_line": 5
+      }
+    },
+    {
+      "id": "func:example.com/mini-bff/router::Register",
+      "kind": "func",
+      "name": "Register",
+      "package_path": "example.com/mini-bff/router",
+      "span": {
+        "end_col": 2,
+        "end_line": 9,
+        "file": "router/router.go",
+        "start_col": 1,
+        "start_line": 7
+      }
+    },
+    {
+      "id": "func:example.com/mini-bff/service::CheckIn",
+      "kind": "func",
+      "name": "CheckIn",
+      "package_path": "example.com/mini-bff/service",
+      "span": {
+        "end_col": 2,
+        "end_line": 7,
+        "file": "service/common.go",
+        "start_col": 1,
+        "start_line": 5
+      }
+    },
+    {
+      "id": "method:example.com/mini-bff/controller:CommonController:CheckIn",
+      "kind": "method",
+      "name": "CheckIn",
+      "package_path": "example.com/mini-bff/controller",
+      "receiver": "CommonController",
+      "span": {
+        "end_col": 2,
+        "end_line": 13,
+        "file": "controller/common.go",
+        "start_col": 1,
+        "start_line": 11
+      }
+    },
+    {
+      "id": "type:example.com/mini-bff/controller::CommonController",
+      "kind": "type",
+      "name": "CommonController",
+      "package_path": "example.com/mini-bff/controller",
+      "span": {
+        "end_col": 31,
+        "end_line": 9,
+        "file": "controller/common.go",
+        "start_col": 6,
+        "start_line": 9
+      }
+    },
+    {
+      "id": "var:example.com/mini-bff/controller::Common",
+      "kind": "var",
+      "name": "Common",
+      "package_path": "example.com/mini-bff/controller",
+      "span": {
+        "end_col": 11,
+        "end_line": 7,
+        "file": "controller/common.go",
+        "start_col": 5,
+        "start_line": 7
+      }
+    },
+    {
+      "id": "var:example.com/mini-bff/service::Version",
+      "kind": "var",
+      "name": "Version",
+      "package_path": "example.com/mini-bff/service",
+      "span": {
+        "end_col": 12,
+        "end_line": 3,
+        "file": "service/common.go",
+        "start_col": 5,
+        "start_line": 3
+      }
+    }
+  ]
+}

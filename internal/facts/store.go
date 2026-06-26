@@ -5,7 +5,14 @@ type ProjectFact struct {
 	ModulePath string `json:"module_path"`
 }
 
-type DiagnosticFact struct{}
+type DiagnosticFact struct {
+	ID             string     `json:"id"`
+	Code           string     `json:"code"`
+	Severity       string     `json:"severity"`
+	Message        string     `json:"message"`
+	Span           SourceSpan `json:"span,omitempty"`
+	RelatedFactIDs []string   `json:"related_fact_ids,omitempty"`
+}
 
 type Store struct {
 	Project       ProjectFact             `json:"project"`

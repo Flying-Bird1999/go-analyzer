@@ -128,6 +128,14 @@ func TestExtractDynamicRoutePathKeepsRawExpression(t *testing.T) {
 	if route.PathRaw != `"/api" + suffix` {
 		t.Fatalf("path raw = %q", route.PathRaw)
 	}
+	assertDiagnosticCode(t, store, "route_dynamic_path")
+}
+
+func TestExtractUnresolvedHandlerEmitsDiagnostic(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "unresolved-handler")
+	store := extractFixture(t, root)
+
+	assertDiagnosticCode(t, store, "route_unresolved_handler")
 }
 
 func extractFixture(t *testing.T, root string) *facts.Store {
@@ -156,4 +164,14 @@ func findRoute(t *testing.T, store *facts.Store, path string) facts.RouteRegistr
 	}
 	t.Fatalf("route %s not found: %#v", path, store.Routes)
 	return facts.RouteRegistrationFact{}
+}
+
+func assertDiagnosticCode(t *testing.T, store *facts.Store, code string) {
+	t.Helper()
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == code {
+			return
+		}
+	}
+	t.Fatalf("diagnostic %s not found: %#v", code, store.Diagnostics)
 }

@@ -56,9 +56,52 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	sort.Slice(doc.Links, func(i, j int) bool {
 		return doc.Links[i].ID < doc.Links[j].ID
 	})
+	sort.Slice(doc.Diagnostics, func(i, j int) bool {
+		return doc.Diagnostics[i].ID < doc.Diagnostics[j].ID
+	})
+	ensureNonNilSlices(&doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(out, '\n'), nil
+}
+
+func ensureNonNilSlices(doc *Document) {
+	if doc.Symbols == nil {
+		doc.Symbols = []facts.SymbolFact{}
+	}
+	if doc.Annotations == nil {
+		doc.Annotations = []facts.AnnotationFact{}
+	}
+	if doc.RouteGroups == nil {
+		doc.RouteGroups = []facts.RouteGroupFact{}
+	}
+	if doc.Routes == nil {
+		doc.Routes = []facts.RouteRegistrationFact{}
+	}
+	if doc.Middleware == nil {
+		doc.Middleware = []facts.MiddlewareBindingFact{}
+	}
+	if doc.Changes == nil {
+		doc.Changes = []facts.ChangeFact{}
+	}
+	if doc.References == nil {
+		doc.References = []facts.ReferenceFact{}
+	}
+	if doc.Modules == nil {
+		doc.Modules = []facts.ModuleDependencyFact{}
+	}
+	if doc.ModuleChanges == nil {
+		doc.ModuleChanges = []facts.ModuleChangeFact{}
+	}
+	if doc.ModuleUsages == nil {
+		doc.ModuleUsages = []facts.ModuleUsageFact{}
+	}
+	if doc.Links == nil {
+		doc.Links = []facts.LinkFact{}
+	}
+	if doc.Diagnostics == nil {
+		doc.Diagnostics = []facts.DiagnosticFact{}
+	}
 }

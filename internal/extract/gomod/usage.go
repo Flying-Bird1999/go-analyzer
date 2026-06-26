@@ -8,11 +8,12 @@ import (
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-func MapModuleUsage(p *project.Project, idx *astindex.Index, changes []facts.ModuleChangeFact) []facts.ModuleUsageFact {
+func MapModuleUsage(p *project.Project, idx *astindex.Index, store *facts.Store, changes []facts.ModuleChangeFact) []facts.ModuleUsageFact {
 	var out []facts.ModuleUsageFact
 	for _, change := range changes {
 		matches := moduleImportMatches(p, change.Path)
@@ -23,6 +24,13 @@ func MapModuleUsage(p *project.Project, idx *astindex.Index, changes []facts.Mod
 				Basis:      facts.ModuleUsageUnreferenced,
 				Confidence: facts.ConfidenceHigh,
 			})
+			if store != nil {
+				diagnostics.AddFact(store, diagnostics.Diagnostic{
+					Code:     diagnostics.CodeModuleUnreferenced,
+					Severity: diagnostics.SeverityInfo,
+					Message:  "changed module is not imported by the project",
+				})
+			}
 			continue
 		}
 		for _, match := range matches {
@@ -31,7 +39,18 @@ func MapModuleUsage(p *project.Project, idx *astindex.Index, changes []facts.Mod
 				out = append(out, precise...)
 				continue
 			}
-			out = append(out, fallbackUsages(p, idx, change.Path, match)...)
+			fallback := fallbackUsages(p, idx, change.Path, match)
+			out = append(out, fallback...)
+			if store != nil {
+				for _, usage := range fallback {
+					diagnostics.AddFact(store, diagnostics.Diagnostic{
+						Code:           diagnostics.CodeModuleUsageFileFallback,
+						Severity:       diagnostics.SeverityWarning,
+						Message:        "module usage fell back to declarations in importing file",
+						RelatedFactIDs: []string{usage.ID},
+					})
+				}
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

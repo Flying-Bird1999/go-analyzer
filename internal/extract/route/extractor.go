@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -85,7 +86,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 			store.Middleware = append(store.Middleware, binding)
 			return
 		}
-		if route, ok := routeCall(p, file, routeFunc, groups, call, statementIndex); ok {
+		if route, ok := routeCall(p, file, routeFunc, store, groups, call, statementIndex); ok {
 			store.Routes = append(store.Routes, route)
 		}
 	case *ast.BlockStmt:
@@ -131,7 +132,7 @@ func groupCall(groups map[string]groupContext, expr ast.Expr) (parentVar string,
 	return parentIdent.Name, joinPath(parent.prefix, local), true
 }
 
-func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
+func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || !isHTTPMethod(selector.Sel.Name) || len(call.Args) < 2 {
 		return facts.RouteRegistrationFact{}, false
@@ -152,7 +153,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		resolved = joinPath(group.prefix, localPath)
 	}
 	method := strings.ToUpper(selector.Sel.Name)
-	return facts.RouteRegistrationFact{
+	route := facts.RouteRegistrationFact{
 		ID:             routeID(routeFunc, method, localPath, statementIndex),
 		Method:         method,
 		LocalPath:      localPath,
@@ -166,7 +167,38 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		SourceFamily:   sourceFamily(file),
 		File:           filepath.ToSlash(mustRel(p.Root, file.Path)),
 		Span:           spanFor(p, file, call.Pos(), call.End()),
-	}, true
+	}
+	if pathRaw != "" {
+		diagnostics.AddFact(store, diagnostics.Diagnostic{
+			Code:           diagnostics.CodeRouteDynamicPath,
+			Severity:       diagnostics.SeverityWarning,
+			Message:        "dynamic route path cannot be resolved",
+			Span:           route.Span,
+			RelatedFactIDs: []string{route.ID},
+		})
+	}
+	if isUnresolvedHandlerExpression(call.Args[1]) {
+		diagnostics.AddFact(store, diagnostics.Diagnostic{
+			Code:           diagnostics.CodeRouteUnresolvedHandler,
+			Severity:       diagnostics.SeverityWarning,
+			Message:        "route handler expression cannot be resolved precisely",
+			Span:           route.Span,
+			RelatedFactIDs: []string{route.ID},
+		})
+	}
+	return route, true
+}
+
+func isUnresolvedHandlerExpression(expr ast.Expr) bool {
+	switch x := expr.(type) {
+	case *ast.Ident, *ast.SelectorExpr:
+		return false
+	case *ast.CallExpr:
+		_, wrappers := unwrapHandler(x)
+		return len(wrappers) == 0
+	default:
+		return true
+	}
 }
 
 func sourceFamily(file *project.File) string {

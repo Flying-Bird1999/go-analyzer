@@ -98,6 +98,7 @@ func TestMapModuleUsageFileFallback(t *testing.T) {
 	if usage.File == "" {
 		t.Fatal("expected fallback usage to include file")
 	}
+	assertGomodDiagnosticCode(t, store, "module_usage_file_fallback")
 }
 
 func TestMapModuleUsageUnreferenced(t *testing.T) {
@@ -106,6 +107,7 @@ func TestMapModuleUsageUnreferenced(t *testing.T) {
 	if usage.Basis != facts.ModuleUsageUnreferenced {
 		t.Fatalf("basis = %q", usage.Basis)
 	}
+	assertGomodDiagnosticCode(t, store, "module_unreferenced")
 }
 
 func findDep(t *testing.T, deps []facts.ModuleDependencyFact, path string) facts.ModuleDependencyFact {
@@ -145,9 +147,19 @@ func mapUsageFixture(t *testing.T, name string) *facts.Store {
 		store.AddSymbol(symbol)
 	}
 	changes := []facts.ModuleChangeFact{{Path: "gopkg.inshopline.com/sc1/commons/utils", Kind: facts.ModuleChangeUpgraded}}
-	usages := MapModuleUsage(p, idx, changes)
+	usages := MapModuleUsage(p, idx, store, changes)
 	store.ModuleUsages = append(store.ModuleUsages, usages...)
 	return store
+}
+
+func assertGomodDiagnosticCode(t *testing.T, store *facts.Store, code string) {
+	t.Helper()
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == code {
+			return
+		}
+	}
+	t.Fatalf("diagnostic %s not found: %#v", code, store.Diagnostics)
 }
 
 func findUsage(t *testing.T, usages []facts.ModuleUsageFact, module string) facts.ModuleUsageFact {
