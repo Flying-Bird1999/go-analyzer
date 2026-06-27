@@ -93,6 +93,31 @@ func TestRouteGraphIncludesDescendantGroupRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.RouteGroups = append(store.RouteGroups,
+		facts.RouteGroupFact{ID: "group:parent", GroupVar: "parent"},
+		facts.RouteGroupFact{ID: "group:child", GroupVar: "child", ParentGroupID: "group:parent"},
+	)
+	store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
+		ID:             "middleware:auth",
+		GroupID:        "group:parent",
+		GroupVar:       "parent",
+		StatementIndex: 10,
+	})
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:             "route:child",
+		GroupID:        "group:child",
+		StatementIndex: 11,
+	})
+
+	graph := NewRouteGraph(store)
+	routes := graph.RoutesAffectedByMiddleware("middleware:auth")
+	if len(routes) != 1 || routes[0].ID != "route:child" {
+		t.Fatalf("middleware descendant routes = %#v", routes)
+	}
+}
+
 func extractAndLinkFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "testdata", "fixtures", fixture)

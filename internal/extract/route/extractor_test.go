@@ -1,6 +1,7 @@
 package route
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -174,6 +175,43 @@ func TestExtractUsesConfiguredRouteRules(t *testing.T) {
 	}
 	if len(route.Wrappers) != 2 || route.Wrappers[0].Name != "TenantShield" || route.Wrappers[1].Name != "CustomController" {
 		t.Fatalf("wrappers = %#v", route.Wrappers)
+	}
+}
+
+func TestExtractRouteInsideIfFromMethodRouteFunc(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/route-method\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) GET(path string, handler any) {}
+
+type Router struct{}
+
+func CheckIn() {}
+
+func (r *Router) Init(g *Group) {
+	if true {
+		g.GET("/checkIn", CheckIn)
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 1 {
+		t.Fatalf("routes = %#v", store.Routes)
+	}
+	route := store.Routes[0]
+	if route.LocalPath != "/checkIn" {
+		t.Fatalf("route path = %q", route.LocalPath)
+	}
+	if route.RouteFunc != "method:example.com/route-method:Router:Init" {
+		t.Fatalf("route func = %q", route.RouteFunc)
 	}
 }
 

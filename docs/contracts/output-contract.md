@@ -93,6 +93,32 @@ Each symbol root and descendant contains:
 - `children`, always an array.
 - `method` and `path` for route, annotation and endpoint nodes.
 
+### Confidence
+
+`confidence` describes how certain the analyzer is about a fact, change root or
+impact edge based on static evidence. It is not a probability score and does
+not change propagation behavior by itself; consumers should use it for display,
+review prioritization and fallback handling.
+
+Current values:
+
+- `high`: the result comes from direct AST/fact evidence, such as a diff line
+  mapped to an existing symbol/route/annotation, a resolved reference, or a
+  handler link resolved to a stable symbol.
+- `medium`: the result is a targeted fallback or inference, such as a
+  deletion anchor mapped to a surviving declaration, a deleted route endpoint
+  reconstructed from method/path, or a go.mod usage mapped to declarations in
+  an importing file.
+- `low`: the analyzer could not resolve a semantic fact and kept only a weak
+  fallback, such as a file-level change root.
+
+Recommended consumer behavior:
+
+- Treat `high` as normal review evidence.
+- Surface `medium` as useful but worth human review when the endpoint matters.
+- Treat `low` as an analyzer limitation signal rather than a precise endpoint
+  proof.
+
 The normal endpoint path is:
 
 ```text

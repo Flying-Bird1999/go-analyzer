@@ -12,15 +12,19 @@ import (
 )
 
 type treeBuilder struct {
+	*treeContext
+	endpoints   map[string]EndpointImpact
+	change      facts.ChangeFact
+	opts        TreeOptions
+	diagnostics []facts.DiagnosticFact
+}
+
+type treeContext struct {
 	store       *facts.Store
 	reverse     *graph.ReverseGraph
 	routes      *graph.RouteGraph
 	symbols     map[facts.SymbolID]facts.SymbolFact
 	annotations map[string]facts.AnnotationFact
-	endpoints   map[string]EndpointImpact
-	change      facts.ChangeFact
-	opts        TreeOptions
-	diagnostics []facts.DiagnosticFact
 }
 
 func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
@@ -28,12 +32,13 @@ func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 		Roots:       []RootImpact{},
 		Diagnostics: append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
+	context := newTreeContext(store)
 	changes := append([]facts.ChangeFact(nil), store.Changes...)
 	sort.Slice(changes, func(i, j int) bool {
 		return changes[i].ID < changes[j].ID
 	})
 	for _, change := range changes {
-		builder := newTreeBuilder(store, change, opts)
+		builder := newTreeBuilder(context, change, opts)
 		root := builder.buildRoot()
 		result.Diagnostics = append(result.Diagnostics, builder.diagnostics...)
 		endpoints := make([]EndpointImpact, 0, len(builder.endpoints))
@@ -56,25 +61,31 @@ func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 	return result
 }
 
-func newTreeBuilder(store *facts.Store, change facts.ChangeFact, opts TreeOptions) *treeBuilder {
-	builder := &treeBuilder{
+func newTreeContext(store *facts.Store) *treeContext {
+	context := &treeContext{
 		store:       store,
 		reverse:     graph.NewReverseGraph(store),
 		routes:      graph.NewRouteGraph(store),
 		symbols:     map[facts.SymbolID]facts.SymbolFact{},
 		annotations: map[string]facts.AnnotationFact{},
+	}
+	for _, symbol := range store.Symbols {
+		context.symbols[symbol.ID] = symbol
+	}
+	for _, annotation := range store.Annotations {
+		context.annotations[annotation.ID] = annotation
+	}
+	return context
+}
+
+func newTreeBuilder(context *treeContext, change facts.ChangeFact, opts TreeOptions) *treeBuilder {
+	return &treeBuilder{
+		treeContext: context,
 		endpoints:   map[string]EndpointImpact{},
 		change:      change,
 		opts:        opts,
 		diagnostics: []facts.DiagnosticFact{},
 	}
-	for _, symbol := range store.Symbols {
-		builder.symbols[symbol.ID] = symbol
-	}
-	for _, annotation := range store.Annotations {
-		builder.annotations[annotation.ID] = annotation
-	}
-	return builder
 }
 
 func (b *treeBuilder) buildRoot() Node {

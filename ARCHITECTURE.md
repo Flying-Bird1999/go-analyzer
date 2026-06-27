@@ -168,6 +168,78 @@ CLI
      -> JSON contract
 ```
 
+### 4.1 贯穿真实 BFF 的分析链路
+
+下面用 `sl-sc1-bff-service` 的真实代码说明“diff 到 endpoint”的完整链路。假设 MR 改到了 `service.GetMerchantInfo`：
+
+- service 声明：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/service/merchant.go:18`
+- controller 调用：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/controller/live/view/redirect.go:38`
+- route 注册：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/router/live/view.go:13`
+- endpoint 注释：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/controller/live/view/redirect.go:28`
+
+真实代码关系：
+
+```go
+// service/merchant.go
+func GetMerchantInfo(c context.Context, merchantId string) (*api.Merchant, error) { ... }
+
+// controller/live/view/redirect.go
+// @Get /api/bff-web/live/view/:salesId/redirect
+func LiveViewRedirect(c context.Context, ctx *lego.RequestContext, req LiveViewRedirectReq) (*string, error) {
+    merchantInfo, err := service.GetMerchantInfo(c, resp.MerchantId)
+    ...
+}
+
+// router/live/view.go
+group.GET("/:salesId/redirect", sa.ControllerWithReqResp(live_view.LiveViewRedirect))
+```
+
+对应 facts/impact 关系：
+
+```text
+astindex
+  func:sc1-client-bff-service/service::GetMerchantInfo
+  func:sc1-client-bff-service/controller/live/view::LiveViewRedirect
+
+extract/reference
+  FromSymbol = func:sc1-client-bff-service/controller/live/view::LiveViewRedirect
+  ToSymbol   = func:sc1-client-bff-service/service::GetMerchantInfo
+  Kind       = call
+
+extract/annotation
+  handler_symbol = func:sc1-client-bff-service/controller/live/view::LiveViewRedirect
+  method/path    = GET /api/bff-web/live/view/:salesId/redirect
+
+extract/route
+  handler_raw    = live_view.LiveViewRedirect
+  route          = GET /:salesId/redirect
+  group prefix   = /api/bff-web/live/view
+
+internal/link
+  route -> handler symbol
+  handler symbol -> annotation
+
+internal/graph + internal/impact
+  changed GetMerchantInfo
+    -> ReverseGraph 找到 LiveViewRedirect
+    -> RouteGraph 找到 route/annotation
+    -> endpoint GET /api/bff-web/live/view/:salesId/redirect
+```
+
+同一条链路的图形化版本：
+
+```mermaid
+flowchart LR
+    DIFF["diff<br/>service/merchant.go<br/>GetMerchantInfo"] --> CHANGE["ChangeFact<br/>func:.../service::GetMerchantInfo"]
+    CHANGE --> REV["ReverseGraph<br/>ToSymbol -> FromSymbol"]
+    REV --> HANDLER["func:.../controller/live/view::LiveViewRedirect"]
+    HANDLER --> ROUTE["RouteGraph<br/>route for handler"]
+    ROUTE --> ANNO["@Get annotation"]
+    ANNO --> ENDPOINT["GET<br/>/api/bff-web/live/view/:salesId/redirect"]
+```
+
+这也是当前实现的核心策略：`buildFacts` 先把项目里的声明、引用、路由和 link 都算出来；`RunImpact` 再把 diff 命中的 symbol 放进这些索引里反向传播。
+
 ## 5. 目录与模块职责
 
 ```text
@@ -203,6 +275,21 @@ go-analyzer/
 └── scripts/                      smoke/验收脚本
 ```
 
+模块速查表：
+
+| 模块                            | 做什么                                                             | 真实 BFF 示例                                                                                                        |
+| ------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `internal/project`            | 加载 Go module、文件、AST                                          | 读取`sl-sc1-bff-service` 的 `service/merchant.go`、`controller/live/view/redirect.go`、`router/live/view.go` |
+| `internal/astindex`           | 给声明建立稳定 symbol ID                                           | `GetMerchantInfo` -> `func:sc1-client-bff-service/service::GetMerchantInfo`                                      |
+| `internal/extract/reference`  | 找代码声明之间的依赖边                                             | `LiveViewRedirect` 调 `service.GetMerchantInfo` -> `call` reference                                            |
+| `internal/extract/annotation` | 识别 handler 上的 HTTP 注释                                        | `@Get /api/bff-web/live/view/:salesId/redirect` -> annotation fact                                                 |
+| `internal/extract/route`      | 识别 route group、route、middleware、wrapper                       | `group.GET("/:salesId/redirect", sa.ControllerWithReqResp(live_view.LiveViewRedirect))` -> route fact              |
+| `internal/link`               | 把 route raw handler、handler annotation、middleware symbol 接起来 | `live_view.LiveViewRedirect` -> `func:...::LiveViewRedirect`，再连到 `@Get`                                    |
+| `internal/diff`               | 把 unified diff 映射到语义 root                                    | 改`service/merchant.go` 的函数体 -> `symbol_changed` root                                                        |
+| `internal/graph`              | 构造传播查询视图                                                   | `GetMerchantInfo` <- `LiveViewRedirect`；handler -> route/annotation                                             |
+| `internal/impact`             | 从 change root 扩散并产出 endpoint                                 | `GetMerchantInfo` 变更最终落到 `GET /api/bff-web/live/view/:salesId/redirect`                                    |
+| `internal/output`             | 输出稳定 JSON/schema                                               | 输出`go-impact/v1alpha1` 的 roots/endpoints/diagnostics                                                            |
+
 ### 5.1 `cmd/go-analyzer`
 
 入口是 `cmd/go-analyzer/main.go`。
@@ -223,6 +310,24 @@ go-analyzer/
 - `internal/app/pipeline.go:128`：共享事实构建。
 
 它是唯一应了解完整 pipeline 顺序的模块。extractor 之间不应互相调用，特殊 diff 逻辑也不应下沉到 CLI。
+
+`RunFacts` 和 `RunImpact` 不是两套独立分析能力，而是同一条 pipeline 的两个输出层级：
+
+```text
+RunFacts
+  = buildFacts(project)
+  -> 输出完整项目事实快照
+
+RunImpact
+  = buildFacts(project)
+  -> parse diff
+  -> diff 映射到 ChangeFact
+  -> deleted route / go.mod 等 diff 补偿
+  -> impact tree
+  -> 输出从 diff root 到 endpoint 的影响链路
+```
+
+因此 `RunFacts` 更像“项目事实调试/观测入口”，用于确认当前项目中 symbol、route、annotation、reference、link 是否被正确抽取；`RunImpact` 在这份事实基础上叠加 MR diff，并产出最终人/agent 关心的接口影响结果。保留两者的原因是调试边界更清晰：如果 impact 不对，先看 facts 是否对；facts 对但 impact 不对，再看 diff 映射和传播逻辑。
 
 ### 5.3 `internal/project`
 
@@ -275,7 +380,29 @@ pkg.Var.Method
 pkg.Var.Field.Method
 ```
 
-它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern。
+这里的设计重点是：`astindex` 首先是“声明符号索引”，其次才带一层“常见 selector receiver 解析”能力。
+
+当前的 impact 粒度只需要定位到声明级 symbol：function、receiver method、type、package-level var/const。函数内部某一行、某个字段的精细 diff 不是本项目当前目标；结构体字段、tag、协议相关注释等落在 type declaration 内时，会先映射为 `type:<package>::<name>` 这个 symbol，再沿 type reference 继续传播。
+
+轻量 value type 是为了解决 BFF 项目里非常常见的 package-level singleton / provider 写法。例如：
+
+```go
+var Default auth.Auth
+g.Use(provider.Default.Middleware)
+
+type Dependencies struct { Auth auth.Auth }
+var Default = Dependencies{}
+g.Use(provider.Default.Auth.Middleware)
+```
+
+如果只保存 declaration symbol，`provider.Default.Auth.Middleware` 只能看到一串 selector，无法知道最终是 `method:<auth package>:Auth:Middleware`。因此索引里额外保存：
+
+- package-level var 的静态类型。
+- struct field 的静态类型。
+
+解析时从 package-level var 开始，按 field 链一路走到最终 receiver type，再拼出 method symbol。它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；local var、接口动态派发、复杂工厂返回值、运行时注入不在当前精度目标内。
+
+以当前“diff 发生在哪个符号，然后扩散到 endpoint”的目标来看，这组 declaration symbol 是足够的；后续如果要做更精细的动态绑定或接口实现分析，才需要引入 `go/types` / SSA。
 
 ### 5.5 `internal/facts`
 
@@ -330,6 +457,14 @@ annotation span 精确到注释行，而不是整个函数体：
 
 入口：`internal/extract/reference/extractor.go:16`。
 
+输入是当前项目的完整 AST、`astindex.Index` 和共享 `facts.Store`：
+
+```text
+project.Project + astindex.Index + facts.Store
+```
+
+它在 `buildFacts` 阶段执行，也就是 `RunFacts` 和 `RunImpact` 都会先做这一步；并不是等 diff 出现以后才分析引用关系。
+
 提取四类 reference：
 
 - `call`：函数/方法调用。
@@ -342,6 +477,30 @@ annotation span 精确到注释行，而不是整个函数体：
 ```text
 FromSymbol depends on ToSymbol
 ```
+
+其中 `FromSymbol` 是当前正在扫描的声明：
+
+- 函数/方法签名或函数体内的引用，`FromSymbol` 是该 function/method。
+- type declaration 内的字段、嵌入、组合等引用，`FromSymbol` 是该 type。
+- package-level var/const 的类型或初始化表达式引用，`FromSymbol` 是该 var/const。
+
+`ToSymbol` 是通过 `astindex` 能解析到的项目内目标 symbol。举例：
+
+```go
+func (c *OrderController) Get() {
+    service.QueryOrder()
+}
+```
+
+会产生类似：
+
+```text
+FromSymbol = method:<controller package>:OrderController:Get
+ToSymbol   = func:<service package>::QueryOrder
+Kind       = call
+```
+
+这条边的含义是“controller method 依赖 service function”。当 service function 被 diff 命中时，impact 传播要反向找依赖者，因此后续 `internal/graph` 会把它转成 `ToSymbol -> []FromSymbol` 查询视图。
 
 传播时 `internal/graph` 会构造反向索引：
 
@@ -395,6 +554,90 @@ var Default = Dependencies{}
 g.Use(provider.Default.Auth.Middleware)
 ```
 
+它解决的是“不同 extractor 产出的事实如何接到同一条 endpoint 链路上”的问题。
+
+几个 extractor 的关注点不同：
+
+- `route` extractor 只负责从路由注册语法里抽出 `GET /path -> handler raw expression`。
+- `annotation` extractor 只负责从 handler 注释里抽出 `@Get /path -> handler symbol`。
+- `reference` extractor 只负责代码 symbol 之间的依赖边。
+
+这些事实如果不 link，route 里只会留下 `controller.GetOrder` 这样的 raw string，无法稳定传播到 handler symbol；annotation 也无法和 route 注册关联起来。`internal/link` 的作用就是把 raw expression 解析成 symbol，并补充：
+
+```text
+route registration -> handler symbol
+handler symbol -> annotation
+middleware binding -> middleware function/method symbol
+```
+
+后续 `RouteGraph` 才能回答：
+
+- 某个 handler 变了，影响哪些 route。
+- 某个 middleware 方法变了，影响哪些挂载了该 middleware 的 route。
+- route 找到 handler 后，优先用 handler annotation 确认 endpoint。
+
+真实 BFF 例子：
+
+```go
+// router/live/view.go
+group.GET("/:salesId/redirect", sa.ControllerWithReqResp(live_view.LiveViewRedirect))
+
+// controller/live/view/redirect.go
+// @Get /api/bff-web/live/view/:salesId/redirect
+func LiveViewRedirect(...) (*string, error) { ... }
+```
+
+`route` extractor 只能先得到：
+
+```json
+{
+  "method": "GET",
+  "local_path": "/:salesId/redirect",
+  "resolved_path": "/api/bff-web/live/view/:salesId/redirect",
+  "handler_raw": "live_view.LiveViewRedirect",
+  "wrappers": [
+    {
+      "name": "ControllerWithReqResp",
+      "raw": "sa.ControllerWithReqResp(live_view.LiveViewRedirect)"
+    }
+  ]
+}
+```
+
+这里的 `handler_raw` 仍然只是 route 文件里的表达式文本。`link` 会结合 route 文件 import：
+
+```go
+import live_view "sc1-client-bff-service/controller/live/view"
+```
+
+把它解析成稳定 handler symbol，并写回 route：
+
+```json
+{
+  "handler_symbol": "func:sc1-client-bff-service/controller/live/view::LiveViewRedirect"
+}
+```
+
+同时补两条 link：
+
+```json
+{
+  "kind": "route_to_handler",
+  "from_id": "route:func:sc1-client-bff-service/router/live::InitLiveViewRouter:GET:/:salesId/redirect:2",
+  "to_id": "func:sc1-client-bff-service/controller/live/view::LiveViewRedirect"
+}
+```
+
+```json
+{
+  "kind": "handler_to_annotation",
+  "from_id": "func:sc1-client-bff-service/controller/live/view::LiveViewRedirect",
+  "to_id": "annotation:func:sc1-client-bff-service/controller/live/view::LiveViewRedirect:GET:/api/bff-web/live/view/:salesId/redirect:0"
+}
+```
+
+因此 `internal/link` 不是做“函数调用依赖”的模块；函数调用依赖归 `internal/extract/reference`。`link` 解决的是 route 领域里的身份对齐：把 route 文件里的 handler 表达式、controller 文件里的 handler 声明、handler 注释里的 endpoint 归并到同一个 handler symbol 上。
+
 ### 5.11 `internal/diff`
 
 入口：
@@ -424,12 +667,49 @@ annotation
 
 ### 5.12 `internal/graph`
 
-包含两个运行时索引：
+包含两个运行时查询视图。它们都基于同一个 `facts.Store` 临时构造，不是新的事实来源，也不会写回业务事实：
 
 - `ReverseGraph`：被依赖 symbol -> 依赖它的 symbol references。
 - `RouteGraph`：handler/group/middleware -> routes/annotations。
 
 graph 不生产业务事实，只对 Store 建立高效查询视图。
+
+需要拆成两个视图，是因为两类关系的语义不同：
+
+```text
+ReverseGraph: 代码依赖传播
+  changed service symbol
+    -> caller controller symbol
+    -> caller route init symbol ...
+
+RouteGraph: HTTP 路由域传播
+  handler symbol
+    -> route registration
+    -> annotation
+    -> endpoint
+
+  middleware binding
+    -> same group 且 statement order 更靠后的 routes
+
+  route group
+    -> descendant routes
+```
+
+impact tree 构造时会同时使用它们：
+
+```text
+ChangeFact(symbol)
+  -> ReverseGraph.ReferencesTo(symbol)
+  -> 上游 symbols
+  -> RouteGraph.RoutesForHandler(handler)
+  -> annotation / endpoint
+
+ChangeFact(route/middleware/group/annotation)
+  -> 直接进入 RouteGraph
+  -> endpoint
+```
+
+如果没有 `ReverseGraph`，从 service/type 无法反推到 controller；如果没有 `RouteGraph`，从 handler/middleware/group 无法进入最终 HTTP endpoint。拆开后每个视图都保持简单，也避免在传播阶段反复 O(n) 扫描 Store。
 
 ### 5.13 `internal/impact`
 
@@ -734,6 +1014,14 @@ go run ./cmd/go-analyzer impact \
 - 可选原始 `diff`。
 - `symbols`：changed roots 到递归 impact nodes。
 - `impactedEndpoints`：去重 endpoint 摘要。
+
+`confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
+
+- `high`：来自明确 AST/fact 证据，例如 diff 命中现存 symbol/route/annotation、reference/link 精确解析。
+- `medium`：来自定向 fallback 或推断，例如 deletion anchor 命中 surviving declaration、deleted route 用 method/path fallback endpoint、go.mod usage 降级到 importing file declarations。
+- `low`：只能保留弱 fallback，例如无法映射到语义 fact 的 file-level root。
+
+下游消费者可以用它做展示和人工复核优先级：`high` 正常采信，`medium` 标记为建议复核，`low` 视为分析器未能精确定位的信号。
 
 详细字段见 `docs/contracts/output-contract.md`。
 

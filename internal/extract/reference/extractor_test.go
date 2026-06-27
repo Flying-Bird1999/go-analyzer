@@ -1,6 +1,7 @@
 package reference
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,6 +131,32 @@ func TestExtractGenericFunctionCallSeparatesCalleeAndTypeArguments(t *testing.T)
 	}
 }
 
+func TestExtractValueReferenceBeforeLocalShadowing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/shadow\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+var DefaultRequest = 1
+
+func Build() int {
+	_ = DefaultRequest
+	DefaultRequest := 2
+	return DefaultRequest
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	assertReference(t, store,
+		"func:example.com/shadow::Build",
+		"var:example.com/shadow::DefaultRequest",
+		facts.ReferenceKindValue,
+	)
+}
+
 func extractReferenceFixture(t *testing.T) *facts.Store {
 	t.Helper()
 	return extractFixture(t, "reference-chain")
@@ -138,6 +165,11 @@ func extractReferenceFixture(t *testing.T) *facts.Store {
 func extractFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", fixture)
+	return extractFixtureRoot(t, root)
+}
+
+func extractFixtureRoot(t *testing.T, root string) *facts.Store {
+	t.Helper()
 	p, err := project.Load(root, project.Options{})
 	if err != nil {
 		t.Fatal(err)

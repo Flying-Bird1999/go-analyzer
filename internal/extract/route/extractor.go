@@ -49,7 +49,7 @@ func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupCont
 }
 
 func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, cfg config.Config) {
-	routeFunc := astindex.FunctionSymbolID(pkg.Path, fn.Name.Name)
+	routeFunc := routeFuncSymbolID(pkg.Path, fn)
 	groups := rootGroups(routeFunc, fn)
 	for i, stmt := range fn.Body.List {
 		collectStmt(p, file, routeFunc, store, groups, stmt, i+1, cfg)
@@ -106,7 +106,52 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 		for i, child := range s.List {
 			collectStmt(p, file, routeFunc, store, groups, child, statementIndex+i+1, cfg)
 		}
+	case *ast.IfStmt:
+		branchGroups := copyGroups(groups)
+		if s.Init != nil {
+			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, statementIndex, cfg)
+		}
+		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, statementIndex+1, cfg)
+		if s.Else != nil {
+			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, statementIndex+2, cfg)
+		}
+	case *ast.ForStmt:
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, statementIndex+1, cfg)
+	case *ast.RangeStmt:
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, statementIndex+1, cfg)
 	}
+}
+
+func routeFuncSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
+	}
+	return astindex.MethodSymbolID(pkgPath, receiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
+}
+
+func receiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return receiverTypeName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr:
+		return receiverTypeName(t.X)
+	case *ast.IndexListExpr:
+		return receiverTypeName(t.X)
+	default:
+		return ""
+	}
+}
+
+func copyGroups(groups map[string]groupContext) map[string]groupContext {
+	out := make(map[string]groupContext, len(groups))
+	for name, group := range groups {
+		out[name] = group
+	}
+	return out
 }
 
 func groupMiddlewareArgs(expr ast.Expr) []string {

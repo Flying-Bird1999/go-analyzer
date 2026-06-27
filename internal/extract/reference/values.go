@@ -13,7 +13,7 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 	if fn.Body == nil {
 		return
 	}
-	locals := localNames(fn)
+	locals := localDeclarations(fn)
 	ignored := ignoredValuePositions(fn.Body)
 	callFuns := callFunPositions(fn.Body)
 
@@ -27,24 +27,24 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 			if callFuns[x.Pos()] {
 				targets = resolveReceiverValueIDs(file, idx, x)
 			} else {
-				targets = resolveValueIDs(file, idx, x, locals)
+				targets = resolveValueIDs(file, idx, x, locals, x.Pos())
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
 			return false
 		case *ast.Ident:
-			if ignored[x.Pos()] || callFuns[x.Pos()] || locals[x.Name] {
+			if ignored[x.Pos()] || callFuns[x.Pos()] || locals.isLocalAt(x.Name, x.Pos()) {
 				return true
 			}
-			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x, locals))
+			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x, locals, x.Pos()))
 		}
 		return true
 	})
 }
 
-func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, locals map[string]bool) []facts.SymbolID {
+func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, locals localScope, pos token.Pos) []facts.SymbolID {
 	switch x := expr.(type) {
 	case *ast.Ident:
-		if locals[x.Name] {
+		if locals.isLocalAt(x.Name, pos) {
 			return nil
 		}
 		return existingValueIDs(idx, file.Package.Path, x.Name)
@@ -54,7 +54,7 @@ func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, loc
 			if importPath := file.Imports[parts[0]]; importPath != "" {
 				return existingValueIDs(idx, importPath, parts[1])
 			}
-			if locals[parts[0]] {
+			if locals.isLocalAt(parts[0], pos) {
 				return nil
 			}
 			return resolveLocalVarMethod(idx, file, parts)
@@ -147,15 +147,36 @@ func addValueReferenceFacts(p *project.Project, file *project.File, store *facts
 	}
 }
 
-func localNames(fn *ast.FuncDecl) map[string]bool {
-	out := map[string]bool{"_": true}
+type localScope map[string][]token.Pos
+
+func (s localScope) add(name string, pos token.Pos) {
+	if name == "" {
+		return
+	}
+	s[name] = append(s[name], pos)
+}
+
+func (s localScope) isLocalAt(name string, pos token.Pos) bool {
+	if name == "_" {
+		return true
+	}
+	for _, declPos := range s[name] {
+		if declPos == token.NoPos || declPos <= pos {
+			return true
+		}
+	}
+	return false
+}
+
+func localDeclarations(fn *ast.FuncDecl) localScope {
+	out := localScope{}
 	addFields := func(fields *ast.FieldList) {
 		if fields == nil {
 			return
 		}
 		for _, field := range fields.List {
 			for _, name := range field.Names {
-				out[name.Name] = true
+				out.add(name.Name, token.NoPos)
 			}
 		}
 	}
@@ -168,17 +189,17 @@ func localNames(fn *ast.FuncDecl) map[string]bool {
 			if x.Tok == token.DEFINE {
 				for _, lhs := range x.Lhs {
 					if id, ok := lhs.(*ast.Ident); ok {
-						out[id.Name] = true
+						out.add(id.Name, id.Pos())
 					}
 				}
 			}
 		case *ast.RangeStmt:
 			if x.Tok == token.DEFINE {
 				if id, ok := x.Key.(*ast.Ident); ok {
-					out[id.Name] = true
+					out.add(id.Name, id.Pos())
 				}
 				if id, ok := x.Value.(*ast.Ident); ok {
-					out[id.Name] = true
+					out.add(id.Name, id.Pos())
 				}
 			}
 		case *ast.DeclStmt:
@@ -186,7 +207,7 @@ func localNames(fn *ast.FuncDecl) map[string]bool {
 				for _, spec := range decl.Specs {
 					if value, ok := spec.(*ast.ValueSpec); ok {
 						for _, name := range value.Names {
-							out[name.Name] = true
+							out.add(name.Name, name.Pos())
 						}
 					}
 				}

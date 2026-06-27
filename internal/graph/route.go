@@ -110,7 +110,7 @@ func (g *RouteGraph) RoutesAffectedByMiddleware(bindingID string) []facts.RouteR
 	}
 	var out []facts.RouteRegistrationFact
 	groupID := effectiveGroupID(binding.GroupID, binding.RouteFunc, binding.GroupVar)
-	for _, route := range g.RoutesByGroupID[groupID] {
+	for _, route := range g.RoutesForGroup(groupID) {
 		if binding.StatementIndex < route.StatementIndex {
 			out = append(out, route)
 		}

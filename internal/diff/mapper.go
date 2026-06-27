@@ -22,26 +22,45 @@ func MapChanges(changes []FileChange, store *facts.Store, source string) []facts
 				confidence = facts.ConfidenceMedium
 			}
 			mapped := mapRange(file, changeRange, store, source, len(out), confidence)
-			out = append(out, mapped)
-			if r.Kind == RangeKindDeletionAnchor && mapped.Kind == facts.ChangeKindFileChanged {
-				diagnostics.AddFact(store, diagnostics.Diagnostic{
-					Code:     diagnostics.CodeDeletedSymbolUnresolved,
-					Severity: diagnostics.SeverityWarning,
-					Message:  "deleted lines could not be mapped to a surviving symbol",
-					Span: facts.SourceSpan{
-						File:      file,
-						StartLine: r.StartLine,
-						EndLine:   r.EndLine,
-					},
-					RelatedFactIDs: []string{mapped.ID},
-				})
+			out = append(out, mapped...)
+			if r.Kind == RangeKindDeletionAnchor {
+				for _, item := range mapped {
+					if item.Kind != facts.ChangeKindFileChanged {
+						continue
+					}
+					diagnostics.AddFact(store, diagnostics.Diagnostic{
+						Code:     diagnostics.CodeDeletedSymbolUnresolved,
+						Severity: diagnostics.SeverityWarning,
+						Message:  "deleted lines could not be mapped to a surviving symbol",
+						Span: facts.SourceSpan{
+							File:      file,
+							StartLine: r.StartLine,
+							EndLine:   r.EndLine,
+						},
+						RelatedFactIDs: []string{item.ID},
+					})
+				}
 			}
 		}
 	}
 	return out
 }
 
-func mapRange(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) facts.ChangeFact {
+func mapRange(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) []facts.ChangeFact {
+	var out []facts.ChangeFact
+	for line := r.StartLine; line <= r.EndLine; line++ {
+		point := facts.ChangeRange{StartLine: line, EndLine: line}
+		mapped := mapPoint(file, point, store, source, index+len(out), confidence)
+		if len(out) > 0 && sameChangeTarget(out[len(out)-1], mapped) && out[len(out)-1].Ranges[0].EndLine+1 == line {
+			out[len(out)-1].Ranges[0].EndLine = line
+			continue
+		}
+		out = append(out, mapped)
+	}
+	return out
+}
+
+func mapPoint(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) facts.ChangeFact {
 	for _, annotation := range store.Annotations {
 		if spanContains(annotation.Span, file, r) {
 			return changeFact(index, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
@@ -76,6 +95,15 @@ func mapRange(file string, r facts.ChangeRange, store *facts.Store, source strin
 		return changeFact(index, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
 	}
 	return changeFact(index, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
+}
+
+func sameChangeTarget(left, right facts.ChangeFact) bool {
+	return left.Kind == right.Kind &&
+		left.TargetID == right.TargetID &&
+		left.SymbolID == right.SymbolID &&
+		left.File == right.File &&
+		left.Source == right.Source &&
+		left.Confidence == right.Confidence
 }
 
 func spanSize(span facts.SourceSpan) int {

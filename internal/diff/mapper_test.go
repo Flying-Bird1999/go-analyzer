@@ -104,6 +104,30 @@ func TestMapChangesSelectsSmallestContainingSymbol(t *testing.T) {
 	}
 }
 
+func TestMapChangesSplitsRangeAcrossOverlappingSymbols(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Symbols = append(store.Symbols,
+		facts.SymbolFact{
+			ID:   "func:example.com/project/service::First",
+			Kind: "func",
+			Span: facts.SourceSpan{File: "service/order.go", StartLine: 10, EndLine: 12},
+		},
+		facts.SymbolFact{
+			ID:   "func:example.com/project/service::Second",
+			Kind: "func",
+			Span: facts.SourceSpan{File: "service/order.go", StartLine: 13, EndLine: 16},
+		},
+	)
+
+	got := MapChanges([]FileChange{{
+		NewPath: "service/order.go",
+		Ranges:  []LineRange{{StartLine: 12, EndLine: 13}},
+	}}, store, "git_diff")
+
+	assertChangeSymbol(t, got, "func:example.com/project/service::First")
+	assertChangeSymbol(t, got, "func:example.com/project/service::Second")
+}
+
 func TestMapChangesMapsRouteGroupBeforeEnclosingSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
@@ -200,4 +224,14 @@ func assertChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.Chang
 		}
 	}
 	t.Fatalf("change kind %s not found: %#v", kind, changes)
+}
+
+func assertChangeSymbol(t *testing.T, changes []facts.ChangeFact, symbol facts.SymbolID) {
+	t.Helper()
+	for _, change := range changes {
+		if change.SymbolID == symbol {
+			return
+		}
+	}
+	t.Fatalf("change symbol %s not found: %#v", symbol, changes)
 }
