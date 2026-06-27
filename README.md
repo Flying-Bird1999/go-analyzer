@@ -2,7 +2,7 @@
 
 `go-analyzer` 是面向 Go BFF 项目的影响范围分析工具项目。它服务于前端团队维护的 BFF 代码仓，目标是把一次 Go MR 的 diff 转换成“受影响的 HTTP 接口列表”，帮助测试、开发和后续自动化流程判断本次服务端改动需要重点回归哪些接口。
 
-当前项目先沉淀技术方案，不急于进入编码。第一阶段重点验证分析架构是否成立。
+当前已经完成基于变更后项目的符号级影响分析闭环，并输出按 diff 源文件和变更符号组织的原始影响树 JSON。
 
 ## 背景
 
@@ -31,12 +31,12 @@ Go BFF diff -> 受影响 HTTP 接口
 MVP 覆盖范围：
 
 - Go 源码 diff 分析。
-- `go.mod` 依赖变更分析。
 - diff 到 Go 语义节点的映射。
-- 函数、方法、变量、类型引用的反向传播。
+- 函数、方法、变量、常量、类型引用的反向传播。
+- struct 字段和 tag 变更映射到所属 type，并沿类型依赖传播。
 - controller 函数注释中的 HTTP 接口识别。
 - route 注册关系、route group、中间件、guard/wrapper 的影响传播。
-- 输出受影响 HTTP 接口及证据链。
+- 输出完整的 symbol → route → annotation → endpoint 传播树及接口摘要。
 
 MVP 暂不覆盖：
 
@@ -83,6 +83,7 @@ CLI 边界要求输入路径使用绝对路径：
 go-analyzer facts --project /absolute/path/to/sc1-bff-service --format json
 go-analyzer impact --project /absolute/path/to/sc1-bff-service --diff /absolute/path/to/change.diff --format json
 go-analyzer schema --type facts
+go-analyzer schema --type impact
 ```
 
 如项目存在特殊 HTTP method、handler wrapper 或 route group wrapper，可以传入 JSON 配置文件扩展默认规则：
@@ -91,7 +92,7 @@ go-analyzer schema --type facts
 go-analyzer facts --project /absolute/path/to/sc1-bff-service --config /absolute/path/to/go-analyzer.json --format json
 ```
 
-输出契约见 `docs/contracts/output-contract.md`，示例配置见 `docs/examples/go-analyzer.config.json`。
+impact 输出使用 `go-impact/v1alpha1`，按 diff 源文件分组，保留原始 diff、变更根、完整中间传播节点和去重后的接口摘要。输出契约见 `docs/contracts/output-contract.md`，示例配置见 `docs/examples/go-analyzer.config.json`。
 
 关键设计点是：Go BFF 不能只做调用图分析。route 注册里 controller 通常不是被调用，而是作为函数值被传给注册函数：
 
@@ -177,22 +178,15 @@ changed middleware symbol
   -> handler endpoint annotations
 ```
 
-`go.mod` 依赖变更：
-
-```text
-changed module
-  -> local import usage
-  -> local declaration using dependency
-  -> reverse reference graph
-  -> registered handler
-  -> handler endpoint annotation
-```
-
 ## 文档
 
 最终架构技术方案见：
 
 [docs/design/go-analyzer-mvp-architecture.md](docs/design/go-analyzer-mvp-architecture.md)
+
+下一阶段符号级影响分析与原始传播树方案见：
+
+[docs/design/go-symbol-impact-architecture.md](docs/design/go-symbol-impact-architecture.md)
 
 模块级开发计划见：
 
@@ -203,6 +197,7 @@ changed module
 第一阶段先验证 BFF diff 到 HTTP 接口的静态分析闭环。等这个闭环稳定后，再考虑：
 
 - 更精准的外部 Go module diff 分析。
+- Base/Head 双快照与被删除声明的精确恢复。
 - 生成代码和 `nexus/codegen` 路由的专项支持。
 - 底层 gRPC 项目到 BFF HTTP 接口的跨仓传播。
 - 与前端 analyzer 的 API 输入自动桥接。

@@ -14,23 +14,57 @@ var hunkHeaderRE = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 func ParseUnified(input []byte) ([]FileChange, error) {
 	var changes []FileChange
 	var current *FileChange
+	var rawLines []string
 	newLine := 0
+	hunkActive := false
+	deletionPending := false
+	deletionAnchor := 0
+
+	flushDeletion := func() {
+		if current == nil || !deletionPending {
+			return
+		}
+		anchor := deletionAnchor
+		if anchor <= 0 {
+			anchor = 1
+		}
+		addLineRange(current, anchor, RangeKindDeletionAnchor)
+		deletionPending = false
+		deletionAnchor = 0
+	}
+	flushHunk := func() {
+		if current == nil || !hunkActive {
+			return
+		}
+		flushDeletion()
+		hunkActive = false
+	}
+	flushCurrent := func() {
+		if current == nil {
+			return
+		}
+		flushHunk()
+		if len(rawLines) > 0 {
+			current.Raw = strings.Join(rawLines, "\n") + "\n"
+		}
+		changes = append(changes, *current)
+	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(input))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "diff --git ") {
-			if current != nil {
-				changes = append(changes, *current)
-			}
+			flushCurrent()
 			oldPath, newPath := parseDiffPaths(line)
 			current = &FileChange{OldPath: oldPath, NewPath: newPath, Status: StatusModified}
+			rawLines = []string{line}
 			newLine = 0
 			continue
 		}
 		if current == nil {
 			continue
 		}
+		rawLines = append(rawLines, line)
 		switch {
 		case strings.HasPrefix(line, "new file mode"):
 			current.Status = StatusAdded
@@ -41,29 +75,34 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 		case strings.HasPrefix(line, "+++ "):
 			current.NewPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "+++ ")))
 		case strings.HasPrefix(line, "@@ "):
+			flushHunk()
 			start, err := parseHunkStart(line)
 			if err != nil {
 				return nil, err
 			}
 			newLine = start
+			hunkActive = true
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ "):
+			deletionPending = false
+			deletionAnchor = 0
 			if current.Status != StatusDeleted {
-				addLineRange(current, newLine)
+				addLineRange(current, newLine, RangeKindAdded)
 			}
 			newLine++
 		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
-		default:
-			if newLine > 0 {
-				newLine++
+			if !deletionPending {
+				deletionPending = true
+				deletionAnchor = newLine
 			}
+		case strings.HasPrefix(line, " "):
+			flushDeletion()
+			newLine++
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if current != nil {
-		changes = append(changes, *current)
-	}
+	flushCurrent()
 	return changes, nil
 }
 
@@ -98,18 +137,18 @@ func parseHunkStart(line string) (int, error) {
 	return start, nil
 }
 
-func addLineRange(change *FileChange, line int) {
+func addLineRange(change *FileChange, line int, kind RangeKind) {
 	if line <= 0 {
 		return
 	}
 	if len(change.Ranges) == 0 {
-		change.Ranges = append(change.Ranges, LineRange{StartLine: line, EndLine: line})
+		change.Ranges = append(change.Ranges, LineRange{StartLine: line, EndLine: line, Kind: kind})
 		return
 	}
 	last := &change.Ranges[len(change.Ranges)-1]
-	if line == last.EndLine+1 {
+	if line == last.EndLine+1 && last.Kind == kind {
 		last.EndLine = line
 		return
 	}
-	change.Ranges = append(change.Ranges, LineRange{StartLine: line, EndLine: line})
+	change.Ranges = append(change.Ranges, LineRange{StartLine: line, EndLine: line, Kind: kind})
 }

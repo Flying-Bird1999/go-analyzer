@@ -6,6 +6,7 @@ const (
 	ReferenceKindCall     ReferenceKind = "call"
 	ReferenceKindSelector ReferenceKind = "selector"
 	ReferenceKindType     ReferenceKind = "type"
+	ReferenceKindValue    ReferenceKind = "value"
 )
 
 type Confidence string

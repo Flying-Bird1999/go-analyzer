@@ -1,0 +1,8 @@
+diff --git a/model/model.go b/model/model.go
+--- a/model/model.go
++++ b/model/model.go
+@@ -3,3 +3,3 @@
+ type Address struct {
+-	City string `json:"city_name"`
++	City string `json:"city"`
+ }

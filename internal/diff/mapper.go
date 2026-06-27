@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
@@ -16,34 +17,69 @@ func MapChanges(changes []FileChange, store *facts.Store, source string) []facts
 		}
 		for _, r := range fileChange.Ranges {
 			changeRange := facts.ChangeRange{StartLine: r.StartLine, EndLine: r.EndLine}
-			out = append(out, mapRange(file, changeRange, store, source, len(out)))
+			confidence := facts.ConfidenceHigh
+			if r.Kind == RangeKindDeletionAnchor {
+				confidence = facts.ConfidenceMedium
+			}
+			mapped := mapRange(file, changeRange, store, source, len(out), confidence)
+			out = append(out, mapped)
+			if r.Kind == RangeKindDeletionAnchor && mapped.Kind == facts.ChangeKindFileChanged {
+				diagnostics.AddFact(store, diagnostics.Diagnostic{
+					Code:     diagnostics.CodeDeletedSymbolUnresolved,
+					Severity: diagnostics.SeverityWarning,
+					Message:  "deleted lines could not be mapped to a surviving symbol",
+					Span: facts.SourceSpan{
+						File:      file,
+						StartLine: r.StartLine,
+						EndLine:   r.EndLine,
+					},
+					RelatedFactIDs: []string{mapped.ID},
+				})
+			}
 		}
 	}
 	return out
 }
 
-func mapRange(file string, r facts.ChangeRange, store *facts.Store, source string, index int) facts.ChangeFact {
+func mapRange(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) facts.ChangeFact {
 	for _, annotation := range store.Annotations {
 		if spanContains(annotation.Span, file, r) {
 			return changeFact(index, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
 		}
 	}
+	for _, group := range store.RouteGroups {
+		if spanContains(group.Span, file, r) {
+			return changeFact(index, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, facts.ConfidenceHigh)
+		}
+	}
 	for _, route := range store.Routes {
 		if spanContains(route.Span, file, r) {
-			return changeFact(index, facts.ChangeKindRouteRegistrationChanged, route.ID, route.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
+			return changeFact(index, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
 		}
 	}
 	for _, binding := range store.Middleware {
 		if spanContains(binding.Span, file, r) {
-			return changeFact(index, facts.ChangeKindMiddlewareBindingChanged, binding.ID, "", file, r, source, facts.ConfidenceHigh)
+			return changeFact(index, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, facts.ConfidenceHigh)
 		}
 	}
+	var selected *facts.SymbolFact
 	for _, symbol := range store.Symbols {
 		if spanContains(symbol.Span, file, r) {
-			return changeFact(index, facts.ChangeKindMethodBodyChanged, string(symbol.ID), symbol.ID, file, r, source, facts.ConfidenceHigh)
+			if selected == nil || spanSize(symbol.Span) < spanSize(selected.Span) ||
+				(spanSize(symbol.Span) == spanSize(selected.Span) && symbol.ID < selected.ID) {
+				candidate := symbol
+				selected = &candidate
+			}
 		}
 	}
+	if selected != nil {
+		return changeFact(index, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
+	}
 	return changeFact(index, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
+}
+
+func spanSize(span facts.SourceSpan) int {
+	return span.EndLine - span.StartLine
 }
 
 func spanContains(span facts.SourceSpan, file string, r facts.ChangeRange) bool {

@@ -6,140 +6,133 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
-func TestAnalyzeServiceSymbolChangeImpactsEndpoint(t *testing.T) {
+func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:service",
-		Kind:     facts.ChangeKindMethodBodyChanged,
-		SymbolID: serviceSymbol,
-		File:     "service/common.go",
+		ID:         "change:service",
+		Kind:       facts.ChangeKindSymbolChanged,
+		SymbolID:   serviceSymbol,
+		File:       "service/common.go",
+		Confidence: facts.ConfidenceHigh,
 	})
 
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
-	if len(result.EvidenceChains) == 0 {
-		t.Fatal("expected evidence chains")
+	result := AnalyzeTrees(store, TreeOptions{})
+	root := mustTreeRoot(t, result, "change:service")
+	path := firstEndpointPath(t, root.Root)
+	assertNodeKinds(t, path, "func", "func", "route", "annotation", "endpoint")
+	endpoint := path[len(path)-1]
+	if endpoint.Method != "GET" || endpoint.Path != "/api/bff-web/common/checkIn" {
+		t.Fatalf("endpoint = %#v", endpoint)
 	}
 }
 
-func TestAnalyzeControllerSymbolChangeImpactsEndpoint(t *testing.T) {
-	store := referenceImpactStore()
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:controller",
-		Kind:     facts.ChangeKindMethodBodyChanged,
-		SymbolID: controllerSymbol,
-		File:     "controller/common.go",
-	})
-
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
-}
-
-func TestAnalyzeRouteRegistrationChangeImpactsEndpoint(t *testing.T) {
+func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
 		ID:       "change:route",
-		Kind:     facts.ChangeKindRouteRegistrationChanged,
+		Kind:     facts.ChangeKindRouteChanged,
 		TargetID: "route:checkIn",
+		SymbolID: controllerSymbol,
 		File:     "router/router.go",
 	})
 
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
+	result := AnalyzeTrees(store, TreeOptions{})
+	root := mustTreeRoot(t, result, "change:route")
+	if root.Root.Kind != "route" || root.Root.ID != "route:checkIn" {
+		t.Fatalf("route root = %#v", root.Root)
+	}
 }
 
-func TestAnalyzeRouteGroupChangeImpactsGroupRoutes(t *testing.T) {
+func TestAnalyzeMarksCycles(t *testing.T) {
 	store := referenceImpactStore()
-	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
-		ID:       "group:root",
-		GroupVar: "g",
-		Prefix:   "/api",
+	store.References = append(store.References, facts.ReferenceFact{
+		ID:         "ref:service-controller",
+		Kind:       facts.ReferenceKindCall,
+		FromSymbol: serviceSymbol,
+		ToSymbol:   controllerSymbol,
+		Confidence: facts.ConfidenceHigh,
 	})
-	store.Routes[0].GroupVar = "g"
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:group",
-		Kind:     facts.ChangeKindRouteRegistrationChanged,
-		TargetID: "group:root",
-		File:     "router/router.go",
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
 	})
 
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
+	result := AnalyzeTrees(store, TreeOptions{})
+	root := mustTreeRoot(t, result, "change:service")
+	if !containsCycle(root.Root) {
+		t.Fatalf("cycle marker not found: %#v", root.Root)
+	}
 }
 
-func TestAnalyzeMiddlewareBindingChangeImpactsOnlyLaterRoutes(t *testing.T) {
+func TestAnalyzeKeepsMultipleEndpointsAndSeparateRoots(t *testing.T) {
 	store := referenceImpactStore()
-	laterHandler := facts.SymbolID("func:example.com/project/controller::Later")
-	store.Symbols = append(store.Symbols, facts.SymbolFact{ID: laterHandler, Kind: "func"})
-	store.Routes[0].GroupVar = "g"
-	store.Routes[0].StatementIndex = 1
 	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
-		ID:             "route:later",
-		Method:         "GET",
-		LocalPath:      "/later",
-		GroupVar:       "g",
-		HandlerSymbol:  laterHandler,
-		StatementIndex: 3,
+		ID:            "route:second",
+		Method:        "POST",
+		ResolvedPath:  "/second",
+		HandlerSymbol: controllerSymbol,
+		Span:          facts.SourceSpan{File: "router/router.go", StartLine: 21, EndLine: 21},
 	})
 	store.Annotations = append(store.Annotations, facts.AnnotationFact{
-		ID:            "annotation:later",
-		Method:        "GET",
-		Path:          "/api/bff-web/common/later",
-		HandlerSymbol: laterHandler,
+		ID:            "annotation:second",
+		Method:        "POST",
+		Path:          "/second",
+		HandlerSymbol: controllerSymbol,
+		Span:          facts.SourceSpan{File: "controller/common.go", StartLine: 8, EndLine: 8},
 	})
-	store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
-		ID:             "middleware:auth",
-		GroupVar:       "g",
-		StatementIndex: 2,
-	})
+	store.Changes = append(store.Changes,
+		facts.ChangeFact{ID: "change:service", Kind: facts.ChangeKindSymbolChanged, SymbolID: serviceSymbol},
+		facts.ChangeFact{ID: "change:controller", Kind: facts.ChangeKindSymbolChanged, SymbolID: controllerSymbol},
+	)
+
+	result := AnalyzeTrees(store, TreeOptions{})
+	if len(result.Roots) != 2 {
+		t.Fatalf("roots = %#v", result.Roots)
+	}
+	service := mustTreeRoot(t, result, "change:service")
+	if len(service.Endpoints) != 2 {
+		t.Fatalf("service endpoints = %#v", service.Endpoints)
+	}
+}
+
+func TestAnalyzeStopsAtBoundary(t *testing.T) {
+	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:middleware",
-		Kind:     facts.ChangeKindMiddlewareBindingChanged,
-		TargetID: "middleware:auth",
-		File:     "router/router.go",
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
 	})
 
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/later")
-	assertNoEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
-}
-
-func TestAnalyzePreciseModuleUsageImpactsEndpoint(t *testing.T) {
-	store := referenceImpactStore()
-	store.ModuleUsages = append(store.ModuleUsages, facts.ModuleUsageFact{
-		ID:         "module_usage:service",
-		ModulePath: "example.com/external/module",
-		Basis:      facts.ModuleUsagePrecise,
-		SymbolID:   serviceSymbol,
-		Confidence: facts.ConfidenceHigh,
-	})
-
-	result := Analyze(store)
-	assertEndpoint(t, result, "GET", "/api/bff-web/common/checkIn")
-	if len(result.ModuleImpacts) != 1 {
-		t.Fatalf("module impacts = %d", len(result.ModuleImpacts))
+	result := AnalyzeTrees(store, TreeOptions{StopPropagation: []string{"controller/**"}})
+	root := mustTreeRoot(t, result, "change:service")
+	controller := findTreeNode(t, root.Root, string(controllerSymbol))
+	if !controller.StopBoundary {
+		t.Fatalf("controller boundary = %#v", controller)
+	}
+	if len(controller.Children) != 0 {
+		t.Fatalf("boundary children = %#v", controller.Children)
+	}
+	if len(root.Endpoints) != 0 {
+		t.Fatalf("boundary endpoints = %#v", root.Endpoints)
 	}
 }
 
-func TestAnalyzeUnreferencedModuleUsageProducesNoEndpoint(t *testing.T) {
+func TestAnalyzeHonorsMaxDepth(t *testing.T) {
 	store := referenceImpactStore()
-	store.ModuleUsages = append(store.ModuleUsages, facts.ModuleUsageFact{
-		ID:         "module_usage:unreferenced",
-		ModulePath: "example.com/external/module",
-		Basis:      facts.ModuleUsageUnreferenced,
-		Confidence: facts.ConfidenceHigh,
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
 	})
 
-	result := Analyze(store)
-	if len(result.ImpactedEndpoints) != 0 {
-		t.Fatalf("impacted endpoints = %#v", result.ImpactedEndpoints)
+	result := AnalyzeTrees(store, TreeOptions{MaxDepth: 1})
+	root := mustTreeRoot(t, result, "change:service")
+	controller := findTreeNode(t, root.Root, string(controllerSymbol))
+	if len(controller.Children) != 0 {
+		t.Fatalf("depth-limited children = %#v", controller.Children)
 	}
-	if len(result.ModuleImpacts) != 1 {
-		t.Fatalf("module impacts = %d", len(result.ModuleImpacts))
-	}
-	if result.ModuleImpacts[0].Basis != facts.ModuleUsageUnreferenced {
-		t.Fatalf("basis = %q", result.ModuleImpacts[0].Basis)
-	}
+	assertTreeDiagnostic(t, result, "propagation_depth_truncated")
 }
 
 const (
@@ -177,21 +170,95 @@ func referenceImpactStore() *facts.Store {
 	return store
 }
 
-func assertEndpoint(t *testing.T, result Result, method, path string) {
+func mustTreeRoot(t *testing.T, result TreeResult, changeID string) RootImpact {
 	t.Helper()
-	for _, endpoint := range result.ImpactedEndpoints {
-		if endpoint.Method == method && endpoint.Path == path {
+	for _, root := range result.Roots {
+		if root.Change.ID == changeID {
+			return root
+		}
+	}
+	t.Fatalf("root %q not found: %#v", changeID, result.Roots)
+	return RootImpact{}
+}
+
+func firstEndpointPath(t *testing.T, root Node) []Node {
+	t.Helper()
+	var visit func(Node, []Node) []Node
+	visit = func(node Node, path []Node) []Node {
+		path = append(path, node)
+		if node.Kind == "endpoint" {
+			return path
+		}
+		for _, child := range node.Children {
+			if got := visit(child, path); len(got) > 0 {
+				return got
+			}
+		}
+		return nil
+	}
+	got := visit(root, nil)
+	if len(got) == 0 {
+		t.Fatalf("endpoint path not found: %#v", root)
+	}
+	return got
+}
+
+func assertNodeKinds(t *testing.T, nodes []Node, want ...string) {
+	t.Helper()
+	if len(nodes) != len(want) {
+		t.Fatalf("node path length = %d, want %d: %#v", len(nodes), len(want), nodes)
+	}
+	for i := range want {
+		if nodes[i].Kind != want[i] {
+			t.Fatalf("node %d kind = %q, want %q: %#v", i, nodes[i].Kind, want[i], nodes)
+		}
+	}
+}
+
+func containsCycle(node Node) bool {
+	if node.Cycle {
+		return true
+	}
+	for _, child := range node.Children {
+		if containsCycle(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func findTreeNode(t *testing.T, root Node, id string) Node {
+	t.Helper()
+	if root.ID == id {
+		return root
+	}
+	for _, child := range root.Children {
+		if got, ok := findTreeNodeOptional(child, id); ok {
+			return got
+		}
+	}
+	t.Fatalf("node %q not found: %#v", id, root)
+	return Node{}
+}
+
+func findTreeNodeOptional(root Node, id string) (Node, bool) {
+	if root.ID == id {
+		return root, true
+	}
+	for _, child := range root.Children {
+		if got, ok := findTreeNodeOptional(child, id); ok {
+			return got, true
+		}
+	}
+	return Node{}, false
+}
+
+func assertTreeDiagnostic(t *testing.T, result TreeResult, code string) {
+	t.Helper()
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Code == code {
 			return
 		}
 	}
-	t.Fatalf("endpoint %s %s not found: %#v", method, path, result.ImpactedEndpoints)
-}
-
-func assertNoEndpoint(t *testing.T, result Result, method, path string) {
-	t.Helper()
-	for _, endpoint := range result.ImpactedEndpoints {
-		if endpoint.Method == method && endpoint.Path == path {
-			t.Fatalf("endpoint %s %s should not be impacted: %#v", method, path, result.ImpactedEndpoints)
-		}
-	}
+	t.Fatalf("diagnostic %q not found: %#v", code, result.Diagnostics)
 }

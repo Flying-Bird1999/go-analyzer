@@ -10,7 +10,7 @@ import (
 )
 
 func resolveCall(file *project.File, idx *astindex.Index, call *ast.CallExpr) (facts.SymbolID, string, bool) {
-	switch fun := call.Fun.(type) {
+	switch fun := unwrapGenericCallee(call.Fun).(type) {
 	case *ast.Ident:
 		id := astindex.FunctionSymbolID(file.Package.Path, fun.Name)
 		_, ok := idx.Symbols[id]

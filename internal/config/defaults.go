@@ -2,11 +2,14 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 )
 
 func Default() Config {
+	includeRawEvidence := true
+	includeDiff := true
 	return Config{
 		Project: ProjectConfig{
 			SkipDirs: []string{".git", ".cache", "vendor", "node_modules", "testdata"},
@@ -19,6 +22,12 @@ func Default() Config {
 		},
 		Annotation: AnnotationConfig{
 			Methods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
+		},
+		Analysis: AnalysisConfig{
+			MaxDepth:           0,
+			StopPropagation:    []string{},
+			IncludeRawEvidence: &includeRawEvidence,
+			IncludeDiff:        &includeDiff,
 		},
 	}
 }
@@ -35,6 +44,9 @@ func Load(path string) (Config, error) {
 	var override Config
 	if err := json.Unmarshal(data, &override); err != nil {
 		return Config{}, err
+	}
+	if override.Analysis.MaxDepth < 0 {
+		return Config{}, fmt.Errorf("analysis.maxDepth must be greater than or equal to zero")
 	}
 	return merge(cfg, override), nil
 }
@@ -73,6 +85,16 @@ func merge(base Config, override Config) Config {
 	base.Route.RouteGroupWrappers = append(base.Route.RouteGroupWrappers, override.Route.RouteGroupWrappers...)
 	base.Route.GeneratedRouteCalls = appendUniqueFold(base.Route.GeneratedRouteCalls, override.Route.GeneratedRouteCalls...)
 	base.Annotation.Methods = appendUniqueUpper(base.Annotation.Methods, override.Annotation.Methods...)
+	if override.Analysis.MaxDepth != 0 {
+		base.Analysis.MaxDepth = override.Analysis.MaxDepth
+	}
+	base.Analysis.StopPropagation = appendUniqueFold(base.Analysis.StopPropagation, override.Analysis.StopPropagation...)
+	if override.Analysis.IncludeRawEvidence != nil {
+		base.Analysis.IncludeRawEvidence = override.Analysis.IncludeRawEvidence
+	}
+	if override.Analysis.IncludeDiff != nil {
+		base.Analysis.IncludeDiff = override.Analysis.IncludeDiff
+	}
 	return base
 }
 

@@ -2,6 +2,7 @@ package reference
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
@@ -15,6 +16,7 @@ func TestExtractFunctionCallReference(t *testing.T) {
 	assertReference(t, store,
 		"func:example.com/reference-chain/controller::CheckIn",
 		"func:example.com/reference-chain/service::WebApiForwardGray",
+		facts.ReferenceKindCall,
 	)
 }
 
@@ -24,12 +26,118 @@ func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	assertReference(t, store,
 		"func:example.com/reference-chain/controller::Update",
 		"method:example.com/reference-chain/service:merchantSettingService:UpdateSubMerchantSettingByCode",
+		facts.ReferenceKindCall,
 	)
+}
+
+func TestExtractTypeReferences(t *testing.T) {
+	store := extractFixture(t, "type-impact")
+
+	assertReference(t, store,
+		"type:example.com/type-impact/model::CreateOrderRequest",
+		"type:example.com/type-impact/model::Address",
+		facts.ReferenceKindType,
+	)
+	assertReference(t, store,
+		"method:example.com/type-impact/controller:OrderAPI:Create",
+		"type:example.com/type-impact/model::CreateOrderRequest",
+		facts.ReferenceKindType,
+	)
+	assertReference(t, store,
+		"method:example.com/type-impact/controller:OrderAPI:Create",
+		"type:example.com/type-impact/model::CreateOrderResponse",
+		facts.ReferenceKindType,
+	)
+	assertReference(t, store,
+		"method:example.com/type-impact/controller:OrderAPI:Create",
+		"type:example.com/type-impact/controller::OrderAPI",
+		facts.ReferenceKindType,
+	)
+}
+
+func TestTypeConversionIsNotExtractedAsCall(t *testing.T) {
+	store := extractFixture(t, "type-impact")
+	from := facts.SymbolID("method:example.com/type-impact/controller:OrderAPI:Create")
+	typeID := facts.SymbolID("type:example.com/type-impact/controller::OrderID")
+	assertReference(t, store, from, typeID, facts.ReferenceKindType)
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToRaw == "OrderID" && ref.Kind == facts.ReferenceKindCall {
+			t.Fatalf("type conversion extracted as call: %#v", ref)
+		}
+	}
+}
+
+func TestExtractValueReferences(t *testing.T) {
+	store := extractFixture(t, "type-impact")
+	from := facts.SymbolID("func:example.com/type-impact/controller::Build")
+
+	assertReference(t, store,
+		from,
+		"const:example.com/type-impact/controller::Timeout",
+		facts.ReferenceKindValue,
+	)
+	assertReference(t, store,
+		from,
+		"var:example.com/type-impact/controller::DefaultRequest",
+		facts.ReferenceKindValue,
+	)
+}
+
+func TestReferenceIDUsesSemanticIdentityAndSourceLocation(t *testing.T) {
+	span := facts.SourceSpan{File: "service/service.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 12}
+	got := referenceID(
+		"func:example.com/project/controller::Build",
+		"func:example.com/project/service::Load",
+		facts.ReferenceKindCall,
+		span,
+	)
+	want := "ref:call:func:example.com/project/controller::Build:func:example.com/project/service::Load:service/service.go:10:2:10:12"
+	if got != want {
+		t.Fatalf("reference ID = %q, want %q", got, want)
+	}
+}
+
+func TestExtractUnresolvedProjectReferencesDoesNotAbortResolvedReferences(t *testing.T) {
+	store := extractReferenceFixture(t)
+
+	assertReference(t, store,
+		"func:example.com/reference-chain/controller::CheckIn",
+		"func:example.com/reference-chain/service::WebApiForwardGray",
+		facts.ReferenceKindCall,
+	)
+	assertReferenceDiagnostic(t, store, "symbol_reference_unresolved")
+	assertReferenceDiagnostic(t, store, "type_reference_unresolved")
+}
+
+func TestExtractGenericFunctionCallSeparatesCalleeAndTypeArguments(t *testing.T) {
+	store := extractReferenceFixture(t)
+	from := facts.SymbolID("func:example.com/reference-chain/controller::CheckIn")
+
+	assertReference(t, store,
+		from,
+		"func:example.com/reference-chain/service::Fetch",
+		facts.ReferenceKindCall,
+	)
+	assertReference(t, store,
+		from,
+		"type:example.com/reference-chain/service::Response",
+		facts.ReferenceKindType,
+	)
+	for _, diagnostic := range store.Diagnostics {
+		if strings.Contains(diagnostic.Message, "Fetch") {
+			t.Fatalf("generic function diagnosed as unresolved type: %#v", diagnostic)
+		}
+	}
 }
 
 func extractReferenceFixture(t *testing.T) *facts.Store {
 	t.Helper()
-	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "reference-chain")
+	return extractFixture(t, "reference-chain")
+}
+
+func extractFixture(t *testing.T, fixture string) *facts.Store {
+	t.Helper()
+	root := filepath.Join("..", "..", "..", "testdata", "fixtures", fixture)
 	p, err := project.Load(root, project.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -45,12 +153,22 @@ func extractReferenceFixture(t *testing.T) *facts.Store {
 	return store
 }
 
-func assertReference(t *testing.T, store *facts.Store, from, to facts.SymbolID) {
+func assertReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) {
 	t.Helper()
 	for _, ref := range store.References {
-		if ref.FromSymbol == from && ref.ToSymbol == to {
+		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == kind {
 			return
 		}
 	}
-	t.Fatalf("reference %s -> %s not found: %#v", from, to, store.References)
+	t.Fatalf("reference %s -[%s]-> %s not found: %#v", from, kind, to, store.References)
+}
+
+func assertReferenceDiagnostic(t *testing.T, store *facts.Store, code string) {
+	t.Helper()
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == code {
+			return
+		}
+	}
+	t.Fatalf("diagnostic %q not found: %#v", code, store.Diagnostics)
 }

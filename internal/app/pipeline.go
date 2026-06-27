@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/gomod"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -69,8 +72,15 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		return nil, err
 	}
 	store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
-	result := impact.Analyze(store)
-	return output.RenderImpactJSON(result)
+	result := impact.AnalyzeTrees(store, impact.TreeOptions{
+		MaxDepth:        cfg.Analysis.MaxDepth,
+		StopPropagation: cfg.Analysis.StopPropagation,
+	})
+	doc := output.BuildImpactDocument(store.Project, fileChanges, result, output.ImpactDocumentOptions{
+		IncludeDiff:        cfg.Analysis.IncludeDiff,
+		IncludeRawEvidence: cfg.Analysis.IncludeRawEvidence,
+	})
+	return output.RenderImpactTreeJSON(doc)
 }
 
 func loadConfig(path string) (config.Config, error) {
@@ -91,6 +101,24 @@ func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error)
 		return nil, err
 	}
 	store := facts.NewStore(p.Root, p.ModulePath)
+	modBytes, err := os.ReadFile(filepath.Join(p.Root, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("read go.mod dependencies: %w", err)
+	}
+	modules, err := gomod.ExtractDependencies(modBytes)
+	if err != nil {
+		return nil, fmt.Errorf("extract go.mod dependencies: %w", err)
+	}
+	store.Modules = append(store.Modules, modules...)
+	for _, loadDiagnostic := range p.Diagnostics {
+		diagnostics.AddFact(store, diagnostics.Diagnostic{
+			ID:       fmt.Sprintf("diagnostic:%s:%s", loadDiagnostic.Code, loadDiagnostic.File),
+			Code:     diagnostics.Code(loadDiagnostic.Code),
+			Severity: diagnostics.SeverityWarning,
+			Message:  loadDiagnostic.Message,
+			Span:     facts.SourceSpan{File: loadDiagnostic.File},
+		})
+	}
 	for _, symbol := range idx.Symbols {
 		store.AddSymbol(symbol)
 	}

@@ -1,9 +1,15 @@
 package graph
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	routeextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/link"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
 func TestReverseGraphLookupByTarget(t *testing.T) {
@@ -48,19 +54,62 @@ func TestRouteGraphMiddlewareAffectsOnlyLaterRoutes(t *testing.T) {
 	}
 }
 
-func TestEvidenceChainRecordsNodesAndEdges(t *testing.T) {
-	chain := NewEvidenceChain("chain:service")
-	chain.AddNode("symbol:service", "changed service method", facts.SourceSpan{File: "service/common.go", StartLine: 10, EndLine: 12})
-	chain.AddNode("symbol:controller", "controller reference", facts.SourceSpan{File: "controller/common.go", StartLine: 20, EndLine: 22})
-	chain.AddEdge("symbol:service", "symbol:controller", "referenced_by")
+func TestRouteGraphScopesGroupsByRouteFunction(t *testing.T) {
+	store := extractAndLinkFixture(t, "group-scope")
+	graph := NewRouteGraph(store)
 
-	if len(chain.Nodes) != 2 {
-		t.Fatalf("nodes = %d", len(chain.Nodes))
+	var bindingID string
+	for _, binding := range store.Middleware {
+		if strings.HasSuffix(string(binding.RouteFunc), "::InitA") {
+			bindingID = binding.ID
+			break
+		}
 	}
-	if len(chain.Edges) != 1 {
-		t.Fatalf("edges = %d", len(chain.Edges))
+	if bindingID == "" {
+		t.Fatalf("InitA middleware not found: %#v", store.Middleware)
 	}
-	if chain.Edges[0].Reason != "referenced_by" {
-		t.Fatalf("reason = %q", chain.Edges[0].Reason)
+
+	routes := graph.RoutesAffectedByMiddleware(bindingID)
+	if len(routes) != 1 || routes[0].ResolvedPath != "/a/one" {
+		t.Fatalf("affected routes = %#v", routes)
 	}
+}
+
+func TestRouteGraphIncludesDescendantGroupRoutes(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.RouteGroups = append(store.RouteGroups,
+		facts.RouteGroupFact{ID: "group:parent", GroupVar: "parent"},
+		facts.RouteGroupFact{ID: "group:child", GroupVar: "child", ParentGroupID: "group:parent"},
+	)
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:      "route:child",
+		GroupID: "group:child",
+	})
+
+	graph := NewRouteGraph(store)
+	routes := graph.RoutesForGroup("group:parent")
+	if len(routes) != 1 || routes[0].ID != "route:child" {
+		t.Fatalf("descendant routes = %#v", routes)
+	}
+}
+
+func extractAndLinkFixture(t *testing.T, fixture string) *facts.Store {
+	t.Helper()
+	root := filepath.Join("..", "..", "testdata", "fixtures", fixture)
+	p, err := project.Load(root, project.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := astindex.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := facts.NewStore(p.Root, p.ModulePath)
+	if err := routeextract.Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := link.Run(idx, store); err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

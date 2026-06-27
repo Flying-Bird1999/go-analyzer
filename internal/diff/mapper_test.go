@@ -41,9 +41,9 @@ func TestMapRangesToSemanticFacts(t *testing.T) {
 
 	got := MapChanges(changes, store, "git_diff")
 	assertChangeKind(t, got, facts.ChangeKindAnnotationChanged)
-	assertChangeKind(t, got, facts.ChangeKindMethodBodyChanged)
-	assertChangeKind(t, got, facts.ChangeKindRouteRegistrationChanged)
-	assertChangeKind(t, got, facts.ChangeKindMiddlewareBindingChanged)
+	assertChangeKind(t, got, facts.ChangeKindSymbolChanged)
+	assertChangeKind(t, got, facts.ChangeKindRouteChanged)
+	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
 }
 
 func TestMapRealRouteFixtureRange(t *testing.T) {
@@ -57,7 +57,99 @@ func TestMapRealRouteFixtureRange(t *testing.T) {
 		NewPath: store.Middleware[0].Span.File,
 		Ranges:  []LineRange{{StartLine: store.Middleware[0].Span.StartLine, EndLine: store.Middleware[0].Span.EndLine}},
 	}}, store, "git_diff")
-	assertChangeKind(t, got, facts.ChangeKindMiddlewareBindingChanged)
+	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
+}
+
+func TestMapChangesSelectsSmallestContainingSymbol(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Symbols = append(store.Symbols,
+		facts.SymbolFact{
+			ID:   "type:example.com/project/model::Order",
+			Kind: "type",
+			Span: facts.SourceSpan{File: "model/order.go", StartLine: 10, EndLine: 30},
+		},
+		facts.SymbolFact{
+			ID:   "var:example.com/project/model::DefaultOrder",
+			Kind: "var",
+			Span: facts.SourceSpan{File: "model/order.go", StartLine: 15, EndLine: 18},
+		},
+	)
+
+	got := MapChanges([]FileChange{{
+		NewPath: "model/order.go",
+		Ranges:  []LineRange{{StartLine: 16, EndLine: 16}},
+	}}, store, "git_diff")
+	if len(got) != 1 {
+		t.Fatalf("changes = %#v", got)
+	}
+	if got[0].Kind != facts.ChangeKindSymbolChanged || got[0].SymbolID != "var:example.com/project/model::DefaultOrder" {
+		t.Fatalf("mapped change = %#v", got[0])
+	}
+}
+
+func TestMapChangesMapsRouteGroupBeforeEnclosingSymbol(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Symbols = append(store.Symbols, facts.SymbolFact{
+		ID:   "func:example.com/project/router::Init",
+		Kind: "func",
+		Span: facts.SourceSpan{File: "router/router.go", StartLine: 10, EndLine: 30},
+	})
+	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
+		ID:   "route_group:api",
+		Span: facts.SourceSpan{File: "router/router.go", StartLine: 15, EndLine: 15},
+	})
+
+	got := MapChanges([]FileChange{{
+		NewPath: "router/router.go",
+		Ranges:  []LineRange{{StartLine: 15, EndLine: 15}},
+	}}, store, "git_diff")
+	if len(got) != 1 || got[0].Kind != facts.ChangeKindRouteGroupChanged || got[0].TargetID != "route_group:api" {
+		t.Fatalf("mapped change = %#v", got)
+	}
+}
+
+func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Symbols = append(store.Symbols, facts.SymbolFact{
+		ID:   "type:example.com/project/model::Order",
+		Kind: "type",
+		Span: facts.SourceSpan{File: "model/order.go", StartLine: 10, EndLine: 20},
+	})
+
+	got := MapChanges([]FileChange{{
+		NewPath: "model/order.go",
+		Ranges: []LineRange{{
+			StartLine: 12,
+			EndLine:   12,
+			Kind:      RangeKindDeletionAnchor,
+		}},
+	}}, store, "git_diff")
+	if len(got) != 1 || got[0].SymbolID != "type:example.com/project/model::Order" || got[0].Confidence != facts.ConfidenceMedium {
+		t.Fatalf("mapped deletion = %#v", got)
+	}
+}
+
+func TestMapChangesDiagnosesUnresolvedDeletedSymbol(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+
+	got := MapChanges([]FileChange{{
+		OldPath: "model/deleted.go",
+		Status:  StatusDeleted,
+		Ranges: []LineRange{{
+			StartLine: 1,
+			EndLine:   1,
+			Kind:      RangeKindDeletionAnchor,
+		}},
+	}}, store, "git_diff")
+	if len(got) != 1 || got[0].Kind != facts.ChangeKindFileChanged {
+		t.Fatalf("changes = %#v", got)
+	}
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "deleted_symbol_unresolved" {
+			return
+		}
+	}
+	t.Fatalf("deleted symbol diagnostic not found: %#v", store.Diagnostics)
 }
 
 func loadFactsForDiff(t *testing.T, root string) *facts.Store {

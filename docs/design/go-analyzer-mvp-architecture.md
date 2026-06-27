@@ -1,5 +1,8 @@
 # go-analyzer MVP 架构技术方案
 
+> 本文保留 MVP 阶段的架构设计。下一阶段的符号级影响传播和原始影响树方案见
+> `docs/design/go-symbol-impact-architecture.md`。
+
 ## 1. 文档目标
 
 本文定义 `go-analyzer` MVP 的正式技术方案，也是当前阶段的最终汇总方案。旧版 `go-bff-impact-analysis-design.md` 中关于影响传播、route context、`go.mod` 依赖变更和降级策略的内容，已被合并到本文对应章节；后续架构讨论以本文为准。
@@ -165,7 +168,7 @@ changed service method
   -> impacted HTTP endpoint
 ```
 
-因此证据链不是 debug 信息，而是核心产品能力。所有事实、边、传播结果都必须带来源位置。
+因此路径证据不是 debug 信息，而是核心产品能力。所有事实、边、传播结果都必须带来源位置。
 
 ## 4. 总体架构
 
@@ -198,13 +201,13 @@ flowchart TD
     SymbolLinker["symbol linker"]
     HandlerLinker["handler linker"]
     RouteLinker["route-handler-annotation linker"]
-    ModuleLinker["module usage linker"]
+    MiddlewareLinker["middleware symbol linker"]
   end
 
   subgraph Graph["Graph Layer"]
     ReverseGraph["reverse reference graph"]
     RouteGraph["route domain graph"]
-    EvidenceGraph["evidence graph"]
+    ImpactTree["path-preserving impact tree"]
   end
 
   subgraph Impact["Impact Analysis Layer"]
@@ -236,12 +239,11 @@ flowchart TD
   AnnotationExtractor --> RouteLinker
   RouteExtractor --> HandlerLinker
   ReferenceExtractor --> ReverseGraph
-  GoModExtractor --> ModuleLinker
+  GoModExtractor --> Store
 
   SymbolLinker --> ReverseGraph
   HandlerLinker --> RouteGraph
   RouteLinker --> RouteGraph
-  ModuleLinker --> ReverseGraph
 
   ChangeDetector --> Propagator
   ReverseGraph --> Propagator
@@ -276,7 +278,7 @@ sequenceDiagram
   Extract->>Store: add ModuleFact
   CLI->>Linker: link facts
   Linker->>Store: add semantic links
-  CLI->>Graph: build reverse / route / evidence graph
+  CLI->>Graph: build reverse / route graph
   Graph-->>CLI: GraphIndex
   CLI->>Output: render JSON
 ```
@@ -291,7 +293,7 @@ flowchart LR
   RouteSites --> HandlerSymbols["handler symbols"]
   HandlerSymbols --> Annotations["endpoint annotations"]
   Annotations --> Endpoints["impacted HTTP endpoints"]
-  Endpoints --> Evidence["evidence chains"]
+  Endpoints --> Tree["impact tree / path evidence"]
 ```
 
 ## 5. 建议目录结构
@@ -352,25 +354,25 @@ go-analyzer/
 │   │   ├── symbol.go
 │   │   ├── handler.go
 │   │   ├── route.go
-│   │   ├── module.go
+│   │   ├── middleware.go
 │   │   └── linker_test.go
 │   ├── graph/
 │   │   ├── reverse.go
 │   │   ├── route.go
-│   │   ├── evidence.go
 │   │   └── graph_test.go
 │   ├── diff/
 │   │   ├── parser.go
-│   │   ├── changed_range.go
+│   │   ├── range.go
 │   │   └── mapper.go
 │   ├── impact/
-│   │   ├── analyzer.go
-│   │   ├── propagation.go
+│   │   ├── tree.go
+│   │   ├── tree_builder.go
 │   │   ├── endpoint.go
 │   │   └── analyzer_test.go
 │   ├── output/
-│   │   ├── schema.go
 │   │   ├── json.go
+│   │   ├── contract.go
+│   │   ├── impact_tree.go
 │   │   └── golden_test.go
 │   └── diagnostics/
 │       ├── diagnostics.go
@@ -921,7 +923,7 @@ MVP 后半段再建设。
 - 将 changed ranges 映射到 facts。
 - 从 changed facts 出发做反向传播。
 - 经过 route graph 找到 handler 和 annotation。
-- 输出 impacted endpoint 和 evidence chain。
+- 输出 impacted endpoint 和 impact tree / path evidence。
 
 注意：
 
@@ -985,6 +987,9 @@ changed go.mod module
   -> route handlers
   -> endpoint annotations
 ```
+
+当前 `go.mod` dependency facts 已接入 facts 输出；上面的 go.mod diff 到 endpoint
+传播链路尚未接入当前 impact tree。
 
 ## 8. 输出协议
 
@@ -1176,7 +1181,7 @@ MVP 所需能力已有成熟参考：
 | package 加载失败 | AST fallback + diagnostic |
 | interface / DI 分发复杂 | MVP 标记 low confidence，后续 SSA 增强 |
 | generated route 数量多 | 作为普通 Go 源码处理，同时标记 generated source family |
-| shared util 影响过大 | 输出 evidence chain，后续做聚合和截断 |
+| shared util 影响过大 | 输出 impact tree，后续做聚合和截断 |
 | middleware 顺序跨函数不确定 | 同函数内精确记录 statement order，跨函数依赖 wrapper summary，无法总结则 diagnostic |
 | `go.mod` 外部版本 diff 不可得 | 不分析外部 diff，按本地 import usage 传播并标记 basis |
 | route handler 先存入 map / slice 再注册 | MVP 记录 unresolved raw handler，后续专项支持 |
@@ -1315,14 +1320,15 @@ MVP 所需能力已有成熟参考：
 - unified diff parser。
 - changed file ranges。
 - changed range -> enclosing symbol / route / annotation / middleware / module fact。
-- route group、route registration、middleware binding、`go.mod` dependency change 对应的 `ChangeFact`。
+- route group、route registration、middleware binding 对应的 `ChangeFact`。
+- go.mod dependency facts 可输出；go.mod diff 到 `ChangeFact` / impact tree 的传播后续处理。
 
 验收：
 
 - 修改 controller 函数体，可识别 changed method。
 - 修改 route call，可识别 changed route registration。
 - 修改 `group.Use(...)`，可识别 changed middleware binding。
-- 修改 `go.mod`，可识别 module change。
+- 当前 go.mod dependency facts 可识别；module change 传播后续处理。
 
 ### M7: MVP Impact Analysis
 
@@ -1336,9 +1342,9 @@ MVP 所需能力已有成熟参考：
 - route registration -> handler -> annotation。
 - route group prefix -> route registration -> handler -> annotation。
 - middleware binding/function -> affected route registration -> handler -> annotation。
-- module usage -> local declaration -> endpoint。
+- module usage -> local declaration -> endpoint（已从当前 impact tree 推迟到后续）。
 - impacted endpoint JSON。
-- evidence chain。
+- impact tree / path evidence。
 
 验收：
 
@@ -1347,7 +1353,7 @@ MVP 所需能力已有成熟参考：
 - route registration 变更可追到对应 handler annotation。
 - route group prefix 变更可追到 group 下 handler annotation。
 - middleware binding 变更只影响后续 route registration。
-- `go.mod` dependency change 可按 precise / file fallback / unreferenced basis 输出。
+- 当前 go.mod dependency facts 可输出；`go.mod` dependency change 到 endpoint 的传播推迟到后续。
 
 ### M8: Real Project Validation
 
@@ -1438,7 +1444,7 @@ go-analyzer facts --project /absolute/path/to/sc1-admin-bff --format json
 - `/api/facts`
 - `/api/impact`
 - route graph 可视化。
-- endpoint evidence chain 展示。
+- endpoint impact tree 展示。
 
 ### 14.3 更强语义分析
 
@@ -1530,8 +1536,8 @@ Go diff -> impacted HTTP endpoints -> frontend analyzer --api
 目标：
 
 - 解析 unified diff。
-- 将 changed ranges 映射到 symbol / route / middleware / module facts。
-- 将 module change 映射到 local module usage facts。
+- 将 changed ranges 映射到 symbol / route / middleware facts。
+- 保留 go.mod dependency facts；module change 到 local module usage facts 的传播属于后续。
 
 独立验收：
 
@@ -1546,12 +1552,12 @@ Go diff -> impacted HTTP endpoints -> frontend analyzer --api
 
 目标：
 
-- 构建 reverse reference graph、route domain graph、evidence graph。
+- 构建 reverse reference graph、route domain graph 和 path-preserving impact tree。
 - 从 changed facts 传播到 annotation endpoint。
 
 独立验收：
 
-- service method、controller method、route registration、middleware binding、go.mod dependency change 都能生成 impacted endpoint 和 evidence chain。
+- service method、controller method、route registration、middleware binding 都能生成 impacted endpoint 和 impact tree；go.mod dependency change 传播属于后续增强。
 
 ### 15.6 Real Project Validation And Diagnostics
 

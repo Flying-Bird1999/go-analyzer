@@ -61,6 +61,34 @@ func TestRunLinksRouteHandlerAndAnnotation(t *testing.T) {
 	}
 }
 
+func TestRunLinksMiddlewareSymbols(t *testing.T) {
+	_, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "middleware-order"))
+
+	if err := Run(idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	assertMiddlewareSymbol(t, store, "Auth()", "func:example.com/middleware-order/router::Auth")
+	assertMiddlewareSymbol(t, store, "h1", "func:example.com/middleware-order/router::h1")
+	assertMiddlewareSymbol(t, store, "Audit()", "func:example.com/middleware-order/router::Audit")
+}
+
+func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want facts.SymbolID) {
+	t.Helper()
+	for _, binding := range store.Middleware {
+		if binding.MiddlewareRaw != raw {
+			continue
+		}
+		for _, symbol := range binding.MiddlewareSymbols {
+			if symbol == want {
+				return
+			}
+		}
+		t.Fatalf("middleware %q symbols = %#v, want %q", raw, binding.MiddlewareSymbols, want)
+	}
+	t.Fatalf("middleware %q not found: %#v", raw, store.Middleware)
+}
+
 func loadAndExtract(t *testing.T, root string) (*project.Project, *astindex.Index, *facts.Store) {
 	t.Helper()
 	p, err := project.Load(root, project.Options{})

@@ -66,8 +66,15 @@ index 1111111..2222222 100644
 	if err := os.WriteFile(diffPath, diff, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := runWithCapturedStdout(t, []string{"impact", "--project", root, "--diff", diffPath, "--format", "json"}); err != nil {
+	out, err := runWithCapturedStdoutBytes(t, []string{"impact", "--project", root, "--diff", diffPath, "--format", "json"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"schemaVersion": "go-impact/v1alpha1"`)) {
+		t.Fatalf("impact output = %s", out)
+	}
+	if !bytes.Contains(out, []byte(`"fileSources"`)) {
+		t.Fatalf("impact output = %s", out)
 	}
 }
 

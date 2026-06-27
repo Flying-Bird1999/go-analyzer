@@ -49,7 +49,7 @@ func (idx *Index) indexGenDecl(p *project.Project, pkg *project.Package, file *p
 			}
 			for _, name := range s.Names {
 				id := ValueSymbolID(kind, pkg.Path, name.Name)
-				idx.Symbols[id] = symbolFact(p, file, id, kind, pkg.Path, "", name.Name, name.Pos(), name.End())
+				idx.Symbols[id] = symbolFact(p, file, id, kind, pkg.Path, "", name.Name, s.Pos(), s.End())
 				if kind == "var" {
 					if receiver := receiverTypeFromValueSpec(s); receiver != "" {
 						idx.VarReceiverTypes[string(id)] = receiver

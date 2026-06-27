@@ -15,7 +15,7 @@
     {
       "confidence": "high",
       "from_symbol": "method:example.com/mini-bff/controller:CommonController:CheckIn",
-      "id": "ref:method:example.com/mini-bff/controller:CommonController:CheckIn:func:example.com/mini-bff/service::CheckIn:0",
+      "id": "ref:call:method:example.com/mini-bff/controller:CommonController:CheckIn:func:example.com/mini-bff/service::CheckIn:controller/common.go:12:2:12:19",
       "kind": "call",
       "span": {
         "end_col": 19,
@@ -26,6 +26,66 @@
       },
       "to_raw": "service.CheckIn",
       "to_symbol": "func:example.com/mini-bff/service::CheckIn"
+    },
+    {
+      "confidence": "high",
+      "from_symbol": "func:example.com/mini-bff/router::Register",
+      "id": "ref:type:func:example.com/mini-bff/router::Register:type:example.com/mini-bff/controller::CommonController:router/router.go:8:6:8:26",
+      "kind": "type",
+      "span": {
+        "end_col": 26,
+        "end_line": 8,
+        "file": "router/router.go",
+        "start_col": 6,
+        "start_line": 8
+      },
+      "to_raw": "ctl.CommonController",
+      "to_symbol": "type:example.com/mini-bff/controller::CommonController"
+    },
+    {
+      "confidence": "high",
+      "from_symbol": "method:example.com/mini-bff/controller:CommonController:CheckIn",
+      "id": "ref:type:method:example.com/mini-bff/controller:CommonController:CheckIn:type:example.com/mini-bff/controller::CommonController:controller/common.go:11:9:11:25",
+      "kind": "type",
+      "span": {
+        "end_col": 25,
+        "end_line": 11,
+        "file": "controller/common.go",
+        "start_col": 9,
+        "start_line": 11
+      },
+      "to_raw": "CommonController",
+      "to_symbol": "type:example.com/mini-bff/controller::CommonController"
+    },
+    {
+      "confidence": "high",
+      "from_symbol": "var:example.com/mini-bff/controller::Common",
+      "id": "ref:type:var:example.com/mini-bff/controller::Common:type:example.com/mini-bff/controller::CommonController:controller/common.go:7:14:7:30",
+      "kind": "type",
+      "span": {
+        "end_col": 30,
+        "end_line": 7,
+        "file": "controller/common.go",
+        "start_col": 14,
+        "start_line": 7
+      },
+      "to_raw": "CommonController",
+      "to_symbol": "type:example.com/mini-bff/controller::CommonController"
+    },
+    {
+      "confidence": "high",
+      "from_symbol": "func:example.com/mini-bff/service::CheckIn",
+      "id": "ref:value:func:example.com/mini-bff/service::CheckIn:var:example.com/mini-bff/service::Version:service/common.go:6:9:6:16",
+      "kind": "value",
+      "span": {
+        "end_col": 16,
+        "end_line": 6,
+        "file": "service/common.go",
+        "start_col": 9,
+        "start_line": 6
+      },
+      "to_raw": "Version",
+      "to_symbol": "var:example.com/mini-bff/service::Version"
     }
   ],
   "route_groups": [],
@@ -37,7 +97,7 @@
       "name": "DefaultChannel",
       "package_path": "example.com/mini-bff/controller",
       "span": {
-        "end_col": 21,
+        "end_col": 32,
         "end_line": 5,
         "file": "controller/common.go",
         "start_col": 7,
@@ -103,7 +163,7 @@
       "name": "Common",
       "package_path": "example.com/mini-bff/controller",
       "span": {
-        "end_col": 11,
+        "end_col": 32,
         "end_line": 7,
         "file": "controller/common.go",
         "start_col": 5,
@@ -116,7 +176,7 @@
       "name": "Version",
       "package_path": "example.com/mini-bff/service",
       "span": {
-        "end_col": 12,
+        "end_col": 19,
         "end_line": 3,
         "file": "service/common.go",
         "start_col": 5,

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gopkg.inshopline.com/bff/go-analyzer/internal/impact"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 )
 
@@ -96,6 +95,28 @@ func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	}
 }
 
+func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "gomod-change")
+	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc output.Document
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Modules) != 2 {
+		t.Fatalf("modules = %#v", doc.Modules)
+	}
+	for _, module := range doc.Modules {
+		if module.Path == "github.com/gin-gonic/gin" && module.ReplaceVersion == "v1.10.1" {
+			return
+		}
+	}
+	t.Fatalf("replaced gin module not found: %#v", doc.Modules)
+}
+
 func TestRunFactsUsesConfigFile(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "configurable-rules"))
 	if err != nil {
@@ -156,14 +177,108 @@ index 1111111..2222222 100644
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result impact.Result
-	if err := json.Unmarshal(got, &result); err != nil {
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.ImpactedEndpoints) != 1 {
-		t.Fatalf("impacted endpoints = %d: %#v", len(result.ImpactedEndpoints), result.ImpactedEndpoints)
+	assertEndpointSummary(t, doc, "GET", "/api/bff-web/common/checkIn")
+}
+
+func TestRunImpactMapsStructChangeToEndpointTree(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "type-impact"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if result.ImpactedEndpoints[0].Path != "/api/bff-web/common/checkIn" {
-		t.Fatalf("endpoint path = %q", result.ImpactedEndpoints[0].Path)
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/model/model.go b/model/model.go\n" +
+		"--- a/model/model.go\n" +
+		"+++ b/model/model.go\n" +
+		"@@ -1,5 +1,5 @@\n" +
+		" package model\n" +
+		" \n" +
+		" type Address struct {\n" +
+		"-\tCity string `json:\"city_name\"`\n" +
+		"+\tCity string `json:\"city\"`\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
 	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertSourceRoot(t, doc, "model/model.go", "type:example.com/type-impact/model::Address")
+	assertEndpointSummary(t, doc, "POST", "/orders")
+}
+
+func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "valid.go"), []byte("package partial\n\nfunc Valid() {\n\t_ = 1\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "broken.go"), []byte("package partial\n\nfunc Broken( {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/valid.go b/valid.go\n" +
+		"--- a/valid.go\n" +
+		"+++ b/valid.go\n" +
+		"@@ -2,4 +2,4 @@ package partial\n" +
+		" \n" +
+		" func Valid() {\n" +
+		"-\t_ = 0\n" +
+		"+\t_ = 1\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range doc.Meta.Diagnostics {
+		if diagnostic.Code == "package_load_failed" && diagnostic.Span.File == "broken.go" {
+			return
+		}
+	}
+	t.Fatalf("package load diagnostic not found: %#v", doc.Meta.Diagnostics)
+}
+
+func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootID string) {
+	t.Helper()
+	for _, source := range doc.FileSources {
+		if source.SourceFile != sourceFile {
+			continue
+		}
+		if _, ok := source.Symbols[rootID]; ok {
+			return
+		}
+		t.Fatalf("root %q not found in %q: %#v", rootID, sourceFile, source.Symbols)
+	}
+	t.Fatalf("source file %q not found: %#v", sourceFile, doc.FileSources)
+}
+
+func assertEndpointSummary(t *testing.T, doc output.ImpactDocument, method, path string) {
+	t.Helper()
+	for _, source := range doc.FileSources {
+		for _, endpoint := range source.ImpactedEndpoints {
+			if endpoint.Method == method && endpoint.Path == path {
+				return
+			}
+		}
+	}
+	t.Fatalf("endpoint %s %s not found: %#v", method, path, doc.FileSources)
 }

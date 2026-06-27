@@ -4,6 +4,7 @@ type Config struct {
 	Project    ProjectConfig    `json:"project,omitempty"`
 	Route      RouteConfig      `json:"route,omitempty"`
 	Annotation AnnotationConfig `json:"annotation,omitempty"`
+	Analysis   AnalysisConfig   `json:"analysis,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -25,4 +26,11 @@ type WrapperRule struct {
 
 type AnnotationConfig struct {
 	Methods []string `json:"methods,omitempty"`
+}
+
+type AnalysisConfig struct {
+	MaxDepth           int      `json:"maxDepth,omitempty"`
+	StopPropagation    []string `json:"stopPropagation,omitempty"`
+	IncludeRawEvidence *bool    `json:"includeRawEvidence,omitempty"`
+	IncludeDiff        *bool    `json:"includeDiff,omitempty"`
 }

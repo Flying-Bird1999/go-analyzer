@@ -10,6 +10,7 @@ func InitRouter(g *RouterGroup) {
 	g.GET("/a", h1)
 	g.Use(Auth())
 	g.GET("/b", h2)
+	g.Use(h1)
 	child := g.Group("/child", Audit())
 	child.GET("/c", h1)
 }

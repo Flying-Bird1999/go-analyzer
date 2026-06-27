@@ -8,6 +8,7 @@ import (
 )
 
 func Run(idx *astindex.Index, store *facts.Store) error {
+	linkMiddlewareSymbols(idx, store)
 	byHandler := annotationsByHandler(store)
 	for i := range store.Routes {
 		handler, ok := ResolveHandlerSymbol(idx, store.Routes[i])

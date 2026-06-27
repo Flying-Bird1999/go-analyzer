@@ -1,7 +1,6 @@
 package project
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -21,9 +20,10 @@ func Load(root string, opts Options) (*Project, error) {
 		return nil, err
 	}
 	p := &Project{
-		Root:       absRoot,
-		ModulePath: modulePath,
-		Packages:   map[string]*Package{},
+		Root:        absRoot,
+		ModulePath:  modulePath,
+		Packages:    map[string]*Package{},
+		Diagnostics: []LoadDiagnostic{},
 	}
 	if err := filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -62,7 +62,18 @@ func (p *Project) loadFile(path string) error {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		rel, relErr := filepath.Rel(p.Root, path)
+		if relErr != nil {
+			rel = path
+		}
+		rel = filepath.ToSlash(rel)
+		message := strings.ReplaceAll(err.Error(), path, rel)
+		p.Diagnostics = append(p.Diagnostics, LoadDiagnostic{
+			Code:    "package_load_failed",
+			File:    rel,
+			Message: "failed to parse Go source: " + message,
+		})
+		return nil
 	}
 	dir := filepath.Dir(path)
 	pkgPath, err := p.packagePathForDir(dir)

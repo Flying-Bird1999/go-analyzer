@@ -1,6 +1,7 @@
 package project
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,5 +36,30 @@ func TestLoadProjectScansGoFilesAndImports(t *testing.T) {
 				t.Fatalf("test file should be skipped: %s", file.Path)
 			}
 		}
+	}
+}
+
+func TestLoadSkipsInvalidGoFileAndRecordsDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "valid.go"), []byte("package partial\n\nfunc Valid() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "broken.go"), []byte("package partial\n\nfunc Broken( {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Load(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != "package_load_failed" {
+		t.Fatalf("diagnostics = %#v", p.Diagnostics)
+	}
+	pkg := p.Packages["example.com/partial"]
+	if pkg == nil || len(pkg.Files) != 1 || !strings.HasSuffix(pkg.Files[0].Path, "valid.go") {
+		t.Fatalf("loaded package = %#v", pkg)
 	}
 }

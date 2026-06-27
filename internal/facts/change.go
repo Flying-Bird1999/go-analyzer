@@ -3,11 +3,12 @@ package facts
 type ChangeKind string
 
 const (
-	ChangeKindMethodBodyChanged        ChangeKind = "method_body_changed"
-	ChangeKindRouteRegistrationChanged ChangeKind = "route_registration_changed"
-	ChangeKindMiddlewareBindingChanged ChangeKind = "middleware_binding_changed"
-	ChangeKindAnnotationChanged        ChangeKind = "annotation_changed"
-	ChangeKindFileChanged              ChangeKind = "file_changed"
+	ChangeKindSymbolChanged     ChangeKind = "symbol_changed"
+	ChangeKindRouteGroupChanged ChangeKind = "route_group_changed"
+	ChangeKindRouteChanged      ChangeKind = "route_changed"
+	ChangeKindMiddlewareChanged ChangeKind = "middleware_changed"
+	ChangeKindAnnotationChanged ChangeKind = "annotation_changed"
+	ChangeKindFileChanged       ChangeKind = "file_changed"
 )
 
 type ChangeRange struct {

@@ -8,6 +8,7 @@ type WrapperFact struct {
 type RouteGroupFact struct {
 	ID             string     `json:"id"`
 	GroupVar       string     `json:"group_var"`
+	ParentGroupID  string     `json:"parent_group_id,omitempty"`
 	ParentGroupVar string     `json:"parent_group_var,omitempty"`
 	Prefix         string     `json:"prefix"`
 	RouteFunc      SymbolID   `json:"route_func"`
@@ -21,6 +22,7 @@ type RouteRegistrationFact struct {
 	LocalPath      string        `json:"local_path"`
 	PathRaw        string        `json:"path_raw,omitempty"`
 	ResolvedPath   string        `json:"resolved_path,omitempty"`
+	GroupID        string        `json:"group_id"`
 	GroupVar       string        `json:"group_var"`
 	HandlerRaw     string        `json:"handler_raw"`
 	HandlerSymbol  SymbolID      `json:"handler_symbol,omitempty"`
@@ -33,10 +35,12 @@ type RouteRegistrationFact struct {
 }
 
 type MiddlewareBindingFact struct {
-	ID             string     `json:"id"`
-	GroupVar       string     `json:"group_var"`
-	MiddlewareRaw  string     `json:"middleware_raw"`
-	RouteFunc      SymbolID   `json:"route_func"`
-	StatementIndex int        `json:"statement_index"`
-	Span           SourceSpan `json:"span"`
+	ID                string     `json:"id"`
+	GroupID           string     `json:"group_id"`
+	GroupVar          string     `json:"group_var"`
+	MiddlewareRaw     string     `json:"middleware_raw"`
+	MiddlewareSymbols []SymbolID `json:"middleware_symbols,omitempty"`
+	RouteFunc         SymbolID   `json:"route_func"`
+	StatementIndex    int        `json:"statement_index"`
+	Span              SourceSpan `json:"span"`
 }

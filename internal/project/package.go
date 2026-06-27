@@ -10,9 +10,16 @@ type Options struct {
 }
 
 type Project struct {
-	Root       string
-	ModulePath string
-	Packages   map[string]*Package
+	Root        string
+	ModulePath  string
+	Packages    map[string]*Package
+	Diagnostics []LoadDiagnostic
+}
+
+type LoadDiagnostic struct {
+	Code    string
+	File    string
+	Message string
 }
 
 type Package struct {

@@ -20,5 +20,11 @@
   },
   "annotation": {
     "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+  },
+  "analysis": {
+    "maxDepth": 0,
+    "stopPropagation": ["internal/generated/**"],
+    "includeRawEvidence": true,
+    "includeDiff": true
   }
 }

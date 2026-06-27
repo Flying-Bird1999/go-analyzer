@@ -30,22 +30,20 @@ var schemaDocuments = map[string]map[string]any{
 			"links":          arrayOf(ref("link")),
 			"diagnostics":    arrayOf(ref("diagnostic")),
 		},
-		"$defs": commonDefinitions(),
+		"$defs": factsDefinitions(),
 	},
 	"impact": {
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"$id":                  "https://gopkg.inshopline.com/bff/go-analyzer/schemas/impact.v1alpha1.schema.json",
-		"title":                "go-analyzer impact output",
+		"$id":                  "https://gopkg.inshopline.com/bff/go-analyzer/schemas/go-impact.v1alpha1.schema.json",
+		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"impacted_endpoints", "evidence_chains", "module_impacts", "diagnostics"},
+		"required":             []string{"meta", "fileSources"},
 		"properties": map[string]any{
-			"impacted_endpoints": arrayOf(ref("endpoint_impact")),
-			"evidence_chains":    arrayOf(ref("evidence_chain")),
-			"module_impacts":     arrayOf(ref("module_impact")),
-			"diagnostics":        arrayOf(map[string]any{"type": "string"}),
+			"meta":        ref("impact_meta"),
+			"fileSources": arrayOf(ref("file_source_impact")),
 		},
-		"$defs": commonDefinitions(),
+		"$defs": impactDefinitions(),
 	},
 }
 
@@ -76,6 +74,47 @@ func object(properties map[string]any, required ...string) map[string]any {
 		"required":             required,
 		"properties":           properties,
 	}
+}
+
+func factsDefinitions() map[string]any {
+	return selectDefinitions(
+		"annotation",
+		"change",
+		"change_range",
+		"diagnostic",
+		"link",
+		"middleware",
+		"module",
+		"module_change",
+		"module_usage",
+		"project",
+		"reference",
+		"route",
+		"route_group",
+		"source_span",
+		"symbol",
+		"wrapper",
+	)
+}
+
+func impactDefinitions() map[string]any {
+	return selectDefinitions(
+		"diagnostic",
+		"endpoint_summary",
+		"file_source_impact",
+		"impact_meta",
+		"impact_node",
+		"source_span",
+	)
+}
+
+func selectDefinitions(names ...string) map[string]any {
+	all := commonDefinitions()
+	selected := make(map[string]any, len(names))
+	for _, name := range names {
+		selected[name] = all[name]
+	}
+	return selected
 }
 
 func commonDefinitions() map[string]any {
@@ -111,25 +150,38 @@ func commonDefinitions() map[string]any {
 			"span":             ref("source_span"),
 			"related_fact_ids": arrayOf(stringType()),
 		}, "id", "code", "severity", "message"),
-		"edge": object(map[string]any{
-			"from_id": stringType(),
-			"to_id":   stringType(),
-			"reason":  stringType(),
-		}, "from_id", "to_id", "reason"),
-		"endpoint_impact": object(map[string]any{
-			"id":                stringType(),
-			"method":            stringType(),
-			"path":              stringType(),
-			"annotation_id":     stringType(),
-			"handler_symbol":    stringType(),
-			"trigger_change_id": stringType(),
-			"evidence_chain_id": stringType(),
-		}, "id", "method", "path", "annotation_id", "handler_symbol", "trigger_change_id", "evidence_chain_id"),
-		"evidence_chain": object(map[string]any{
-			"id":    stringType(),
-			"nodes": arrayOf(ref("node")),
-			"edges": arrayOf(ref("edge")),
-		}, "id", "nodes", "edges"),
+		"endpoint_summary": object(map[string]any{
+			"method": stringType(),
+			"path":   stringType(),
+		}, "method", "path"),
+		"file_source_impact": object(map[string]any{
+			"sourceFile":        stringType(),
+			"diff":              stringType(),
+			"symbols":           map[string]any{"type": "object", "additionalProperties": ref("impact_node")},
+			"impactedEndpoints": arrayOf(ref("endpoint_summary")),
+		}, "sourceFile", "symbols", "impactedEndpoints"),
+		"impact_meta": object(map[string]any{
+			"schemaVersion": stringType(),
+			"projectRoot":   stringType(),
+			"diagnostics":   arrayOf(ref("diagnostic")),
+		}, "schemaVersion", "projectRoot", "diagnostics"),
+		"impact_node": object(map[string]any{
+			"id":           stringType(),
+			"kind":         stringType(),
+			"name":         stringType(),
+			"file":         stringType(),
+			"package":      stringType(),
+			"relation":     stringType(),
+			"raw":          stringType(),
+			"span":         ref("source_span"),
+			"confidence":   stringType(),
+			"level":        numberType(),
+			"cycle":        boolType(),
+			"stopBoundary": boolType(),
+			"children":     arrayOf(ref("impact_node")),
+			"method":       stringType(),
+			"path":         stringType(),
+		}, "id", "kind", "level", "children"),
 		"link": object(map[string]any{
 			"id":         stringType(),
 			"kind":       stringType(),
@@ -138,13 +190,15 @@ func commonDefinitions() map[string]any {
 			"confidence": stringType(),
 		}, "id", "kind", "from_id", "to_id", "confidence"),
 		"middleware": object(map[string]any{
-			"id":              stringType(),
-			"group_var":       stringType(),
-			"middleware_raw":  stringType(),
-			"route_func":      stringType(),
-			"statement_index": numberType(),
-			"span":            ref("source_span"),
-		}, "id", "group_var", "middleware_raw", "route_func", "statement_index", "span"),
+			"id":                 stringType(),
+			"group_id":           stringType(),
+			"group_var":          stringType(),
+			"middleware_raw":     stringType(),
+			"middleware_symbols": arrayOf(stringType()),
+			"route_func":         stringType(),
+			"statement_index":    numberType(),
+			"span":               ref("source_span"),
+		}, "id", "group_id", "group_var", "middleware_raw", "route_func", "statement_index", "span"),
 		"module": object(map[string]any{
 			"id":              stringType(),
 			"path":            stringType(),
@@ -164,11 +218,6 @@ func commonDefinitions() map[string]any {
 			"new_replace_path":    stringType(),
 			"new_replace_version": stringType(),
 		}, "id", "path", "kind"),
-		"module_impact": object(map[string]any{
-			"module_path": stringType(),
-			"basis":       stringType(),
-			"symbol_id":   stringType(),
-		}, "module_path", "basis"),
 		"module_usage": object(map[string]any{
 			"id":          stringType(),
 			"module_path": stringType(),
@@ -179,11 +228,6 @@ func commonDefinitions() map[string]any {
 			"file":        stringType(),
 			"confidence":  stringType(),
 		}, "id", "module_path", "basis", "confidence"),
-		"node": object(map[string]any{
-			"id":     stringType(),
-			"reason": stringType(),
-			"span":   ref("source_span"),
-		}, "id", "reason", "span"),
 		"project": object(map[string]any{
 			"root":        stringType(),
 			"module_path": stringType(),
@@ -203,6 +247,7 @@ func commonDefinitions() map[string]any {
 			"local_path":      stringType(),
 			"path_raw":        stringType(),
 			"resolved_path":   stringType(),
+			"group_id":        stringType(),
 			"group_var":       stringType(),
 			"handler_raw":     stringType(),
 			"handler_symbol":  stringType(),
@@ -212,10 +257,11 @@ func commonDefinitions() map[string]any {
 			"source_family":   stringType(),
 			"file":            stringType(),
 			"span":            ref("source_span"),
-		}, "id", "method", "local_path", "group_var", "handler_raw", "route_func", "statement_index", "file", "span"),
+		}, "id", "method", "local_path", "group_id", "group_var", "handler_raw", "route_func", "statement_index", "file", "span"),
 		"route_group": object(map[string]any{
 			"id":               stringType(),
 			"group_var":        stringType(),
+			"parent_group_id":  stringType(),
 			"parent_group_var": stringType(),
 			"prefix":           stringType(),
 			"route_func":       stringType(),

@@ -11,6 +11,10 @@ const (
 	CodePackageLoadFailed           Code = "package_load_failed"
 	CodeModuleUsageFileFallback     Code = "module_usage_file_fallback"
 	CodeModuleUnreferenced          Code = "module_unreferenced"
+	CodePropagationDepthTruncated   Code = "propagation_depth_truncated"
+	CodeSymbolReferenceUnresolved   Code = "symbol_reference_unresolved"
+	CodeTypeReferenceUnresolved     Code = "type_reference_unresolved"
+	CodeDeletedSymbolUnresolved     Code = "deleted_symbol_unresolved"
 )
 
 type Severity string

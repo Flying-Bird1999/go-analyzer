@@ -14,12 +14,13 @@ MVP 的主问题是：
 这次 Go BFF diff 影响了哪些 HTTP 接口？
 ```
 
-当前策略是 annotation-first：
+当前策略是 symbol propagation + annotation endpoint：
 
 - controller 注释中的 `@Get` / `@Post` 等 annotation 是最终 HTTP endpoint 真值。
 - route AST 负责证明 handler 被注册，并提供 route group、middleware、wrapper 等传播证据。
 - MVP 暂不判断 annotation 和 route 是否一致，也不判断注释是否过期。
-- 先保证“代码里有哪些事实”被准确、稳定、可追溯地抽出来。
+- diff 命中最小的完整声明符号；struct 字段/tag 命中所属 type。
+- 反向引用图保留所有中间 symbol，再连接 route、annotation 和 endpoint。
 
 ## 2. 当前状态
 
@@ -33,32 +34,28 @@ MVP 的主问题是：
 - 提取 route registration、route group、middleware binding、handler wrapper。
 - 提取 symbol reference 和 route-handler / handler-annotation link。
 - 解析 unified diff，把变更映射到 symbol / route / annotation / middleware / file。
-- 解析 `go.mod` dependency change，并映射本地 module usage。
-- 从 change facts 传播到 impacted HTTP endpoints。
-- 输出 impact evidence chain。
+- 提取 call/type/value/function-value reference。
+- 使用稳定 `GroupID` 隔离不同 route function 内的同名 group。
+- 从每个 change root 生成完整、可追踪、可终止循环的 impact tree。
+- 输出 `go-impact/v1alpha1` 原始报告，按 diff 文件与变更符号聚合。
+- 保留原始逐文件 diff、无 endpoint 的根和非致命 diagnostics。
+- 支持 `maxDepth`、`stopPropagation`、`includeRawEvidence`、`includeDiff`。
 - 支持 JSON 配置扩展项目规则。
 - CLI 支持 `facts`、`impact`、`schema`、`help`。
 - 输出契约已通过 JSON Schema 暴露。
-- 真实项目 smoke 可跑通。
+- 真实项目 facts smoke 脚本可运行；本轮结束前需按第 6 节重新执行并记录结果。
 
-最近的提交序列：
+本轮实现尚未提交；以工作区测试、golden 和下方验证命令为准，不依赖历史提交列表判断能力。
 
-```text
-c7f21f2 feat: publish analyzer output contracts
-b46ae51 feat: configure analyzer extraction rules
-5fc26ec feat: wire cli impact analysis
-99dccd6 test: harden analyzer with diagnostics and smoke validation
-06e2e1c feat: propagate impacts to annotated endpoints
-c3c9ad4 feat: map diffs and go module changes
-ef4a570 feat: build go bff fact extraction pipeline
-```
-
-当前真实项目 smoke 基线：
+2026-06-27 最新 smoke：
 
 ```text
-sc1-bff-service: symbols=781 annotations=32 routes=32 diagnostics=0
-sc1-admin-bff: symbols=5120 annotations=463 routes=490 diagnostics=0
+sl-sc1-bff-service: symbols=781 annotations=32 routes=32 diagnostics=32
+sl-sc1-admin-bff: symbols=5137 annotations=463 routes=490 diagnostics=213
+type-impact: changed_sources=1 changed_roots=1 nodes=9 endpoints=1 unresolved=0
 ```
+
+两个真实项目的 diagnostics 当前均为 `symbol_reference_unresolved`，主要来自 AST-only 模式无法推断具体 receiver type 的 generated/service client。
 
 ## 3. 外部项目关系
 
@@ -88,10 +85,10 @@ internal/project       Go module 加载、文件扫描
 internal/astindex      AST symbol index
 internal/config        默认规则和 JSON 配置加载
 internal/facts         facts 数据模型
-internal/extract       annotation / route / reference / gomod 提取
+internal/extract       annotation / route / reference / gomod 事实提取
 internal/link          route-handler、handler-annotation 等事实关联
-internal/diff          unified diff 和 go.mod change 映射
-internal/graph         reverse reference graph、route graph、evidence graph
+internal/diff          unified diff 解析和语义根映射
+internal/graph         reverse reference graph、route graph
 internal/impact        impact propagation
 internal/output        JSON 输出和 schema contract
 internal/diagnostics   非致命诊断
@@ -136,8 +133,9 @@ go-analyzer impact
   -> build fact store
   -> diff.ParseUnified
   -> diff.MapChanges
-  -> impact.Analyze
-  -> output.RenderImpactJSON
+  -> impact.AnalyzeTrees
+  -> output.BuildImpactDocument
+  -> output.RenderImpactTreeJSON
 ```
 
 ## 5. CLI 使用
@@ -243,7 +241,7 @@ route facts 的作用：
 
 - 证明 handler 被注册。
 - 传播 route group、middleware、wrapper 的影响。
-- 作为 evidence chain 的一部分。
+- 作为 impact tree 的 route 领域证据。
 
 ### 7.2 事实提取优先
 
@@ -268,6 +266,10 @@ route facts 的作用：
 - `route.routeGroupWrappers`
 - `route.generatedRouteCalls`
 - `annotation.methods`
+- `analysis.maxDepth`
+- `analysis.stopPropagation`
+- `analysis.includeRawEvidence`
+- `analysis.includeDiff`
 
 不要把某个业务仓的路径、package 名、controller 名写死在 extractor 里。
 
@@ -281,8 +283,13 @@ route facts 的作用：
 - `route_unresolved_handler`
 - `route_wrapper_unsupported`
 - `annotation_missing_for_handler`
-- `module_usage_file_fallback`
-- `module_unreferenced`
+- `module_usage_file_fallback`（gomod usage 单元能力；尚未接入 impact tree）
+- `module_unreferenced`（gomod usage 单元能力；尚未接入 impact tree）
+- `symbol_reference_unresolved`
+- `type_reference_unresolved`
+- `deleted_symbol_unresolved`
+- `propagation_depth_truncated`
+- `package_load_failed`
 
 ## 8. 关键文档
 
@@ -290,6 +297,12 @@ route facts 的作用：
 
 ```text
 docs/design/go-analyzer-mvp-architecture.md
+```
+
+下一阶段符号级影响分析与原始传播树方案：
+
+```text
+docs/design/go-symbol-impact-architecture.md
 ```
 
 输出契约：
@@ -323,8 +336,9 @@ docs/examples/go-analyzer.config.json
 - route path 拼接只作为辅助事实，不作为 endpoint 真值。
 - dynamic route path 只保留 raw expression，并输出 diagnostic。
 - indirect handler expression 如 map/slice lookup 会降级为 diagnostic。
-- go.mod change 的 module usage 有 precise 和 file fallback 两种精度。
-- impact evidence chain 已可用，但还没有针对真实 MR 的大规模人工验收集。
+- 当前只索引变更后项目；删除整个声明时只能降级到 surviving declaration 或 file root。
+- 外部 Go module diff 到本地符号的传播尚未接入新的 impact tree，属于后续 P5。
+- impact tree 已有 fixture/golden 验证，但还需要继续积累真实 MR 的人工验收集。
 - `generatedRouteCalls` 已进入配置模型，但 generated route 专项规则仍可继续深化。
 
 ## 10. 建议下一步
@@ -340,7 +354,7 @@ docs/examples/go-analyzer.config.json
    - route registration 变更。
    - route group prefix 变更。
    - middleware binding 变更。
-   - go.mod dependency upgrade / replace 变更。
+   - struct 字段/tag 变更。
 
    用 `go-analyzer impact` 跑输出，人工确认 impacted endpoints 是否符合预期。
 

@@ -1,8 +1,14 @@
 package controller
 
-import svc "example.com/reference-chain/service"
+import (
+	missing "example.com/reference-chain/missing"
+	svc "example.com/reference-chain/service"
+)
 
 func CheckIn() string {
+	_ = missing.Request{}
+	missing.Load()
+	_ = svc.Fetch[svc.Response]()
 	return svc.WebApiForwardGray()
 }
 

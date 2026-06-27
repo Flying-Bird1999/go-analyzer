@@ -26,26 +26,31 @@ func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store
 				if !ok || fn.Body == nil {
 					continue
 				}
-				collectFunc(p, pkg, file, fn, store, rootGroups(fn), cfg)
+				collectFunc(p, pkg, file, fn, store, cfg)
 			}
 		}
 	}
 	return nil
 }
 
-func rootGroups(fn *ast.FuncDecl) map[string]groupContext {
+func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupContext {
 	out := map[string]groupContext{}
 	if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
 		return out
 	}
 	for _, name := range fn.Type.Params.List[0].Names {
-		out[name.Name] = groupContext{varName: name.Name, prefix: ""}
+		out[name.Name] = groupContext{
+			id:      rootGroupID(routeFunc, name.Name),
+			varName: name.Name,
+			prefix:  "",
+		}
 	}
 	return out
 }
 
-func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, groups map[string]groupContext, cfg config.Config) {
+func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, cfg config.Config) {
 	routeFunc := astindex.FunctionSymbolID(pkg.Path, fn.Name.Name)
+	groups := rootGroups(routeFunc, fn)
 	for i, stmt := range fn.Body.List {
 		collectStmt(p, file, routeFunc, store, groups, stmt, i+1, cfg)
 	}
@@ -60,11 +65,13 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 				continue
 			}
 			if parent, prefix, ok := groupCall(groups, s.Rhs[i]); ok {
-				groups[name.Name] = groupContext{varName: name.Name, prefix: prefix}
+				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
+				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix}
 				store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
-					ID:             routeGroupID(routeFunc, name.Name, statementIndex),
+					ID:             groupID,
 					GroupVar:       name.Name,
-					ParentGroupVar: parent,
+					ParentGroupID:  parent.id,
+					ParentGroupVar: parent.varName,
 					Prefix:         prefix,
 					RouteFunc:      routeFunc,
 					StatementIndex: statementIndex,
@@ -73,6 +80,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 				for _, raw := range groupMiddlewareArgs(s.Rhs[i]) {
 					store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
 						ID:             middlewareID(routeFunc, name.Name, statementIndex) + ":" + strconv.Itoa(len(store.Middleware)),
+						GroupID:        groupID,
 						GroupVar:       name.Name,
 						MiddlewareRaw:  raw,
 						RouteFunc:      routeFunc,
@@ -113,28 +121,28 @@ func groupMiddlewareArgs(expr ast.Expr) []string {
 	return out
 }
 
-func groupCall(groups map[string]groupContext, expr ast.Expr) (parentVar string, prefix string, ok bool) {
+func groupCall(groups map[string]groupContext, expr ast.Expr) (parent groupContext, prefix string, ok bool) {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {
-		return "", "", false
+		return groupContext{}, "", false
 	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || selector.Sel.Name != "Group" {
-		return "", "", false
+		return groupContext{}, "", false
 	}
 	parentIdent, ok := selector.X.(*ast.Ident)
 	if !ok {
-		return "", "", false
+		return groupContext{}, "", false
 	}
-	parent, ok := groups[parentIdent.Name]
+	parent, ok = groups[parentIdent.Name]
 	if !ok {
-		return "", "", false
+		return groupContext{}, "", false
 	}
 	local, ok := stringLiteral(call.Args[0])
 	if !ok {
 		local = exprString(call.Args[0])
 	}
-	return parentIdent.Name, joinPath(parent.prefix, local), true
+	return parent, joinPath(parent.prefix, local), true
 }
 
 func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int, cfg config.Config) (facts.RouteRegistrationFact, bool) {
@@ -164,6 +172,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		LocalPath:      localPath,
 		PathRaw:        pathRaw,
 		ResolvedPath:   resolved,
+		GroupID:        group.id,
 		GroupVar:       group.varName,
 		HandlerRaw:     handlerRaw,
 		Wrappers:       wrappers,
@@ -230,12 +239,17 @@ func middlewareCall(p *project.Project, file *project.File, routeFunc facts.Symb
 	raw := strings.Join(raws, ", ")
 	return facts.MiddlewareBindingFact{
 		ID:             middlewareID(routeFunc, group.varName, statementIndex),
+		GroupID:        group.id,
 		GroupVar:       group.varName,
 		MiddlewareRaw:  raw,
 		RouteFunc:      routeFunc,
 		StatementIndex: statementIndex,
 		Span:           spanFor(p, file, call.Pos(), call.End()),
 	}, true
+}
+
+func rootGroupID(routeFunc facts.SymbolID, name string) string {
+	return "route_group:" + string(routeFunc) + ":" + name + ":root"
 }
 
 func routeGroupID(routeFunc facts.SymbolID, name string, statementIndex int) string {

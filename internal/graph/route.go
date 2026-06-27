@@ -10,7 +10,8 @@ type RouteGraph struct {
 	RoutesByID           map[string]facts.RouteRegistrationFact
 	GroupsByID           map[string]facts.RouteGroupFact
 	MiddlewareByID       map[string]facts.MiddlewareBindingFact
-	RoutesByGroup        map[string][]facts.RouteRegistrationFact
+	RoutesByGroupID      map[string][]facts.RouteRegistrationFact
+	ChildGroupsByID      map[string][]string
 	RoutesByHandler      map[facts.SymbolID][]facts.RouteRegistrationFact
 	AnnotationsByHandler map[facts.SymbolID][]facts.AnnotationFact
 }
@@ -20,16 +21,21 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		RoutesByID:           map[string]facts.RouteRegistrationFact{},
 		GroupsByID:           map[string]facts.RouteGroupFact{},
 		MiddlewareByID:       map[string]facts.MiddlewareBindingFact{},
-		RoutesByGroup:        map[string][]facts.RouteRegistrationFact{},
+		RoutesByGroupID:      map[string][]facts.RouteRegistrationFact{},
+		ChildGroupsByID:      map[string][]string{},
 		RoutesByHandler:      map[facts.SymbolID][]facts.RouteRegistrationFact{},
 		AnnotationsByHandler: map[facts.SymbolID][]facts.AnnotationFact{},
 	}
 	for _, group := range store.RouteGroups {
 		g.GroupsByID[group.ID] = group
+		if group.ParentGroupID != "" {
+			g.ChildGroupsByID[group.ParentGroupID] = append(g.ChildGroupsByID[group.ParentGroupID], group.ID)
+		}
 	}
 	for _, route := range store.Routes {
 		g.RoutesByID[route.ID] = route
-		g.RoutesByGroup[route.GroupVar] = append(g.RoutesByGroup[route.GroupVar], route)
+		groupID := effectiveGroupID(route.GroupID, route.RouteFunc, route.GroupVar)
+		g.RoutesByGroupID[groupID] = append(g.RoutesByGroupID[groupID], route)
 		if route.HandlerSymbol != "" {
 			g.RoutesByHandler[route.HandlerSymbol] = append(g.RoutesByHandler[route.HandlerSymbol], route)
 		}
@@ -45,8 +51,11 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 }
 
 func (g *RouteGraph) sort() {
-	for group := range g.RoutesByGroup {
-		sortRoutes(g.RoutesByGroup[group])
+	for group := range g.RoutesByGroupID {
+		sortRoutes(g.RoutesByGroupID[group])
+	}
+	for group := range g.ChildGroupsByID {
+		sort.Strings(g.ChildGroupsByID[group])
 	}
 	for handler := range g.RoutesByHandler {
 		sortRoutes(g.RoutesByHandler[handler])
@@ -67,11 +76,31 @@ func (g *RouteGraph) AnnotationsForHandler(handler facts.SymbolID) []facts.Annot
 }
 
 func (g *RouteGraph) RoutesForGroup(groupID string) []facts.RouteRegistrationFact {
-	group, ok := g.GroupsByID[groupID]
-	if !ok {
-		return nil
+	var routes []facts.RouteRegistrationFact
+	seenGroups := map[string]bool{}
+	seenRoutes := map[string]bool{}
+	var collect func(string)
+	collect = func(current string) {
+		if seenGroups[current] {
+			return
+		}
+		seenGroups[current] = true
+		for _, route := range g.RoutesByGroupID[current] {
+			if !seenRoutes[route.ID] {
+				seenRoutes[route.ID] = true
+				routes = append(routes, route)
+			}
+		}
+		for _, child := range g.ChildGroupsByID[current] {
+			collect(child)
+		}
 	}
-	return append([]facts.RouteRegistrationFact(nil), g.RoutesByGroup[group.GroupVar]...)
+	collect(groupID)
+	if group, ok := g.GroupsByID[groupID]; ok {
+		collect(effectiveGroupID("", group.RouteFunc, group.GroupVar))
+	}
+	sortRoutes(routes)
+	return append([]facts.RouteRegistrationFact(nil), routes...)
 }
 
 func (g *RouteGraph) RoutesAffectedByMiddleware(bindingID string) []facts.RouteRegistrationFact {
@@ -80,13 +109,21 @@ func (g *RouteGraph) RoutesAffectedByMiddleware(bindingID string) []facts.RouteR
 		return nil
 	}
 	var out []facts.RouteRegistrationFact
-	for _, route := range g.RoutesByGroup[binding.GroupVar] {
+	groupID := effectiveGroupID(binding.GroupID, binding.RouteFunc, binding.GroupVar)
+	for _, route := range g.RoutesByGroupID[groupID] {
 		if binding.StatementIndex < route.StatementIndex {
 			out = append(out, route)
 		}
 	}
 	sortRoutes(out)
 	return out
+}
+
+func effectiveGroupID(groupID string, routeFunc facts.SymbolID, groupVar string) string {
+	if groupID != "" {
+		return groupID
+	}
+	return string(routeFunc) + "::" + groupVar
 }
 
 func sortRoutes(routes []facts.RouteRegistrationFact) {

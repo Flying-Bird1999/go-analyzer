@@ -11,7 +11,7 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 		wantProp string
 	}{
 		{name: "facts", wantProp: "project"},
-		{name: "impact", wantProp: "impacted_endpoints"},
+		{name: "impact", wantProp: "meta"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,6 +32,62 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 			}
 			if _, ok := properties[tc.wantProp]; !ok {
 				t.Fatalf("property %q missing: %#v", tc.wantProp, properties)
+			}
+		})
+	}
+}
+
+func TestSchemasDoNotExposeRetiredImpactDefinitions(t *testing.T) {
+	retired := []string{"edge", "endpoint_impact", "evidence_chain", "module_impact", "node"}
+	for _, name := range []string{"facts", "impact"} {
+		t.Run(name, func(t *testing.T) {
+			got, err := SchemaJSON(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal(got, &doc); err != nil {
+				t.Fatal(err)
+			}
+			defs, ok := doc["$defs"].(map[string]any)
+			if !ok {
+				t.Fatalf("$defs missing: %#v", doc)
+			}
+			for _, key := range retired {
+				if _, ok := defs[key]; ok {
+					t.Fatalf("retired definition %q is still exposed", key)
+				}
+			}
+		})
+	}
+}
+
+func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
+	cases := []struct {
+		name   string
+		absent []string
+	}{
+		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_meta", "impact_node"}},
+		{name: "impact", absent: []string{"annotation", "change", "link", "middleware", "module", "module_change", "module_usage", "project", "reference", "route", "route_group", "symbol", "wrapper"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SchemaJSON(tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal(got, &doc); err != nil {
+				t.Fatal(err)
+			}
+			defs, ok := doc["$defs"].(map[string]any)
+			if !ok {
+				t.Fatalf("$defs missing: %#v", doc)
+			}
+			for _, key := range tc.absent {
+				if _, ok := defs[key]; ok {
+					t.Fatalf("definition %q should not be exposed by %s schema", key, tc.name)
+				}
 			}
 		})
 	}

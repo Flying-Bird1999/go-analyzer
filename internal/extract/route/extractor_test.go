@@ -78,7 +78,7 @@ func TestExtractMiddlewareBindingStatementOrder(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "middleware-order")
 	store := extractFixture(t, root)
 
-	if len(store.Middleware) != 2 {
+	if len(store.Middleware) != 3 {
 		t.Fatalf("middleware bindings = %d", len(store.Middleware))
 	}
 	before := findRoute(t, store, "/a")
@@ -90,7 +90,10 @@ func TestExtractMiddlewareBindingStatementOrder(t *testing.T) {
 	if binding.MiddlewareRaw != "Auth()" {
 		t.Fatalf("middleware raw = %q", binding.MiddlewareRaw)
 	}
-	groupBinding := store.Middleware[1]
+	if store.Middleware[1].MiddlewareRaw != "h1" {
+		t.Fatalf("function-value middleware raw = %q", store.Middleware[1].MiddlewareRaw)
+	}
+	groupBinding := store.Middleware[2]
 	if groupBinding.MiddlewareRaw != "Audit()" {
 		t.Fatalf("group middleware raw = %q", groupBinding.MiddlewareRaw)
 	}

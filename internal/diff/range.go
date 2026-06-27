@@ -8,9 +8,17 @@ const (
 	StatusDeleted  Status = "deleted"
 )
 
+type RangeKind string
+
+const (
+	RangeKindAdded          RangeKind = "added"
+	RangeKindDeletionAnchor RangeKind = "deletion_anchor"
+)
+
 type LineRange struct {
-	StartLine int `json:"start_line"`
-	EndLine   int `json:"end_line"`
+	StartLine int       `json:"start_line"`
+	EndLine   int       `json:"end_line"`
+	Kind      RangeKind `json:"kind,omitempty"`
 }
 
 type FileChange struct {
@@ -18,4 +26,5 @@ type FileChange struct {
 	NewPath string      `json:"new_path"`
 	Status  Status      `json:"status"`
 	Ranges  []LineRange `json:"ranges"`
+	Raw     string      `json:"raw"`
 }

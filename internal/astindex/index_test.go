@@ -38,3 +38,34 @@ func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "declaration-spans")
+	p, err := project.Load(root, project.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	typeSymbol := mustSymbol(t, idx, "type:example.com/declaration-spans::Request")
+	if typeSymbol.Span.EndLine <= typeSymbol.Span.StartLine {
+		t.Fatalf("type span does not cover body: %#v", typeSymbol.Span)
+	}
+
+	valueSymbol := mustSymbol(t, idx, "var:example.com/declaration-spans::DefaultRequest")
+	if valueSymbol.Span.EndLine <= valueSymbol.Span.StartLine {
+		t.Fatalf("value span does not cover declaration: %#v", valueSymbol.Span)
+	}
+}
+
+func mustSymbol(t *testing.T, idx *Index, id facts.SymbolID) facts.SymbolFact {
+	t.Helper()
+	symbol, ok := idx.Symbols[id]
+	if !ok {
+		t.Fatalf("symbol %s not found", id)
+	}
+	return symbol
+}
