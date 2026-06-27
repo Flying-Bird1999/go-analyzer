@@ -13,8 +13,10 @@ import (
 const ImpactTreeSchemaVersion = "go-impact/v1alpha1"
 
 type ImpactDocument struct {
-	Meta        ImpactMeta         `json:"meta"`
-	FileSources []FileSourceImpact `json:"fileSources"`
+	Meta          ImpactMeta               `json:"meta"`
+	ModuleChanges []facts.ModuleChangeFact `json:"module_changes"`
+	ModuleUsages  []facts.ModuleUsageFact  `json:"module_usages"`
+	FileSources   []FileSourceImpact       `json:"fileSources"`
 }
 
 type ImpactMeta struct {
@@ -122,7 +124,9 @@ func BuildImpactDocument(project facts.ProjectFact, fileChanges []diff.FileChang
 			ProjectRoot:   project.Root,
 			Diagnostics:   dedupeImpactDiagnostics(result.Diagnostics),
 		},
-		FileSources: make([]FileSourceImpact, 0, len(files)),
+		ModuleChanges: []facts.ModuleChangeFact{},
+		ModuleUsages:  []facts.ModuleUsageFact{},
+		FileSources:   make([]FileSourceImpact, 0, len(files)),
 	}
 	sort.Slice(doc.Meta.Diagnostics, func(i, j int) bool {
 		return doc.Meta.Diagnostics[i].ID < doc.Meta.Diagnostics[j].ID
@@ -238,6 +242,18 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 		doc.Meta.Diagnostics = []facts.DiagnosticFact{}
 	}
 	doc.Meta.Diagnostics = dedupeImpactDiagnostics(doc.Meta.Diagnostics)
+	if doc.ModuleChanges == nil {
+		doc.ModuleChanges = []facts.ModuleChangeFact{}
+	}
+	if doc.ModuleUsages == nil {
+		doc.ModuleUsages = []facts.ModuleUsageFact{}
+	}
+	sort.Slice(doc.ModuleChanges, func(i, j int) bool {
+		return doc.ModuleChanges[i].ID < doc.ModuleChanges[j].ID
+	})
+	sort.Slice(doc.ModuleUsages, func(i, j int) bool {
+		return doc.ModuleUsages[i].ID < doc.ModuleUsages[j].ID
+	})
 	if doc.FileSources == nil {
 		doc.FileSources = []FileSourceImpact{}
 	}

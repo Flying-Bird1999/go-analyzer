@@ -47,9 +47,15 @@ Top-level shape:
     "projectRoot": "/absolute/path/to/project",
     "diagnostics": []
   },
+  "module_changes": [],
+  "module_usages": [],
   "fileSources": []
 }
 ```
+
+- `module_changes` records changed go.mod modules detected from the diff.
+- `module_usages` records project-local import/use sites that were used to
+  seed normal symbol/file impact propagation.
 
 ### `fileSources`
 
@@ -100,6 +106,17 @@ changed symbol
 Struct field and tag changes map to their owning `type` symbol. The analyzer
 does not emit field-level change facts.
 
+Deleted route registration hunks can produce `route_deleted` roots. When the
+deleted route can be parsed, the report still emits the deleted route endpoint
+from method/path even though the route no longer exists in the post-change AST.
+
+go.mod diffs are mapped to local module usages first, then converted to normal
+symbol/file roots so the existing impact tree can propagate them to endpoints.
+
+Middleware method changes can propagate through middleware bindings to routes
+when the binding resolves to a middleware symbol, including common
+`pkg.Var.Method` selector patterns.
+
 ### Diagnostics
 
 Recoverable failures are reported in `meta.diagnostics`, including unresolved
@@ -112,6 +129,8 @@ analyzed roots.
 Impact analysis indexes the post-change project only. A deletion-only hunk is
 anchored to a surviving declaration when possible. If the deleted declaration
 no longer exists, the report retains a file fallback root and emits
-`deleted_symbol_unresolved`.
+`deleted_symbol_unresolved`. Deleted route registrations are a targeted
+exception: the analyzer also parses deleted route call lines from the diff and
+creates synthetic route impact roots.
 
 Dual base/head snapshots are intentionally deferred.

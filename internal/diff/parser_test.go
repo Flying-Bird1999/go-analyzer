@@ -117,3 +117,57 @@ index 1111111..2222222 100644
 		t.Fatalf("deletion anchor = %#v", got)
 	}
 }
+
+func TestParseUnifiedPreservesDeletedBlocks(t *testing.T) {
+	input := []byte("diff --git a/router/router.go b/router/router.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/router/router.go\n" +
+		"+++ b/router/router.go\n" +
+		"@@ -20,5 +20,3 @@ func InitRouter() {\n" +
+		" \tgroup.GET(\"/a\", aHandler)\n" +
+		"-\tgroup.POST(\"/legacy\", legacyHandler)\n" +
+		"-\tgroup.DELETE(\"/legacy/:id\", deleteLegacyHandler)\n" +
+		" \tgroup.GET(\"/b\", bHandler)\n" +
+		"@@ -42,3 +40,3 @@ func InitRouter() {\n" +
+		"-\toldMiddleware()\n" +
+		"+\tnewMiddleware()\n" +
+		" }\n")
+
+	changes, err := ParseUnified(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("file changes = %d", len(changes))
+	}
+	got := changes[0].DeletedBlocks
+	if len(got) != 2 {
+		t.Fatalf("deleted blocks = %#v", got)
+	}
+	first := got[0]
+	if first.OldStartLine != 21 || first.NewAnchorLine != 21 {
+		t.Fatalf("first deleted block location = %#v", first)
+	}
+	if want := []string{"\tgroup.POST(\"/legacy\", legacyHandler)", "\tgroup.DELETE(\"/legacy/:id\", deleteLegacyHandler)"}; !equalStrings(first.Lines, want) {
+		t.Fatalf("first deleted block lines = %#v, want %#v", first.Lines, want)
+	}
+	second := got[1]
+	if second.OldStartLine != 42 || second.NewAnchorLine != 40 {
+		t.Fatalf("replacement deleted block location = %#v", second)
+	}
+	if want := []string{"\toldMiddleware()"}; !equalStrings(second.Lines, want) {
+		t.Fatalf("replacement deleted block lines = %#v, want %#v", second.Lines, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

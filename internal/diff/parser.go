@@ -9,34 +9,55 @@ import (
 	"strings"
 )
 
-var hunkHeaderRE = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+var hunkHeaderRE = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
 func ParseUnified(input []byte) ([]FileChange, error) {
 	var changes []FileChange
 	var current *FileChange
 	var rawLines []string
+	oldLine := 0
 	newLine := 0
 	hunkActive := false
 	deletionPending := false
 	deletionAnchor := 0
+	deletedOldStart := 0
+	deletedNewAnchor := 0
+	var deletedLines []string
 
-	flushDeletion := func() {
+	flushDeletion := func(addAnchor bool) {
 		if current == nil || !deletionPending {
 			return
 		}
-		anchor := deletionAnchor
+		anchor := deletedNewAnchor
 		if anchor <= 0 {
 			anchor = 1
 		}
-		addLineRange(current, anchor, RangeKindDeletionAnchor)
+		if len(deletedLines) > 0 {
+			lines := append([]string(nil), deletedLines...)
+			current.DeletedBlocks = append(current.DeletedBlocks, DeletedBlock{
+				OldStartLine:  deletedOldStart,
+				NewAnchorLine: anchor,
+				Lines:         lines,
+			})
+		}
+		if addAnchor {
+			line := deletionAnchor
+			if line <= 0 {
+				line = 1
+			}
+			addLineRange(current, line, RangeKindDeletionAnchor)
+		}
 		deletionPending = false
 		deletionAnchor = 0
+		deletedOldStart = 0
+		deletedNewAnchor = 0
+		deletedLines = nil
 	}
 	flushHunk := func() {
 		if current == nil || !hunkActive {
 			return
 		}
-		flushDeletion()
+		flushDeletion(true)
 		hunkActive = false
 	}
 	flushCurrent := func() {
@@ -58,6 +79,7 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			oldPath, newPath := parseDiffPaths(line)
 			current = &FileChange{OldPath: oldPath, NewPath: newPath, Status: StatusModified}
 			rawLines = []string{line}
+			oldLine = 0
 			newLine = 0
 			continue
 		}
@@ -76,15 +98,15 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			current.NewPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "+++ ")))
 		case strings.HasPrefix(line, "@@ "):
 			flushHunk()
-			start, err := parseHunkStart(line)
+			oldStart, newStart, err := parseHunkStart(line)
 			if err != nil {
 				return nil, err
 			}
-			newLine = start
+			oldLine = oldStart
+			newLine = newStart
 			hunkActive = true
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ "):
-			deletionPending = false
-			deletionAnchor = 0
+			flushDeletion(false)
 			if current.Status != StatusDeleted {
 				addLineRange(current, newLine, RangeKindAdded)
 			}
@@ -93,9 +115,14 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			if !deletionPending {
 				deletionPending = true
 				deletionAnchor = newLine
+				deletedOldStart = oldLine
+				deletedNewAnchor = newLine
 			}
+			deletedLines = append(deletedLines, strings.TrimPrefix(line, "-"))
+			oldLine++
 		case strings.HasPrefix(line, " "):
-			flushDeletion()
+			flushDeletion(true)
+			oldLine++
 			newLine++
 		}
 	}
@@ -125,16 +152,20 @@ func normalizeDiffPath(path string) string {
 	}
 }
 
-func parseHunkStart(line string) (int, error) {
+func parseHunkStart(line string) (int, int, error) {
 	matches := hunkHeaderRE.FindStringSubmatch(line)
 	if len(matches) == 0 {
-		return 0, fmt.Errorf("invalid hunk header %q", line)
+		return 0, 0, fmt.Errorf("invalid hunk header %q", line)
 	}
-	start, err := strconv.Atoi(matches[1])
+	oldStart, err := strconv.Atoi(matches[1])
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return start, nil
+	newStart, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return 0, 0, err
+	}
+	return oldStart, newStart, nil
 }
 
 func addLineRange(change *FileChange, line int, kind RangeKind) {

@@ -1,6 +1,7 @@
 package link
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -73,6 +74,46 @@ func TestRunLinksMiddlewareSymbols(t *testing.T) {
 	assertMiddlewareSymbol(t, store, "Audit()", "func:example.com/middleware-order/router::Audit")
 }
 
+func TestRunLinksConstructorInitializedPackageVarMiddlewareSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeLinkTestFile(t, root, "go.mod", "module example.com/constructor-middleware\n\ngo 1.24\n")
+	writeLinkTestFile(t, root, "auth/auth.go", `package auth
+
+var Default = NewAuth()
+
+type Auth struct{}
+
+func NewAuth() *Auth {
+	return &Auth{}
+}
+
+func (a *Auth) Middleware() {}
+`)
+	writeLinkTestFile(t, root, "router/router.go", `package router
+
+import auth "example.com/constructor-middleware/auth"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Use(middleware any) {}
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func Handler() {}
+
+func InitRouter(g *RouterGroup) {
+	g.Use(auth.Default.Middleware)
+	g.GET("/x", Handler)
+}
+`)
+	_, idx, store := loadAndExtract(t, root)
+
+	if err := Run(idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	assertMiddlewareSymbol(t, store, "auth.Default.Middleware", "method:example.com/constructor-middleware/auth:Auth:Middleware")
+}
+
 func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want facts.SymbolID) {
 	t.Helper()
 	for _, binding := range store.Middleware {
@@ -110,4 +151,15 @@ func loadAndExtract(t *testing.T, root string) (*project.Project, *astindex.Inde
 		t.Fatal(err)
 	}
 	return p, idx, store
+}
+
+func writeLinkTestFile(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

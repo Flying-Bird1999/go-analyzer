@@ -59,10 +59,11 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := buildFactStore(opts.ProjectPath, cfg)
+	built, err := buildFacts(opts.ProjectPath, cfg)
 	if err != nil {
 		return nil, err
 	}
+	store := built.store
 	diffBytes, err := os.ReadFile(opts.DiffPath)
 	if err != nil {
 		return nil, fmt.Errorf("read diff: %w", err)
@@ -72,6 +73,15 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		return nil, err
 	}
 	store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
+	impact.RecoverDeletedRoutes(fileChanges, store, cfg, "git_diff")
+	moduleChanges, err := gomod.DiffModulesFromFileChanges(fileChanges)
+	if err != nil {
+		return nil, fmt.Errorf("diff go.mod modules: %w", err)
+	}
+	store.ModuleChanges = append(store.ModuleChanges, moduleChanges...)
+	moduleUsages := gomod.MapModuleUsage(built.project, built.index, store, moduleChanges)
+	store.ModuleUsages = append(store.ModuleUsages, moduleUsages...)
+	store.Changes = append(store.Changes, moduleUsageChanges(moduleUsages, store, "go_mod_diff")...)
 	result := impact.AnalyzeTrees(store, impact.TreeOptions{
 		MaxDepth:        cfg.Analysis.MaxDepth,
 		StopPropagation: cfg.Analysis.StopPropagation,
@@ -80,6 +90,8 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		IncludeDiff:        cfg.Analysis.IncludeDiff,
 		IncludeRawEvidence: cfg.Analysis.IncludeRawEvidence,
 	})
+	doc.ModuleChanges = append([]facts.ModuleChangeFact(nil), store.ModuleChanges...)
+	doc.ModuleUsages = append([]facts.ModuleUsageFact(nil), store.ModuleUsages...)
 	return output.RenderImpactTreeJSON(doc)
 }
 
@@ -91,23 +103,37 @@ func loadConfig(path string) (config.Config, error) {
 	return cfg, nil
 }
 
+type builtFacts struct {
+	project *project.Project
+	index   *astindex.Index
+	store   *facts.Store
+}
+
 func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error) {
-	p, err := project.Load(projectPath, project.Options{ExcludeDirs: cfg.Project.SkipDirs})
+	built, err := buildFacts(projectPath, cfg)
 	if err != nil {
 		return nil, err
 	}
+	return built.store, nil
+}
+
+func buildFacts(projectPath string, cfg config.Config) (builtFacts, error) {
+	p, err := project.Load(projectPath, project.Options{ExcludeDirs: cfg.Project.SkipDirs})
+	if err != nil {
+		return builtFacts{}, err
+	}
 	idx, err := astindex.Build(p)
 	if err != nil {
-		return nil, err
+		return builtFacts{}, err
 	}
 	store := facts.NewStore(p.Root, p.ModulePath)
 	modBytes, err := os.ReadFile(filepath.Join(p.Root, "go.mod"))
 	if err != nil {
-		return nil, fmt.Errorf("read go.mod dependencies: %w", err)
+		return builtFacts{}, fmt.Errorf("read go.mod dependencies: %w", err)
 	}
 	modules, err := gomod.ExtractDependencies(modBytes)
 	if err != nil {
-		return nil, fmt.Errorf("extract go.mod dependencies: %w", err)
+		return builtFacts{}, fmt.Errorf("extract go.mod dependencies: %w", err)
 	}
 	store.Modules = append(store.Modules, modules...)
 	for _, loadDiagnostic := range p.Diagnostics {
@@ -123,16 +149,49 @@ func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error)
 		store.AddSymbol(symbol)
 	}
 	if err := annotation.ExtractWithConfig(p, idx, store, cfg); err != nil {
-		return nil, err
+		return builtFacts{}, err
 	}
 	if err := route.ExtractWithConfig(p, idx, store, cfg); err != nil {
-		return nil, err
+		return builtFacts{}, err
 	}
 	if err := link.Run(idx, store); err != nil {
-		return nil, err
+		return builtFacts{}, err
 	}
 	if err := reference.Extract(p, idx, store); err != nil {
-		return nil, err
+		return builtFacts{}, err
 	}
-	return store, nil
+	return builtFacts{project: p, index: idx, store: store}, nil
+}
+
+func moduleUsageChanges(usages []facts.ModuleUsageFact, store *facts.Store, source string) []facts.ChangeFact {
+	var out []facts.ChangeFact
+	symbols := map[facts.SymbolID]facts.SymbolFact{}
+	for _, symbol := range store.Symbols {
+		symbols[symbol.ID] = symbol
+	}
+	for _, usage := range usages {
+		if usage.Basis == facts.ModuleUsageUnreferenced {
+			continue
+		}
+		change := facts.ChangeFact{
+			ID:         fmt.Sprintf("change:module_usage:%s:%d", usage.ID, len(out)),
+			File:       usage.File,
+			Source:     source,
+			Confidence: usage.Confidence,
+		}
+		if usage.SymbolID != "" {
+			change.Kind = facts.ChangeKindSymbolChanged
+			change.TargetID = string(usage.SymbolID)
+			change.SymbolID = usage.SymbolID
+			if symbol, ok := symbols[usage.SymbolID]; ok {
+				change.File = symbol.Span.File
+				change.Ranges = []facts.ChangeRange{{StartLine: symbol.Span.StartLine, EndLine: symbol.Span.EndLine}}
+			}
+		} else {
+			change.Kind = facts.ChangeKindFileChanged
+			change.TargetID = usage.File
+		}
+		out = append(out, change)
+	}
+	return out
 }

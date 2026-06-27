@@ -34,10 +34,14 @@ MVP 的主问题是：
 - 提取 route registration、route group、middleware binding、handler wrapper。
 - 提取 symbol reference 和 route-handler / handler-annotation link。
 - 解析 unified diff，把变更映射到 symbol / route / annotation / middleware / file。
+- 保留 unified diff 删除块，可从删除的 route registration 恢复 synthetic route impact root。
+- 支持 go.mod diff 中 require/replace 变化映射到本仓 module usage，再传播到 endpoint。
 - 提取 call/type/value/function-value reference。
+- 支持 middleware method symbol 通过 middleware binding 反向传播到受影响 route。
+- 支持常见 `pkg.Var.Method` middleware selector；`var X = NewT()` 使用轻量 constructor 启发识别 receiver type。
 - 使用稳定 `GroupID` 隔离不同 route function 内的同名 group。
 - 从每个 change root 生成完整、可追踪、可终止循环的 impact tree。
-- 输出 `go-impact/v1alpha1` 原始报告，按 diff 文件与变更符号聚合。
+- 输出 `go-impact/v1alpha1` 原始报告，按 diff 文件与变更符号聚合，并在 impact 顶层携带 `module_changes` / `module_usages`。
 - 保留原始逐文件 diff、无 endpoint 的根和非致命 diagnostics。
 - 支持 `maxDepth`、`stopPropagation`、`includeRawEvidence`、`includeDiff`。
 - 支持 JSON 配置扩展项目规则。
@@ -45,12 +49,12 @@ MVP 的主问题是：
 - 输出契约已通过 JSON Schema 暴露。
 - 真实项目 facts smoke 脚本可运行；本轮结束前需按第 6 节重新执行并记录结果。
 
-本轮实现尚未提交；以工作区测试、golden 和下方验证命令为准，不依赖历史提交列表判断能力。
+当前分支包含两类本地提交：symbol impact tree 主实现，以及下一阶段技术方案文档。后续功能开发完成后需要再提交实现 commit。
 
 2026-06-27 最新 smoke：
 
 ```text
-sl-sc1-bff-service: symbols=781 annotations=32 routes=32 diagnostics=32
+sl-sc1-bff-service: symbols=781 annotations=32 routes=32 diagnostics=20
 sl-sc1-admin-bff: symbols=5137 annotations=463 routes=490 diagnostics=213
 type-impact: changed_sources=1 changed_roots=1 nodes=9 endpoints=1 unresolved=0
 ```
@@ -133,6 +137,10 @@ go-analyzer impact
   -> build fact store
   -> diff.ParseUnified
   -> diff.MapChanges
+  -> impact.RecoverDeletedRoutes
+  -> gomod.DiffModulesFromFileChanges
+  -> gomod.MapModuleUsage
+  -> module usage converted to symbol/file changes
   -> impact.AnalyzeTrees
   -> output.BuildImpactDocument
   -> output.RenderImpactTreeJSON

@@ -86,7 +86,7 @@ Excluded:
 - `internal/impact/tree_builder.go`
   - Render deleted route roots and fallback endpoints.
 - `internal/output/contract.go`
-  - Add diagnostic codes if documented; keep top-level impact schema stable.
+  - Add impact top-level `module_changes` / `module_usages` and keep schemas in sync.
 - `internal/output/golden_test.go`
   - Add deleted route and go.mod impact golden cases if needed.
 - `scripts/smoke-real-projects.sh`

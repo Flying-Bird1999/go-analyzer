@@ -4,6 +4,8 @@
     "projectRoot": "testdata/fixtures/type-impact",
     "diagnostics": []
   },
+  "module_changes": [],
+  "module_usages": [],
   "fileSources": [
     {
       "sourceFile": "model/model.go",

@@ -135,6 +135,53 @@ func TestAnalyzeHonorsMaxDepth(t *testing.T) {
 	assertTreeDiagnostic(t, result, "propagation_depth_truncated")
 }
 
+func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	middlewareSymbol := facts.SymbolID("method:example.com/project/auth:Auth:Middleware")
+	store.Symbols = append(store.Symbols, facts.SymbolFact{
+		ID:          middlewareSymbol,
+		Kind:        "method",
+		Name:        "Middleware",
+		PackagePath: "example.com/project/auth",
+		Receiver:    "Auth",
+		Span:        facts.SourceSpan{File: "auth/auth.go", StartLine: 10, EndLine: 12},
+	})
+	store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
+		ID:                "middleware:auth",
+		GroupID:           "route_group:api",
+		GroupVar:          "api",
+		MiddlewareRaw:     "auth.Default.Middleware",
+		MiddlewareSymbols: []facts.SymbolID{middlewareSymbol},
+		StatementIndex:    10,
+		Span:              facts.SourceSpan{File: "router/router.go", StartLine: 20, EndLine: 20},
+	})
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:             "route:checkIn",
+		Method:         "GET",
+		ResolvedPath:   "/api/checkIn",
+		GroupID:        "route_group:api",
+		GroupVar:       "api",
+		StatementIndex: 11,
+		Span:           facts.SourceSpan{File: "router/router.go", StartLine: 21, EndLine: 21},
+	})
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:middleware-symbol",
+		Kind:       facts.ChangeKindSymbolChanged,
+		SymbolID:   middlewareSymbol,
+		File:       "auth/auth.go",
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store, TreeOptions{})
+	root := mustTreeRoot(t, result, "change:middleware-symbol")
+	path := firstEndpointPath(t, root.Root)
+	assertNodeKinds(t, path, "method", "middleware", "route", "endpoint")
+	endpoint := path[len(path)-1]
+	if endpoint.Method != "GET" || endpoint.Path != "/api/checkIn" {
+		t.Fatalf("endpoint = %#v", endpoint)
+	}
+}
+
 const (
 	serviceSymbol    facts.SymbolID = "func:example.com/project/service::CheckIn"
 	controllerSymbol facts.SymbolID = "func:example.com/project/controller::CheckIn"

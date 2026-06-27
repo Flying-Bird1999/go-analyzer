@@ -68,7 +68,7 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 		absent []string
 	}{
 		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_meta", "impact_node"}},
-		{name: "impact", absent: []string{"annotation", "change", "link", "middleware", "module", "module_change", "module_usage", "project", "reference", "route", "route_group", "symbol", "wrapper"}},
+		{name: "impact", absent: []string{"annotation", "change", "link", "middleware", "module", "project", "reference", "route", "route_group", "symbol", "wrapper"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

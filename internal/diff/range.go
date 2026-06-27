@@ -21,10 +21,17 @@ type LineRange struct {
 	Kind      RangeKind `json:"kind,omitempty"`
 }
 
+type DeletedBlock struct {
+	OldStartLine  int      `json:"old_start_line"`
+	NewAnchorLine int      `json:"new_anchor_line"`
+	Lines         []string `json:"lines"`
+}
+
 type FileChange struct {
-	OldPath string      `json:"old_path"`
-	NewPath string      `json:"new_path"`
-	Status  Status      `json:"status"`
-	Ranges  []LineRange `json:"ranges"`
-	Raw     string      `json:"raw"`
+	OldPath       string         `json:"old_path"`
+	NewPath       string         `json:"new_path"`
+	Status        Status         `json:"status"`
+	Ranges        []LineRange    `json:"ranges"`
+	DeletedBlocks []DeletedBlock `json:"deleted_blocks,omitempty"`
+	Raw           string         `json:"raw"`
 }

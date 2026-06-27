@@ -100,21 +100,8 @@ func (b *treeBuilder) buildRoot() Node {
 		return root
 	}
 	if middleware, ok := b.routes.MiddlewareByID[b.change.TargetID]; ok {
-		root := Node{
-			ID:         middleware.ID,
-			Kind:       "middleware",
-			Name:       middleware.MiddlewareRaw,
-			File:       middleware.Span.File,
-			Raw:        middleware.MiddlewareRaw,
-			Span:       middleware.Span,
-			Confidence: b.change.Confidence,
-			Level:      0,
-			Children:   []Node{},
-		}
-		for _, route := range b.routes.RoutesAffectedByMiddleware(middleware.ID) {
-			root.Children = append(root.Children, b.routeNode(route, 1, "middleware_applies_to"))
-		}
-		root.Children = mergeAndSortChildren(root.Children)
+		root := b.middlewareNode(middleware, 0, "")
+		root.Confidence = b.change.Confidence
 		return root
 	}
 	if annotation, ok := b.annotations[b.change.TargetID]; ok {
@@ -142,10 +129,11 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	symbolID := facts.SymbolID(node.ID)
 	references := b.reverse.ReferencesTo(symbolID)
 	routes := b.routes.RoutesForHandler(symbolID)
+	middlewareBindings := b.middlewareBindingsForSymbol(symbolID)
 	if b.applyStopBoundary(node) {
 		return
 	}
-	if b.depthReached(node, len(references) > 0 || len(routes) > 0) {
+	if b.depthReached(node, len(references) > 0 || len(routes) > 0 || len(middlewareBindings) > 0) {
 		return
 	}
 	for _, ref := range references {
@@ -167,7 +155,32 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	for _, route := range routes {
 		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "registered_handler"))
 	}
+	for _, middleware := range middlewareBindings {
+		node.Children = append(node.Children, b.middlewareNode(middleware, node.Level+1, "middleware_symbol"))
+	}
 	node.Children = mergeAndSortChildren(node.Children)
+}
+
+func (b *treeBuilder) middlewareBindingsForSymbol(symbolID facts.SymbolID) []facts.MiddlewareBindingFact {
+	var out []facts.MiddlewareBindingFact
+	for _, binding := range b.store.Middleware {
+		for _, candidate := range binding.MiddlewareSymbols {
+			if candidate == symbolID {
+				out = append(out, binding)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Span.File != out[j].Span.File {
+			return out[i].Span.File < out[j].Span.File
+		}
+		if out[i].StatementIndex != out[j].StatementIndex {
+			return out[i].StatementIndex < out[j].StatementIndex
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
 }
 
 func (b *treeBuilder) symbolNode(id facts.SymbolID, level int) Node {
@@ -234,6 +247,33 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 	}
 	for _, annotation := range annotations {
 		node.Children = append(node.Children, b.annotationNode(annotation, route, level+1, "handler_annotation"))
+	}
+	node.Children = mergeAndSortChildren(node.Children)
+	return node
+}
+
+func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, level int, relation string) Node {
+	node := Node{
+		ID:         middleware.ID,
+		Kind:       "middleware",
+		Name:       middleware.MiddlewareRaw,
+		File:       middleware.Span.File,
+		Relation:   relation,
+		Raw:        middleware.MiddlewareRaw,
+		Span:       middleware.Span,
+		Confidence: facts.ConfidenceHigh,
+		Level:      level,
+		Children:   []Node{},
+	}
+	if b.applyStopBoundary(&node) {
+		return node
+	}
+	routes := b.routes.RoutesAffectedByMiddleware(middleware.ID)
+	if b.depthReached(&node, len(routes) > 0) {
+		return node
+	}
+	for _, route := range routes {
+		node.Children = append(node.Children, b.routeNode(route, level+1, "middleware_applies_to"))
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node

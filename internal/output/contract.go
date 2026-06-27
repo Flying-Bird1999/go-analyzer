@@ -38,10 +38,12 @@ var schemaDocuments = map[string]map[string]any{
 		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"meta", "fileSources"},
+		"required":             []string{"meta", "module_changes", "module_usages", "fileSources"},
 		"properties": map[string]any{
-			"meta":        ref("impact_meta"),
-			"fileSources": arrayOf(ref("file_source_impact")),
+			"meta":           ref("impact_meta"),
+			"module_changes": arrayOf(ref("module_change")),
+			"module_usages":  arrayOf(ref("module_usage")),
+			"fileSources":    arrayOf(ref("file_source_impact")),
 		},
 		"$defs": impactDefinitions(),
 	},
@@ -104,6 +106,8 @@ func impactDefinitions() map[string]any {
 		"file_source_impact",
 		"impact_meta",
 		"impact_node",
+		"module_change",
+		"module_usage",
 		"source_span",
 	)
 }

@@ -216,6 +216,135 @@ func TestRunImpactMapsStructChangeToEndpointTree(t *testing.T) {
 	assertEndpointSummary(t, doc, "POST", "/orders")
 }
 
+func TestRunImpactMapsGoModDiffToEndpoint(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", `module example.com/gomod-impact
+
+go 1.24
+
+require gopkg.inshopline.com/sc1/commons/utils v1.0.1
+`)
+	writeTestFile(t, root, "service/common.go", `package service
+
+import jsonx "gopkg.inshopline.com/sc1/commons/utils/jsonx"
+
+func CheckIn(v any) string {
+	return jsonx.String(v)
+}
+`)
+	writeTestFile(t, root, "controller/common.go", `package controller
+
+import "example.com/gomod-impact/service"
+
+// @Get /api/checkIn
+func CheckIn() string {
+	return service.CheckIn("ok")
+}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import common "example.com/gomod-impact/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func InitRouter(g *RouterGroup) {
+	g.GET("/checkIn", common.CheckIn)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "gomod.diff")
+	patch := []byte("diff --git a/go.mod b/go.mod\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/go.mod\n" +
+		"+++ b/go.mod\n" +
+		"@@ -2,4 +2,4 @@ module example.com/gomod-impact\n" +
+		" \n" +
+		" go 1.24\n" +
+		" \n" +
+		"-require gopkg.inshopline.com/sc1/commons/utils v1.0.0\n" +
+		"+require gopkg.inshopline.com/sc1/commons/utils v1.0.1\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.ModuleChanges) != 1 || doc.ModuleChanges[0].Path != "gopkg.inshopline.com/sc1/commons/utils" {
+		t.Fatalf("module changes = %#v", doc.ModuleChanges)
+	}
+	if len(doc.ModuleUsages) == 0 {
+		t.Fatalf("module usages = %#v", doc.ModuleUsages)
+	}
+	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
+}
+
+func TestRunImpactMapsMiddlewareMethodDiffToEndpoint(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/middleware-impact\n\ngo 1.24\n")
+	writeTestFile(t, root, "auth/auth.go", `package auth
+
+var Default = NewAuth()
+
+type Auth struct{}
+
+func NewAuth() *Auth {
+	return &Auth{}
+}
+
+func (a *Auth) Middleware() {
+	_ = "old"
+}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import auth "example.com/middleware-impact/auth"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Use(middleware any) {}
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func Handler() {}
+
+func InitRouter(g *RouterGroup) {
+	g.Use(auth.Default.Middleware)
+	g.GET("/x", Handler)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "middleware.diff")
+	patch := []byte("diff --git a/auth/auth.go b/auth/auth.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/auth/auth.go\n" +
+		"+++ b/auth/auth.go\n" +
+		"@@ -8,5 +8,5 @@ func NewAuth() *Auth {\n" +
+		" }\n" +
+		" \n" +
+		" func (a *Auth) Middleware() {\n" +
+		"-\t_ = \"old\"\n" +
+		"+\t_ = \"new\"\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "GET", "/x")
+}
+
 func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
@@ -255,6 +384,17 @@ func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {
 		}
 	}
 	t.Fatalf("package load diagnostic not found: %#v", doc.Meta.Diagnostics)
+}
+
+func writeTestFile(t *testing.T, root, name, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootID string) {

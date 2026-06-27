@@ -85,12 +85,11 @@ FileChange.DeletedBlocks
 恢复策略：
 
 1. 只对 `.go` 文件生效。
-2. 把删除块文本包装成临时 Go 函数体解析。
+2. 对删除块中的每一行尝试按 Go expression 解析；不能识别成 route call 的行跳过。
 3. 先从 `internal/extract/route` 抽出可复用的 route call parser helper，再由正常 AST extractor 和 deleted route recovery 共用，避免维护两套路由语法。
-4. 使用 `NewAnchorLine` 在变更后 AST 中定位 enclosing route function。
-5. 如果 route group 仍存在，复用当前 `GroupID` 和 prefix。
-6. 如果 handler 仍存在，照常连接 handler annotation。
-7. 如果 handler 或 annotation 不存在，仍输出 deleted route node，并用 route method/path 作为低置信 endpoint fallback。
+4. 使用删除行的 receiver/group var 在变更后 facts 中匹配仍存在的 route group 或同组 route，恢复 `GroupID` 和 prefix。
+5. 如果 group prefix 无法恢复，但 method/local path 可解析，仍输出 deleted route node，并用 route local path 作为 endpoint fallback。
+6. handler symbol/annotation 不作为 deleted route 输出 endpoint 的前置条件；删除路由本身的 method/path 足以产生 endpoint。
 
 ### 3.3 输出语义
 
@@ -119,7 +118,7 @@ deleted_route:router.go:GET:/orders:anchor
 
 - `deleted_route_unresolved`: 删除块看起来像 route，但无法解析 method/path/handler。
 - `deleted_route_handler_unresolved`: route 可解析，但 handler 无法映射到 symbol。
-- `deleted_route_endpoint_fallback`: annotation 不存在，使用 route method/path 输出 fallback endpoint。
+- `deleted_route_endpoint_fallback`: group prefix 无法恢复，使用 route local path 输出 fallback endpoint。
 
 ## 4. go.mod diff 到 endpoint
 

@@ -6,6 +6,7 @@ const (
 	ChangeKindSymbolChanged     ChangeKind = "symbol_changed"
 	ChangeKindRouteGroupChanged ChangeKind = "route_group_changed"
 	ChangeKindRouteChanged      ChangeKind = "route_changed"
+	ChangeKindRouteDeleted      ChangeKind = "route_deleted"
 	ChangeKindMiddlewareChanged ChangeKind = "middleware_changed"
 	ChangeKindAnnotationChanged ChangeKind = "annotation_changed"
 	ChangeKindFileChanged       ChangeKind = "file_changed"

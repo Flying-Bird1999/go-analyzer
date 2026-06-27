@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
@@ -118,7 +119,11 @@ func receiverTypeFromExpr(expr ast.Expr) string {
 	case *ast.CompositeLit:
 		return receiverTypeName(x.Type)
 	case *ast.CallExpr:
-		return receiverTypeName(x.Fun)
+		name := receiverTypeName(x.Fun)
+		if strings.HasPrefix(name, "New") && len(name) > len("New") {
+			return strings.TrimPrefix(name, "New")
+		}
+		return name
 	default:
 		return ""
 	}

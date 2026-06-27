@@ -146,35 +146,29 @@ func groupCall(groups map[string]groupContext, expr ast.Expr) (parent groupConte
 }
 
 func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int, cfg config.Config) (facts.RouteRegistrationFact, bool) {
-	selector, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !cfg.IsHTTPMethod(selector.Sel.Name) || len(call.Args) < 2 {
+	parsed, ok := ParseRouteCall(call, cfg)
+	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
+	selector := call.Fun.(*ast.SelectorExpr)
 	group, groupWrappers, ok := groupForExpr(groups, selector.X, cfg)
 	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
-	localPath, ok := stringLiteral(call.Args[0])
-	pathRaw := ""
-	if !ok {
-		pathRaw = exprString(call.Args[0])
-	}
-	handlerRaw, handlerWrappers := unwrapHandler(call.Args[1], cfg)
-	wrappers := append(groupWrappers, handlerWrappers...)
+	wrappers := append(groupWrappers, parsed.HandlerWrappers...)
 	resolved := ""
-	if localPath != "" {
-		resolved = joinPath(group.prefix, localPath)
+	if parsed.LocalPath != "" {
+		resolved = joinPath(group.prefix, parsed.LocalPath)
 	}
-	method := strings.ToUpper(selector.Sel.Name)
 	route := facts.RouteRegistrationFact{
-		ID:             routeID(routeFunc, method, localPath, statementIndex),
-		Method:         method,
-		LocalPath:      localPath,
-		PathRaw:        pathRaw,
+		ID:             routeID(routeFunc, parsed.Method, parsed.LocalPath, statementIndex),
+		Method:         parsed.Method,
+		LocalPath:      parsed.LocalPath,
+		PathRaw:        parsed.PathRaw,
 		ResolvedPath:   resolved,
 		GroupID:        group.id,
 		GroupVar:       group.varName,
-		HandlerRaw:     handlerRaw,
+		HandlerRaw:     parsed.HandlerRaw,
 		Wrappers:       wrappers,
 		RouteFunc:      routeFunc,
 		StatementIndex: statementIndex,
@@ -182,7 +176,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		File:           filepath.ToSlash(mustRel(p.Root, file.Path)),
 		Span:           spanFor(p, file, call.Pos(), call.End()),
 	}
-	if pathRaw != "" {
+	if parsed.PathRaw != "" {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:           diagnostics.CodeRouteDynamicPath,
 			Severity:       diagnostics.SeverityWarning,
