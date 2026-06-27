@@ -13,14 +13,22 @@ import (
 type Index struct {
 	Project          *project.Project
 	Symbols          map[facts.SymbolID]facts.SymbolFact
-	VarReceiverTypes map[string]string
+	VarReceiverTypes map[string]ValueType
+	StructFieldTypes map[facts.SymbolID]map[string]ValueType
+}
+
+type ValueType struct {
+	PackagePath string
+	TypeName    string
+	Confidence  facts.Confidence
 }
 
 func Build(p *project.Project) (*Index, error) {
 	idx := &Index{
 		Project:          p,
 		Symbols:          map[facts.SymbolID]facts.SymbolFact{},
-		VarReceiverTypes: map[string]string{},
+		VarReceiverTypes: map[string]ValueType{},
+		StructFieldTypes: map[facts.SymbolID]map[string]ValueType{},
 	}
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
@@ -43,21 +51,46 @@ func (idx *Index) indexGenDecl(p *project.Project, pkg *project.Package, file *p
 		case *ast.TypeSpec:
 			id := TypeSymbolID(pkg.Path, s.Name.Name)
 			idx.Symbols[id] = symbolFact(p, file, id, "type", pkg.Path, "", s.Name.Name, s.Pos(), s.End())
+			idx.indexStructFields(file, id, s)
 		case *ast.ValueSpec:
 			kind := valueKind(decl.Tok)
 			if kind == "" {
 				continue
 			}
-			for _, name := range s.Names {
+			for i, name := range s.Names {
 				id := ValueSymbolID(kind, pkg.Path, name.Name)
 				idx.Symbols[id] = symbolFact(p, file, id, kind, pkg.Path, "", name.Name, s.Pos(), s.End())
 				if kind == "var" {
-					if receiver := receiverTypeFromValueSpec(s); receiver != "" {
-						idx.VarReceiverTypes[string(id)] = receiver
+					if valueType := valueTypeFromValueSpec(file, s, i); valueType.TypeName != "" {
+						idx.VarReceiverTypes[string(id)] = valueType
 					}
 				}
 			}
 		}
+	}
+}
+
+func (idx *Index) indexStructFields(file *project.File, id facts.SymbolID, spec *ast.TypeSpec) {
+	structType, ok := spec.Type.(*ast.StructType)
+	if !ok {
+		return
+	}
+	fields := map[string]ValueType{}
+	for _, field := range structType.Fields.List {
+		valueType := valueTypeFromTypeExpr(file, field.Type)
+		if valueType.TypeName == "" {
+			continue
+		}
+		if len(field.Names) == 0 {
+			fields[valueType.TypeName] = valueType
+			continue
+		}
+		for _, name := range field.Names {
+			fields[name.Name] = valueType
+		}
+	}
+	if len(fields) > 0 {
+		idx.StructFieldTypes[id] = fields
 	}
 }
 
@@ -100,33 +133,100 @@ func receiverTypeName(expr ast.Expr) string {
 	}
 }
 
-func receiverTypeFromValueSpec(spec *ast.ValueSpec) string {
+func valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
 	if spec.Type != nil {
-		return receiverTypeName(spec.Type)
+		return valueTypeFromTypeExpr(file, spec.Type)
 	}
-	for _, value := range spec.Values {
-		if receiver := receiverTypeFromExpr(value); receiver != "" {
-			return receiver
-		}
+	if len(spec.Values) == 0 {
+		return ValueType{}
 	}
-	return ""
+	valueIndex := index
+	if valueIndex >= len(spec.Values) {
+		valueIndex = 0
+	}
+	return valueTypeFromExpr(file, spec.Values[valueIndex])
 }
 
-func receiverTypeFromExpr(expr ast.Expr) string {
+func valueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
 	switch x := expr.(type) {
 	case *ast.UnaryExpr:
-		return receiverTypeFromExpr(x.X)
+		return valueTypeFromExpr(file, x.X)
 	case *ast.CompositeLit:
-		return receiverTypeName(x.Type)
+		return valueTypeFromTypeExpr(file, x.Type)
 	case *ast.CallExpr:
-		name := receiverTypeName(x.Fun)
+		valueType := valueTypeFromTypeExpr(file, x.Fun)
+		name := valueType.TypeName
 		if strings.HasPrefix(name, "New") && len(name) > len("New") {
-			return strings.TrimPrefix(name, "New")
+			valueType.TypeName = strings.TrimPrefix(name, "New")
 		}
-		return name
+		valueType.Confidence = facts.ConfidenceMedium
+		return valueType
 	default:
-		return ""
+		return ValueType{}
 	}
+}
+
+func valueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		return ValueType{PackagePath: file.Package.Path, TypeName: x.Name, Confidence: facts.ConfidenceHigh}
+	case *ast.SelectorExpr:
+		pkg, ok := x.X.(*ast.Ident)
+		if !ok {
+			return ValueType{}
+		}
+		importPath := file.Imports[pkg.Name]
+		if importPath == "" {
+			return ValueType{}
+		}
+		return ValueType{PackagePath: importPath, TypeName: x.Sel.Name, Confidence: facts.ConfidenceHigh}
+	case *ast.StarExpr:
+		return valueTypeFromTypeExpr(file, x.X)
+	case *ast.ParenExpr:
+		return valueTypeFromTypeExpr(file, x.X)
+	case *ast.IndexExpr:
+		return valueTypeFromTypeExpr(file, x.X)
+	case *ast.IndexListExpr:
+		return valueTypeFromTypeExpr(file, x.X)
+	default:
+		return ValueType{}
+	}
+}
+
+func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (facts.SymbolID, bool) {
+	if file == nil || len(parts) < 2 {
+		return "", false
+	}
+	var packagePath, varName string
+	var selectors []string
+	if importPath := file.Imports[parts[0]]; importPath != "" {
+		if len(parts) < 3 {
+			return "", false
+		}
+		packagePath = importPath
+		varName = parts[1]
+		selectors = parts[2:]
+	} else {
+		packagePath = file.Package.Path
+		varName = parts[0]
+		selectors = parts[1:]
+	}
+	varID := ValueSymbolID("var", packagePath, varName)
+	valueType, ok := idx.VarReceiverTypes[string(varID)]
+	if !ok || valueType.TypeName == "" || len(selectors) == 0 {
+		return "", false
+	}
+	for _, fieldName := range selectors[:len(selectors)-1] {
+		typeID := TypeSymbolID(valueType.PackagePath, valueType.TypeName)
+		fields := idx.StructFieldTypes[typeID]
+		valueType, ok = fields[fieldName]
+		if !ok {
+			return "", false
+		}
+	}
+	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, selectors[len(selectors)-1])
+	_, ok = idx.Symbols[methodID]
+	return methodID, ok
 }
 
 func symbolFact(p *project.Project, file *project.File, id facts.SymbolID, kind, pkgPath, receiver, name string, start, end token.Pos) facts.SymbolFact {

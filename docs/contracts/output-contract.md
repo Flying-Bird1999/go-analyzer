@@ -107,11 +107,16 @@ Struct field and tag changes map to their owning `type` symbol. The analyzer
 does not emit field-level change facts.
 
 Deleted route registration hunks can produce `route_deleted` roots. When the
-deleted route can be parsed, the report still emits the deleted route endpoint
-from method/path even though the route no longer exists in the post-change AST.
+deleted route can be parsed, the analyzer first attempts to restore its handler
+symbol and annotation. If that is not possible, the report emits a
+`deleted_route_endpoint` fallback from route method/path with medium confidence,
+even though the route no longer exists in the post-change AST. Single-line and
+multi-line deleted calls are supported.
 
 go.mod diffs are mapped to local module usages first, then converted to normal
 symbol/file roots so the existing impact tree can propagate them to endpoints.
+The diff parser supports single-line require, require-block entries without the
+block header in hunk context, and replace-only hunks.
 
 Middleware method changes can propagate through middleware bindings to routes
 when the binding resolves to a middleware symbol, including common
@@ -123,6 +128,22 @@ Recoverable failures are reported in `meta.diagnostics`, including unresolved
 project references, parse failures in individual Go files, deletion-only
 fallbacks and propagation depth truncation. They do not remove successfully
 analyzed roots.
+
+Current diagnostic codes:
+
+- `route_dynamic_path`
+- `route_unresolved_handler`
+- `deleted_route_unresolved`
+- `deleted_route_handler_unresolved`
+- `deleted_route_endpoint_fallback`
+- `package_load_failed`
+- `module_diff_unresolved`
+- `module_usage_file_fallback`
+- `module_unreferenced`
+- `propagation_depth_truncated`
+- `symbol_reference_unresolved`
+- `type_reference_unresolved`
+- `deleted_symbol_unresolved`
 
 ## Single-snapshot limitation
 

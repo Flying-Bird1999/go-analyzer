@@ -108,10 +108,10 @@
                           "raw": "@Post /orders",
                           "span": {
                             "file": "controller/controller.go",
-                            "start_line": 20,
+                            "start_line": 19,
                             "start_col": 1,
-                            "end_line": 23,
-                            "end_col": 2
+                            "end_line": 19,
+                            "end_col": 17
                           },
                           "confidence": "high",
                           "level": 4,
@@ -124,10 +124,10 @@
                               "relation": "annotation_endpoint",
                               "span": {
                                 "file": "controller/controller.go",
-                                "start_line": 20,
+                                "start_line": 19,
                                 "start_col": 1,
-                                "end_line": 23,
-                                "end_col": 2
+                                "end_line": 19,
+                                "end_col": 17
                               },
                               "confidence": "high",
                               "level": 5,

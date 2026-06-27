@@ -12,10 +12,9 @@ type ProjectConfig struct {
 }
 
 type RouteConfig struct {
-	HTTPMethods         []string      `json:"httpMethods,omitempty"`
-	HandlerWrappers     []string      `json:"handlerWrappers,omitempty"`
-	RouteGroupWrappers  []WrapperRule `json:"routeGroupWrappers,omitempty"`
-	GeneratedRouteCalls []string      `json:"generatedRouteCalls,omitempty"`
+	HTTPMethods        []string      `json:"httpMethods,omitempty"`
+	HandlerWrappers    []string      `json:"handlerWrappers,omitempty"`
+	RouteGroupWrappers []WrapperRule `json:"routeGroupWrappers,omitempty"`
 }
 
 type WrapperRule struct {

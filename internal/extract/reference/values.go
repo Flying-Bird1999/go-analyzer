@@ -57,17 +57,17 @@ func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, loc
 			if locals[parts[0]] {
 				return nil
 			}
-			return resolveLocalVarMethod(idx, file.Package.Path, parts[0], parts[1])
+			return resolveLocalVarMethod(idx, file, parts)
 		}
-		if len(parts) == 3 {
+		if len(parts) >= 3 {
 			importPath := file.Imports[parts[0]]
 			if importPath == "" {
 				return nil
 			}
 			varID := astindex.ValueSymbolID("var", importPath, parts[1])
 			out := existingIDs(idx, varID)
-			if receiver := idx.VarReceiverTypes[string(varID)]; receiver != "" {
-				out = appendExistingID(out, idx, astindex.MethodSymbolID(importPath, receiver, parts[2]))
+			if methodID, ok := idx.ResolveSelectorMethod(file, parts); ok {
+				out = appendExistingID(out, idx, methodID)
 			}
 			return out
 		}
@@ -96,15 +96,16 @@ func existingValueIDs(idx *astindex.Index, pkgPath, name string) []facts.SymbolI
 	return out
 }
 
-func resolveLocalVarMethod(idx *astindex.Index, pkgPath, varName, methodName string) []facts.SymbolID {
-	varID := astindex.ValueSymbolID("var", pkgPath, varName)
-	receiver := idx.VarReceiverTypes[string(varID)]
-	if receiver == "" {
+func resolveLocalVarMethod(idx *astindex.Index, file *project.File, parts []string) []facts.SymbolID {
+	if len(parts) < 2 {
 		return nil
 	}
+	varID := astindex.ValueSymbolID("var", file.Package.Path, parts[0])
 	var out []facts.SymbolID
 	out = appendExistingID(out, idx, varID)
-	out = appendExistingID(out, idx, astindex.MethodSymbolID(pkgPath, receiver, methodName))
+	if methodID, ok := idx.ResolveSelectorMethod(file, parts); ok {
+		out = appendExistingID(out, idx, methodID)
+	}
 	return out
 }
 

@@ -37,6 +37,40 @@ func TestResolvePackageVarMethodHandlerSymbol(t *testing.T) {
 	}
 }
 
+func TestResolveLocalPackageVarMethodHandlerSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeLinkTestFile(t, root, "go.mod", "module example.com/local-handler\n\ngo 1.24\n")
+	writeLinkTestFile(t, root, "router/router.go", `package router
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) GET(path string, handler any) {}
+
+type API struct{}
+
+var HandlerAPI API
+
+func (API) List() {}
+
+func Init(g *RouterGroup) {
+	g.GET("/orders", HandlerAPI.List)
+}
+`)
+	_, idx, store := loadAndExtract(t, root)
+	if len(store.Routes) != 1 {
+		t.Fatalf("routes = %#v", store.Routes)
+	}
+
+	got, ok := ResolveHandlerSymbol(idx, store.Routes[0])
+	if !ok {
+		t.Fatal("handler did not resolve")
+	}
+	want := facts.SymbolID("method:example.com/local-handler/router:API:List")
+	if got != want {
+		t.Fatalf("handler symbol = %q, want %q", got, want)
+	}
+}
+
 func TestRunLinksRouteHandlerAndAnnotation(t *testing.T) {
 	_, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "route-annotation-link"))
 
@@ -112,6 +146,90 @@ func InitRouter(g *RouterGroup) {
 	}
 
 	assertMiddlewareSymbol(t, store, "auth.Default.Middleware", "method:example.com/constructor-middleware/auth:Auth:Middleware")
+}
+
+func TestRunLinksPackageVarWithImportedExplicitTypeMiddlewareSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeLinkTestFile(t, root, "go.mod", "module example.com/imported-type-middleware\n\ngo 1.24\n")
+	writeLinkTestFile(t, root, "auth/auth.go", `package auth
+
+type Auth struct{}
+
+func (a *Auth) Middleware() {}
+`)
+	writeLinkTestFile(t, root, "provider/provider.go", `package provider
+
+import "example.com/imported-type-middleware/auth"
+
+var Default auth.Auth
+`)
+	writeLinkTestFile(t, root, "router/router.go", `package router
+
+import provider "example.com/imported-type-middleware/provider"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Use(middleware any) {}
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func Handler() {}
+
+func InitRouter(g *RouterGroup) {
+	g.Use(provider.Default.Middleware)
+	g.GET("/x", Handler)
+}
+`)
+	_, idx, store := loadAndExtract(t, root)
+
+	if err := Run(idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	assertMiddlewareSymbol(t, store, "provider.Default.Middleware", "method:example.com/imported-type-middleware/auth:Auth:Middleware")
+}
+
+func TestRunLinksPackageVarStructFieldMiddlewareSymbol(t *testing.T) {
+	root := t.TempDir()
+	writeLinkTestFile(t, root, "go.mod", "module example.com/struct-field-middleware\n\ngo 1.24\n")
+	writeLinkTestFile(t, root, "auth/auth.go", `package auth
+
+type Auth struct{}
+
+func (a *Auth) Middleware() {}
+`)
+	writeLinkTestFile(t, root, "provider/provider.go", `package provider
+
+import "example.com/struct-field-middleware/auth"
+
+type Dependencies struct {
+	Auth auth.Auth
+}
+
+var Default = Dependencies{}
+`)
+	writeLinkTestFile(t, root, "router/router.go", `package router
+
+import provider "example.com/struct-field-middleware/provider"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Use(middleware any) {}
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func Handler() {}
+
+func InitRouter(g *RouterGroup) {
+	g.Use(provider.Default.Auth.Middleware)
+	g.GET("/x", Handler)
+}
+`)
+	_, idx, store := loadAndExtract(t, root)
+
+	if err := Run(idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	assertMiddlewareSymbol(t, store, "provider.Default.Auth.Middleware", "method:example.com/struct-field-middleware/auth:Auth:Middleware")
 }
 
 func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want facts.SymbolID) {

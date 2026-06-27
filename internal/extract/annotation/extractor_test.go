@@ -92,4 +92,10 @@ func TestExtractAnnotationFacts(t *testing.T) {
 	if first.Span.File == "" {
 		t.Fatal("annotation span file is empty")
 	}
+	if first.Span.StartLine != 4 || first.Span.EndLine != 4 {
+		t.Fatalf("first annotation span = %#v", first.Span)
+	}
+	if store.Annotations[1].Span.StartLine != 5 || store.Annotations[1].Span.EndLine != 5 {
+		t.Fatalf("second annotation span = %#v", store.Annotations[1].Span)
+	}
 }

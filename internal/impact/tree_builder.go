@@ -241,7 +241,20 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 	}
 	if len(annotations) == 0 {
 		if route.Method != "" && path != "" {
-			node.Children = append(node.Children, b.endpointNode(route.Method, path, "", route.HandlerSymbol, route.Span, level+1))
+			relation := "route_endpoint"
+			if route.SourceFamily == "deleted_diff" {
+				relation = "deleted_route_endpoint"
+			}
+			node.Children = append(node.Children, b.endpointNode(
+				route.Method,
+				path,
+				"",
+				route.HandlerSymbol,
+				route.Span,
+				level+1,
+				relation,
+				facts.ConfidenceMedium,
+			))
 		}
 		return node
 	}
@@ -312,12 +325,28 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		return node
 	}
 	if method != "" && path != "" {
-		node.Children = append(node.Children, b.endpointNode(method, path, annotation.ID, annotation.HandlerSymbol, annotation.Span, level+1))
+		node.Children = append(node.Children, b.endpointNode(
+			method,
+			path,
+			annotation.ID,
+			annotation.HandlerSymbol,
+			annotation.Span,
+			level+1,
+			"annotation_endpoint",
+			facts.ConfidenceHigh,
+		))
 	}
 	return node
 }
 
-func (b *treeBuilder) endpointNode(method, path, annotationID string, handler facts.SymbolID, span facts.SourceSpan, level int) Node {
+func (b *treeBuilder) endpointNode(
+	method, path, annotationID string,
+	handler facts.SymbolID,
+	span facts.SourceSpan,
+	level int,
+	relation string,
+	confidence facts.Confidence,
+) Node {
 	id := fmt.Sprintf("endpoint:%s:%s", method, path)
 	key := method + "\x00" + path
 	b.endpoints[key] = EndpointImpact{
@@ -332,9 +361,9 @@ func (b *treeBuilder) endpointNode(method, path, annotationID string, handler fa
 		Kind:       "endpoint",
 		Name:       method + " " + path,
 		File:       span.File,
-		Relation:   "annotation_endpoint",
+		Relation:   relation,
 		Span:       span,
-		Confidence: facts.ConfidenceHigh,
+		Confidence: confidence,
 		Level:      level,
 		Method:     method,
 		Path:       path,

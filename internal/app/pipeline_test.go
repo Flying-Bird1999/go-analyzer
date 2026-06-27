@@ -285,6 +285,38 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
 }
 
+func TestRunImpactReportsUnresolvedGoModDiff(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/gomod-unresolved\n\ngo 1.24\n")
+	writeTestFile(t, root, "main.go", "package main\n\nfunc main() {}\n")
+	diffPath := filepath.Join(t.TempDir(), "gomod.diff")
+	patch := []byte("diff --git a/go.mod b/go.mod\n" +
+		"--- a/go.mod\n" +
+		"+++ b/go.mod\n" +
+		"@@ -2,3 +2,3 @@ module example.com/gomod-unresolved\n" +
+		" \n" +
+		"-go 1.23\n" +
+		"+go 1.24\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range doc.Meta.Diagnostics {
+		if diagnostic.Code == "module_diff_unresolved" {
+			return
+		}
+	}
+	t.Fatalf("module_diff_unresolved diagnostic not found: %#v", doc.Meta.Diagnostics)
+}
+
 func TestRunImpactMapsMiddlewareMethodDiffToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/middleware-impact\n\ngo 1.24\n")
@@ -343,6 +375,57 @@ func InitRouter(g *RouterGroup) {
 		t.Fatal(err)
 	}
 	assertEndpointSummary(t, doc, "GET", "/x")
+}
+
+func TestRunImpactRecoversMultilineDeletedRouteAndHandlerAnnotation(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/deleted-route\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/order.go", `package controller
+
+// @Post /public/orders
+func Create() {}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/deleted-route/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) GET(path string, handler any) {}
+func (g *RouterGroup) POST(path string, handler any) {}
+
+func Health() {}
+
+func Init(g *RouterGroup) {
+	g.GET("/health", Health)
+	_ = controller.Create
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "deleted-route.diff")
+	patch := []byte("diff --git a/router/router.go b/router/router.go\n" +
+		"--- a/router/router.go\n" +
+		"+++ b/router/router.go\n" +
+		"@@ -12,8 +12,4 @@ func Init(g *RouterGroup) {\n" +
+		"-\tg.POST(\n" +
+		"-\t\t\"/internal/orders\",\n" +
+		"-\t\tcontroller.Create,\n" +
+		"-\t)\n" +
+		" \tg.GET(\"/health\", Health)\n" +
+		" \t_ = controller.Create\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/public/orders")
 }
 
 func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {

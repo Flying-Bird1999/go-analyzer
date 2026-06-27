@@ -8,6 +8,18 @@
 
 **Tech Stack:** Go 1.24 standard library (`go/ast`, `go/parser`, `go/token`), existing `internal/*` packages, fixture-driven tests, golden JSON, smoke script.
 
+**Implementation status (2026-06-27):** Completed and verified. The unchecked
+boxes below preserve the original TDD execution script and are not current
+TODOs. Final implementation deviations:
+
+- `DeletedBlock` lives in `internal/diff/range.go`; no separate `deleted.go` was needed.
+- Lightweight value/field type inference lives in `internal/astindex.Index` so
+  reference, handler and middleware resolution share one index; no parallel
+  `reference/type_index.go` was created.
+- The root `ARCHITECTURE.md` replaces `HANDOFF.md` as the current project guide.
+- The smoke script covers `deleted-route`, `gomod-impact` and
+  `middleware-selector`.
+
 ---
 
 ## Scope
@@ -93,8 +105,8 @@ Excluded:
   - Add fixture smoke for deleted route and go.mod impact.
 - `docs/design/go-impact-next-iteration-architecture.md`
   - Keep in sync with final implementation decisions.
-- `HANDOFF.md`
-  - Update current state and known boundaries after implementation.
+- `ARCHITECTURE.md`
+  - Current architecture, development, debugging and capability boundaries.
 
 ---
 
@@ -726,7 +738,7 @@ Expected: PASS after Tasks 5-6.
 - Modify: `internal/output/contract.go`
 - Modify: `docs/contracts/output-contract.md`
 - Modify: `docs/validation/real-project-validation.md`
-- Modify: `HANDOFF.md`
+- Modify: `ARCHITECTURE.md`
 - Optional: `testdata/golden/*.impact.json`
 
 - [ ] **Step 1: Update schema docs**
@@ -743,7 +755,7 @@ Document new change kinds and diagnostics:
 
 If output only uses existing shape with new node kinds, update or add fixture golden tests.
 
-- [ ] **Step 3: Update HANDOFF**
+- [ ] **Step 3: Update project architecture guide**
 
 Record:
 

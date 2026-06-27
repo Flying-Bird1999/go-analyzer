@@ -30,7 +30,7 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 		}},
 	}}
 
-	RecoverDeletedRoutes(changes, store, config.Default(), "git_diff")
+	RecoverDeletedRoutes(changes, nil, store, config.Default(), "git_diff")
 
 	if len(store.Routes) != 1 {
 		t.Fatalf("routes = %#v", store.Routes)
@@ -57,5 +57,32 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 	}
 	if len(root.Endpoints) != 1 || root.Endpoints[0].Method != "POST" || root.Endpoints[0].Path != "/api/legacy" {
 		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+	if len(root.Root.Children) != 1 {
+		t.Fatalf("route children = %#v", root.Root.Children)
+	}
+	endpoint := root.Root.Children[0]
+	if endpoint.Relation != "deleted_route_endpoint" || endpoint.Confidence != facts.ConfidenceMedium {
+		t.Fatalf("deleted route endpoint evidence = %#v", endpoint)
+	}
+}
+
+func TestRecoverDeletedRoutesIgnoresNonGoFiles(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	changes := []diff.FileChange{{
+		OldPath: "web/router.ts",
+		NewPath: "web/router.ts",
+		Status:  diff.StatusModified,
+		DeletedBlocks: []diff.DeletedBlock{{
+			OldStartLine:  10,
+			NewAnchorLine: 10,
+			Lines:         []string{`api.GET("/orders", handler)`},
+		}},
+	}}
+
+	RecoverDeletedRoutes(changes, nil, store, config.Default(), "git_diff")
+
+	if len(store.Routes) != 0 || len(store.Changes) != 0 {
+		t.Fatalf("non-Go deleted routes were recovered: routes=%#v changes=%#v", store.Routes, store.Changes)
 	}
 }

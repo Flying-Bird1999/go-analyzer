@@ -1,0 +1,6 @@
+diff --git a/go.mod b/go.mod
+--- a/go.mod
++++ b/go.mod
+@@ -6 +6 @@ require (
+-	gopkg.inshopline.com/sc1/commons/utils v1.0.0
++	gopkg.inshopline.com/sc1/commons/utils v1.1.0

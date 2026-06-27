@@ -4,18 +4,22 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/token"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	routeextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/link"
 )
 
-func RecoverDeletedRoutes(fileChanges []diff.FileChange, store *facts.Store, cfg config.Config, source string) {
+func RecoverDeletedRoutes(fileChanges []diff.FileChange, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
 	if source == "" {
 		source = "git_diff"
 	}
@@ -24,23 +28,23 @@ func RecoverDeletedRoutes(fileChanges []diff.FileChange, store *facts.Store, cfg
 		if file == "" {
 			file = filepath.ToSlash(fileChange.OldPath)
 		}
+		if filepath.Ext(file) != ".go" {
+			continue
+		}
 		for _, block := range fileChange.DeletedBlocks {
-			recoverDeletedRoutesInBlock(file, block, store, cfg, source)
+			recoverDeletedRoutesInBlock(file, block, idx, store, cfg, source)
 		}
 	}
 }
 
-func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, store *facts.Store, cfg config.Config, source string) {
-	for offset, line := range block.Lines {
-		call, ok := parseDeletedRouteCall(line)
-		if !ok {
-			continue
-		}
+func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
+	for _, candidate := range parseDeletedRouteCalls(block.Lines) {
+		call := candidate.call
 		parsed, ok := routeextract.ParseRouteCall(call, cfg)
 		if !ok {
 			continue
 		}
-		oldLine := block.OldStartLine + offset
+		oldLine := block.OldStartLine + candidate.offset
 		anchorLine := block.NewAnchorLine
 		if anchorLine <= 0 {
 			anchorLine = 1
@@ -53,7 +57,7 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, store *fa
 		wrappers := append([]facts.WrapperFact{}, parsed.GroupWrappers...)
 		wrappers = append(wrappers, parsed.HandlerWrappers...)
 		route := facts.RouteRegistrationFact{
-			ID:             deletedRouteID(file, parsed.Method, parsed.LocalPath, oldLine, offset),
+			ID:             deletedRouteID(file, parsed.Method, parsed.LocalPath, oldLine, candidate.offset),
 			Method:         parsed.Method,
 			LocalPath:      parsed.LocalPath,
 			PathRaw:        parsed.PathRaw,
@@ -72,6 +76,7 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, store *fa
 				EndLine:   anchorLine,
 			},
 		}
+		link.LinkRoute(idx, store, &route)
 		store.Routes = append(store.Routes, route)
 		store.Changes = append(store.Changes, facts.ChangeFact{
 			ID:       fmt.Sprintf("change:%s:%s:%d:%d", facts.ChangeKindRouteDeleted, file, anchorLine, len(store.Changes)),
@@ -89,7 +94,46 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, store *fa
 	}
 }
 
-func parseDeletedRouteCall(line string) (*ast.CallExpr, bool) {
+type deletedRouteCall struct {
+	call   *ast.CallExpr
+	offset int
+}
+
+func parseDeletedRouteCalls(lines []string) []deletedRouteCall {
+	source := "package deleted\nfunc recover() {\n" + strings.Join(lines, "\n") + "\n}\n"
+	fset := token.NewFileSet()
+	file, _ := parser.ParseFile(fset, "deleted.go", source, parser.AllErrors)
+	var out []deletedRouteCall
+	if file != nil {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			offset := fset.Position(call.Pos()).Line - 3
+			if offset >= 0 && offset < len(lines) {
+				out = append(out, deletedRouteCall{call: call, offset: offset})
+			}
+			return true
+		})
+	}
+	if len(out) == 0 {
+		for offset, line := range lines {
+			if call, ok := parseDeletedRouteLine(line); ok {
+				out = append(out, deletedRouteCall{call: call, offset: offset})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].offset != out[j].offset {
+			return out[i].offset < out[j].offset
+		}
+		return out[i].call.Pos() < out[j].call.Pos()
+	})
+	return out
+}
+
+func parseDeletedRouteLine(line string) (*ast.CallExpr, bool) {
 	expr, err := parser.ParseExpr(strings.TrimSpace(line))
 	if err != nil {
 		return nil, false
@@ -208,11 +252,11 @@ func addDeletedRouteDiagnostics(store *facts.Store, route facts.RouteRegistratio
 			RelatedFactIDs: []string{route.ID},
 		})
 	}
-	if route.HandlerRaw == "" {
+	if route.HandlerSymbol == "" {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:           diagnostics.CodeDeletedRouteHandlerUnresolved,
 			Severity:       diagnostics.SeverityWarning,
-			Message:        "deleted route handler could not be resolved",
+			Message:        "deleted route handler could not be resolved to a project symbol",
 			Span:           route.Span,
 			RelatedFactIDs: []string{route.ID},
 		})

@@ -1,5 +1,8 @@
 # go-analyzer 符号级影响分析架构
 
+> 历史专项设计：本文记录 symbol impact tree 重构方案。
+> 当前架构、输出和接手说明以项目根目录 `ARCHITECTURE.md` 为准。
+
 ## 1. 文档状态
 
 本文定义 `go-analyzer` 下一阶段的正式技术方向。

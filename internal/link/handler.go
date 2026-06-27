@@ -22,27 +22,20 @@ func ResolveHandlerSymbol(idx *astindex.Index, route facts.RouteRegistrationFact
 		return id, ok
 	}
 	importPath := file.Imports[parts[0]]
-	if importPath == "" {
-		return "", false
-	}
 	if len(parts) == 2 {
-		id := astindex.FunctionSymbolID(importPath, parts[1])
-		if _, ok := idx.Symbols[id]; ok {
-			return id, true
+		if importPath != "" {
+			id := astindex.FunctionSymbolID(importPath, parts[1])
+			if _, ok := idx.Symbols[id]; ok {
+				return id, true
+			}
+			id = astindex.ValueSymbolID("var", importPath, parts[1])
+			_, ok := idx.Symbols[id]
+			return id, ok
 		}
-		id = astindex.ValueSymbolID("var", importPath, parts[1])
-		_, ok := idx.Symbols[id]
-		return id, ok
+		return idx.ResolveSelectorMethod(file, parts)
 	}
-	if len(parts) == 3 {
-		varID := astindex.ValueSymbolID("var", importPath, parts[1])
-		receiver := idx.VarReceiverTypes[string(varID)]
-		if receiver == "" {
-			return "", false
-		}
-		id := astindex.MethodSymbolID(importPath, receiver, parts[2])
-		_, ok := idx.Symbols[id]
-		return id, ok
+	if len(parts) >= 3 {
+		return idx.ResolveSelectorMethod(file, parts)
 	}
 	return "", false
 }

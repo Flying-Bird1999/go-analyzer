@@ -36,6 +36,9 @@ MVP 覆盖范围：
 - struct 字段和 tag 变更映射到所属 type，并沿类型依赖传播。
 - controller 函数注释中的 HTTP 接口识别。
 - route 注册关系、route group、中间件、guard/wrapper 的影响传播。
+- 删除 route registration 的单行/多行恢复。
+- go.mod require/replace 变更到本仓使用点再到 endpoint 的传播。
+- 常见 package var / struct field middleware selector 的轻量类型推断。
 - 输出完整的 symbol → route → annotation → endpoint 传播树及接口摘要。
 
 MVP 暂不覆盖：
@@ -180,23 +183,21 @@ changed middleware symbol
 
 ## 文档
 
-最终架构技术方案见：
+当前项目架构、模块职责、调试与接手指南见：
 
-[docs/design/go-analyzer-mvp-architecture.md](docs/design/go-analyzer-mvp-architecture.md)
+[ARCHITECTURE.md](ARCHITECTURE.md)
 
-下一阶段符号级影响分析与原始传播树方案见：
+输出契约见：
 
-[docs/design/go-symbol-impact-architecture.md](docs/design/go-symbol-impact-architecture.md)
+[docs/contracts/output-contract.md](docs/contracts/output-contract.md)
 
-模块级开发计划见：
-
-[docs/superpowers/plans](docs/superpowers/plans)
+`docs/design/` 和 `docs/superpowers/plans/` 保存历史设计与实施过程，不作为当前实现状态真值。
 
 ## 后续路线
 
 第一阶段先验证 BFF diff 到 HTTP 接口的静态分析闭环。等这个闭环稳定后，再考虑：
 
-- 更精准的外部 Go module diff 分析。
+- 外部 Go module 两个版本之间的 API/source diff 分析。
 - Base/Head 双快照与被删除声明的精确恢复。
 - 生成代码和 `nexus/codegen` 路由的专项支持。
 - 底层 gRPC 项目到 BFF HTTP 接口的跨仓传播。

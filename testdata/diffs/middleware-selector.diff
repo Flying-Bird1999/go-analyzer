@@ -1,0 +1,10 @@
+diff --git a/auth/auth.go b/auth/auth.go
+--- a/auth/auth.go
++++ b/auth/auth.go
+@@ -3,5 +3,5 @@ package auth
+ type Auth struct{}
+ 
+ func (a *Auth) Middleware() {
+-	_ = "old"
++	_ = "new"
+ }

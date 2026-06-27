@@ -15,10 +15,9 @@ func Default() Config {
 			SkipDirs: []string{".git", ".cache", "vendor", "node_modules", "testdata"},
 		},
 		Route: RouteConfig{
-			HTTPMethods:         []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
-			HandlerWrappers:     []string{"ControllerWithReqResp", "AppControllerWithReqResp", "ControllerWithResp", "Controller", "MiddlewareController"},
-			RouteGroupWrappers:  []WrapperRule{{Prefix: "Add"}, {Contains: "Guard"}, {Contains: "Validator"}},
-			GeneratedRouteCalls: []string{"RegisterRouters", "RegisterRouter"},
+			HTTPMethods:        []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
+			HandlerWrappers:    []string{"ControllerWithReqResp", "AppControllerWithReqResp", "ControllerWithResp", "Controller", "MiddlewareController"},
+			RouteGroupWrappers: []WrapperRule{{Prefix: "Add"}, {Contains: "Guard"}, {Contains: "Validator"}},
 		},
 		Annotation: AnnotationConfig{
 			Methods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
@@ -83,7 +82,6 @@ func merge(base Config, override Config) Config {
 	base.Route.HTTPMethods = appendUniqueUpper(base.Route.HTTPMethods, override.Route.HTTPMethods...)
 	base.Route.HandlerWrappers = appendUniqueFold(base.Route.HandlerWrappers, override.Route.HandlerWrappers...)
 	base.Route.RouteGroupWrappers = append(base.Route.RouteGroupWrappers, override.Route.RouteGroupWrappers...)
-	base.Route.GeneratedRouteCalls = appendUniqueFold(base.Route.GeneratedRouteCalls, override.Route.GeneratedRouteCalls...)
 	base.Annotation.Methods = appendUniqueUpper(base.Annotation.Methods, override.Annotation.Methods...)
 	if override.Analysis.MaxDepth != 0 {
 		base.Analysis.MaxDepth = override.Analysis.MaxDepth

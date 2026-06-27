@@ -25,14 +25,21 @@ func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store
 					continue
 				}
 				handler := handlerSymbolID(pkg.Path, fn)
-				parsed := ParseAPIAnnotationsWithConfig(fn.Doc, cfg)
-				for i, item := range parsed {
-					span := astindex.SourceSpanFor(file.FileSet, fn.Pos(), fn.End())
+				if fn.Doc == nil {
+					continue
+				}
+				annotationIndex := 0
+				for _, comment := range fn.Doc.List {
+					item, ok := parseLine(cleanComment(comment.Text), cfg)
+					if !ok {
+						continue
+					}
+					span := astindex.SourceSpanFor(file.FileSet, comment.Pos(), comment.End())
 					if rel, err := filepath.Rel(p.Root, span.File); err == nil {
 						span.File = filepath.ToSlash(rel)
 					}
 					store.Annotations = append(store.Annotations, facts.AnnotationFact{
-						ID:            annotationID(handler, item.Method, item.Path, i),
+						ID:            annotationID(handler, item.Method, item.Path, annotationIndex),
 						Kind:          "annotation",
 						Method:        item.Method,
 						Path:          item.Path,
@@ -40,6 +47,7 @@ func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store
 						HandlerSymbol: handler,
 						Span:          span,
 					})
+					annotationIndex++
 				}
 			}
 		}

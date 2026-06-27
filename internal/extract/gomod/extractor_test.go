@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -76,6 +77,46 @@ replace example.com/replaced => example.com/replaced v1.0.2
 	assertModuleChange(t, changes, "example.com/upgraded", facts.ModuleChangeUpgraded)
 	assertModuleChange(t, changes, "example.com/downgraded", facts.ModuleChangeDowngraded)
 	assertModuleChange(t, changes, "example.com/replaced", facts.ModuleChangeReplaced)
+}
+
+func TestDiffModulesFromFileChangesDetectsBlockRequireWithoutBlockHeader(t *testing.T) {
+	fileChanges := []diff.FileChange{{
+		OldPath: "go.mod",
+		NewPath: "go.mod",
+		Status:  diff.StatusModified,
+		Raw: "diff --git a/go.mod b/go.mod\n" +
+			"--- a/go.mod\n" +
+			"+++ b/go.mod\n" +
+			"@@ -12 +12 @@ require (\n" +
+			"-\texample.com/jsonx v1.0.0\n" +
+			"+\texample.com/jsonx v1.1.0\n",
+	}}
+
+	changes, err := DiffModulesFromFileChanges(fileChanges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertModuleChange(t, changes, "example.com/jsonx", facts.ModuleChangeUpgraded)
+}
+
+func TestDiffModulesFromFileChangesDetectsReplaceOnlyHunk(t *testing.T) {
+	fileChanges := []diff.FileChange{{
+		OldPath: "go.mod",
+		NewPath: "go.mod",
+		Status:  diff.StatusModified,
+		Raw: "diff --git a/go.mod b/go.mod\n" +
+			"--- a/go.mod\n" +
+			"+++ b/go.mod\n" +
+			"@@ -20 +20 @@\n" +
+			"-replace example.com/jsonx => example.com/jsonx v1.0.0\n" +
+			"+replace example.com/jsonx => example.com/jsonx v1.1.0\n",
+	}}
+
+	changes, err := DiffModulesFromFileChanges(fileChanges)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertModuleChange(t, changes, "example.com/jsonx", facts.ModuleChangeReplaced)
 }
 
 func TestMapModuleUsagePrecise(t *testing.T) {

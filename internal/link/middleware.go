@@ -62,22 +62,8 @@ func resolveCallable(idx *astindex.Index, file *project.File, expr ast.Expr) (fa
 					return id, true
 				}
 			}
-			varID := astindex.ValueSymbolID("var", file.Package.Path, parts[0])
-			if receiver := idx.VarReceiverTypes[string(varID)]; receiver != "" {
-				id := astindex.MethodSymbolID(file.Package.Path, receiver, parts[1])
-				_, ok := idx.Symbols[id]
-				return id, ok
-			}
 		}
-		if len(parts) == 3 {
-			importPath := file.Imports[parts[0]]
-			varID := astindex.ValueSymbolID("var", importPath, parts[1])
-			if receiver := idx.VarReceiverTypes[string(varID)]; receiver != "" {
-				id := astindex.MethodSymbolID(importPath, receiver, parts[2])
-				_, ok := idx.Symbols[id]
-				return id, ok
-			}
-		}
+		return idx.ResolveSelectorMethod(file, parts)
 	}
 	return "", false
 }

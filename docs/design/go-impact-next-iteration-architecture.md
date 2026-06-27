@@ -4,6 +4,9 @@
 
 本文定义 `go-analyzer` 在 `go-impact/v1alpha1` 之后的下一轮能力增强方案。
 
+实现状态：已于 2026-06-27 完成。当前架构与运行方式以项目根目录
+`ARCHITECTURE.md` 为准；本文保留本轮专项设计决策。
+
 本轮 scope 采用方案 B：
 
 1. deleted route registration 影响分析。
@@ -256,12 +259,13 @@ g.Use(appProxyAuth.AppProxyAuthOptionalLogin.Middleware)
 
 ### 5.4 设计
 
-新增轻量类型索引：
+轻量类型索引直接集成在 `internal/astindex.Index`，由 reference、handler 和
+middleware resolver 共用：
 
 ```go
-type TypeIndex struct {
-    Values map[facts.SymbolID]ValueType
-    StructFields map[facts.SymbolID]map[string]ValueType
+type Index struct {
+    VarReceiverTypes map[string]ValueType
+    StructFieldTypes map[facts.SymbolID]map[string]ValueType
 }
 
 type ValueType struct {
@@ -322,7 +326,7 @@ build fact store
 ```text
 load project
   -> build AST index
-  -> build lightweight type index
+  -> build symbol and lightweight value type index
   -> extract/link/reference facts using type index
   -> parse diff
   -> recover deleted route facts
@@ -336,16 +340,16 @@ load project
 
 - `facts` 命令不读取 diff，不输出 deleted route。
 - `impact` 命令可以向 store 追加 synthetic facts，但 synthetic facts 必须有明确 `source_family` 或 ID 前缀。
-- output schema 不引入新顶层结构；只扩展 node kind / relation / diagnostics。
+- impact 顶层增加 `module_changes` / `module_usages`，保留 go.mod 传播的原始解释证据。
+- node kind / relation / diagnostics 同步扩展。
 
 ## 7. 测试策略
 
 新增 fixtures：
 
-- `deleted-route`: 删除单行 route registration。
-- `deleted-route-wrapper`: 删除多行 wrapped route registration。
+- `deleted-route`: 覆盖多行 route registration 和 handler annotation 恢复。
 - `gomod-impact`: go.mod require version 变化影响 service 函数，再传播到 endpoint。
-- `middleware-selector`: middleware method 变更传播到 route。
+- `middleware-selector`: package var + struct field middleware method 变更传播到 route。
 
 重点测试：
 

@@ -1,7 +1,7 @@
 # go-analyzer MVP 架构技术方案
 
-> 本文保留 MVP 阶段的架构设计。下一阶段的符号级影响传播和原始影响树方案见
-> `docs/design/go-symbol-impact-architecture.md`。
+> 历史设计文档：本文保留 MVP 阶段的架构设计，其中部分“当前状态”已被后续实现取代。
+> 当前架构、能力边界与调试方式以项目根目录 `ARCHITECTURE.md` 为准。
 
 ## 1. 文档目标
 

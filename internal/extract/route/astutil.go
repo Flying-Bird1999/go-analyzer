@@ -72,12 +72,3 @@ func joinPath(prefix, path string) string {
 	}
 	return strings.ReplaceAll(out, "//", "/")
 }
-
-func isHTTPMethod(name string) bool {
-	switch strings.ToUpper(name) {
-	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
-		return true
-	default:
-		return false
-	}
-}

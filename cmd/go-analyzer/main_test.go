@@ -100,12 +100,6 @@ func TestHelpCommandListsCommands(t *testing.T) {
 	}
 }
 
-func runWithCapturedStdout(t *testing.T, args []string) error {
-	t.Helper()
-	_, err := runWithCapturedStdoutBytes(t, args)
-	return err
-}
-
 func runWithCapturedStdoutBytes(t *testing.T, args []string) ([]byte, error) {
 	t.Helper()
 	original := os.Stdout

@@ -100,8 +100,50 @@ print(
 PY
 }
 
+run_impact_case() {
+  local name="$1"
+  local method="$2"
+  local endpoint_path="$3"
+  local project="${ROOT_DIR}/testdata/fixtures/${name}"
+  local patch="${ROOT_DIR}/testdata/diffs/${name}.diff"
+  local out="${OUT_DIR}/${name}.impact.json"
+
+  echo "analyzing ${name} impact fixture"
+  (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
+  python3 -m json.tool "${out}" > /dev/null
+  python3 - "$out" "$method" "$endpoint_path" "$name" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+method, path, name = sys.argv[2], sys.argv[3], sys.argv[4]
+endpoints = [
+    endpoint
+    for source in (data.get("fileSources") or [])
+    for endpoint in (source.get("impactedEndpoints") or [])
+]
+if not any(endpoint.get("method") == method and endpoint.get("path") == path for endpoint in endpoints):
+    raise SystemExit(f"{method} {path} not found for {name}")
+if name == "gomod-impact" and not data.get("module_changes"):
+    raise SystemExit("gomod-impact did not emit module_changes")
+print(
+    "fixture={name} changed_sources={sources} endpoints={endpoints} diagnostics={diagnostics}".format(
+        name=name,
+        sources=len(data.get("fileSources") or []),
+        endpoints=len(endpoints),
+        diagnostics=len(data.get("meta", {}).get("diagnostics") or []),
+    )
+)
+PY
+}
+
 run_project "sl-sc1-bff-service" "$(resolve_sibling "sl-sc1-bff-service" "sc1-bff-service")"
 run_project "sl-sc1-admin-bff" "$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
 run_impact_fixture
+run_impact_case "deleted-route" "POST" "/public/orders"
+run_impact_case "gomod-impact" "GET" "/api/checkIn"
+run_impact_case "middleware-selector" "GET" "/orders"
 
 echo "smoke outputs written to ${OUT_DIR}"

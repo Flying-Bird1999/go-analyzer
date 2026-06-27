@@ -60,6 +60,23 @@ func TestMapRealRouteFixtureRange(t *testing.T) {
 	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
 }
 
+func TestMapAnnotatedFunctionBodyToSymbolInsteadOfAnnotation(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "annotation-only")
+	store := loadFactsForDiff(t, root)
+
+	got := MapChanges([]FileChange{{
+		NewPath: "controller/common.go",
+		Ranges:  []LineRange{{StartLine: 7, EndLine: 7}},
+	}}, store, "git_diff")
+
+	if len(got) != 1 || got[0].Kind != facts.ChangeKindSymbolChanged {
+		t.Fatalf("annotated function body mapped incorrectly: %#v", got)
+	}
+	if got[0].SymbolID != "func:example.com/annotation-only/controller::CheckIn" {
+		t.Fatalf("symbol = %q", got[0].SymbolID)
+	}
+}
+
 func TestMapChangesSelectsSmallestContainingSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols,

@@ -1,0 +1,11 @@
+diff --git a/router/router.go b/router/router.go
+--- a/router/router.go
++++ b/router/router.go
+@@ -12,8 +12,4 @@ func Init(g *RouterGroup) {
+-	g.POST(
+-		"/internal/orders",
+-		controller.Create,
+-	)
+ 	g.GET("/health", Health)
+ 	_ = controller.Create
+ }

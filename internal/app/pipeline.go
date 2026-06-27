@@ -73,10 +73,18 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		return nil, err
 	}
 	store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
-	impact.RecoverDeletedRoutes(fileChanges, store, cfg, "git_diff")
+	impact.RecoverDeletedRoutes(fileChanges, built.index, store, cfg, "git_diff")
 	moduleChanges, err := gomod.DiffModulesFromFileChanges(fileChanges)
 	if err != nil {
 		return nil, fmt.Errorf("diff go.mod modules: %w", err)
+	}
+	if hasGoModDiff(fileChanges) && len(moduleChanges) == 0 {
+		diagnostics.AddFact(store, diagnostics.Diagnostic{
+			Code:     diagnostics.CodeModuleDiffUnresolved,
+			Severity: diagnostics.SeverityWarning,
+			Message:  "go.mod changed, but no require or replace module change could be resolved",
+			Span:     facts.SourceSpan{File: "go.mod"},
+		})
 	}
 	store.ModuleChanges = append(store.ModuleChanges, moduleChanges...)
 	moduleUsages := gomod.MapModuleUsage(built.project, built.index, store, moduleChanges)
@@ -194,4 +202,17 @@ func moduleUsageChanges(usages []facts.ModuleUsageFact, store *facts.Store, sour
 		out = append(out, change)
 	}
 	return out
+}
+
+func hasGoModDiff(changes []diff.FileChange) bool {
+	for _, change := range changes {
+		file := change.NewPath
+		if file == "" {
+			file = change.OldPath
+		}
+		if filepath.ToSlash(file) == "go.mod" && (len(change.Ranges) > 0 || len(change.DeletedBlocks) > 0) {
+			return true
+		}
+	}
+	return false
 }
