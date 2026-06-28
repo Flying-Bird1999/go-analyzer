@@ -14,6 +14,7 @@ const ImpactTreeSchemaVersion = "go-impact/v1alpha1"
 
 type ImpactDocument struct {
 	Meta          ImpactMeta               `json:"meta"`
+	Summary       ImpactSummary            `json:"summary"`
 	ModuleChanges []facts.ModuleChangeFact `json:"module_changes"`
 	ModuleUsages  []facts.ModuleUsageFact  `json:"module_usages"`
 	FileSources   []FileSourceImpact       `json:"fileSources"`
@@ -55,6 +56,11 @@ type EndpointSummary struct {
 	Path   string `json:"path"`
 }
 
+type ImpactSummary struct {
+	ImpactedEndpointCount int               `json:"impactedEndpointCount"`
+	ImpactedEndpoints     []EndpointSummary `json:"impactedEndpoints"`
+}
+
 type ImpactDocumentOptions struct {
 	IncludeDiff        *bool
 	IncludeRawEvidence *bool
@@ -69,6 +75,7 @@ func BuildImpactDocument(project facts.ProjectFact, fileChanges []diff.FileChang
 	includeDiff := enabledByDefault(opts.IncludeDiff)
 	includeRaw := enabledByDefault(opts.IncludeRawEvidence)
 	files := map[string]*fileSourceBuilder{}
+	globalEndpoints := map[string]EndpointSummary{}
 
 	ensureFile := func(file string) *fileSourceBuilder {
 		file = filepath.ToSlash(file)
@@ -115,6 +122,7 @@ func BuildImpactDocument(project facts.ProjectFact, fileChanges []diff.FileChang
 			}
 			summary := EndpointSummary{Method: endpoint.Method, Path: endpoint.Path}
 			builder.endpoints[summary.Method+"\x00"+summary.Path] = summary
+			globalEndpoints[summary.Method+"\x00"+summary.Path] = summary
 		}
 	}
 
@@ -124,6 +132,7 @@ func BuildImpactDocument(project facts.ProjectFact, fileChanges []diff.FileChang
 			ProjectRoot:   project.Root,
 			Diagnostics:   dedupeImpactDiagnostics(result.Diagnostics),
 		},
+		Summary:       buildImpactSummary(globalEndpoints),
 		ModuleChanges: []facts.ModuleChangeFact{},
 		ModuleUsages:  []facts.ModuleUsageFact{},
 		FileSources:   make([]FileSourceImpact, 0, len(files)),
@@ -147,6 +156,18 @@ func BuildImpactDocument(project facts.ProjectFact, fileChanges []diff.FileChang
 		return doc.FileSources[i].SourceFile < doc.FileSources[j].SourceFile
 	})
 	return doc
+}
+
+func buildImpactSummary(endpoints map[string]EndpointSummary) ImpactSummary {
+	out := ImpactSummary{
+		ImpactedEndpoints: make([]EndpointSummary, 0, len(endpoints)),
+	}
+	for _, endpoint := range endpoints {
+		out.ImpactedEndpoints = append(out.ImpactedEndpoints, endpoint)
+	}
+	sortEndpointSummaries(out.ImpactedEndpoints)
+	out.ImpactedEndpointCount = len(out.ImpactedEndpoints)
+	return out
 }
 
 func RenderImpactTreeJSON(doc ImpactDocument) ([]byte, error) {
@@ -245,6 +266,11 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 	if doc.ModuleChanges == nil {
 		doc.ModuleChanges = []facts.ModuleChangeFact{}
 	}
+	if doc.Summary.ImpactedEndpoints == nil {
+		doc.Summary.ImpactedEndpoints = []EndpointSummary{}
+	}
+	sortEndpointSummaries(doc.Summary.ImpactedEndpoints)
+	doc.Summary.ImpactedEndpointCount = len(doc.Summary.ImpactedEndpoints)
 	if doc.ModuleUsages == nil {
 		doc.ModuleUsages = []facts.ModuleUsageFact{}
 	}
@@ -271,19 +297,21 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 		if doc.FileSources[i].ImpactedEndpoints == nil {
 			doc.FileSources[i].ImpactedEndpoints = []EndpointSummary{}
 		}
-		sort.Slice(doc.FileSources[i].ImpactedEndpoints, func(a, b int) bool {
-			left := doc.FileSources[i].ImpactedEndpoints[a]
-			right := doc.FileSources[i].ImpactedEndpoints[b]
-			if left.Method != right.Method {
-				return left.Method < right.Method
-			}
-			return left.Path < right.Path
-		})
+		sortEndpointSummaries(doc.FileSources[i].ImpactedEndpoints)
 	}
 	sort.Slice(doc.FileSources, func(i, j int) bool {
 		return doc.FileSources[i].SourceFile < doc.FileSources[j].SourceFile
 	})
 	return doc
+}
+
+func sortEndpointSummaries(endpoints []EndpointSummary) {
+	sort.Slice(endpoints, func(i, j int) bool {
+		if endpoints[i].Method != endpoints[j].Method {
+			return endpoints[i].Method < endpoints[j].Method
+		}
+		return endpoints[i].Path < endpoints[j].Path
+	})
 }
 
 func enabledByDefault(value *bool) bool {

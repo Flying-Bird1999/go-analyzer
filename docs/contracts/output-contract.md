@@ -49,6 +49,10 @@ Top-level shape:
   },
   "module_changes": [],
   "module_usages": [],
+  "summary": {
+    "impactedEndpointCount": 0,
+    "impactedEndpoints": []
+  },
   "fileSources": []
 }
 ```
@@ -56,6 +60,8 @@ Top-level shape:
 - `module_changes` records changed go.mod modules detected from the diff.
 - `module_usages` records project-local import/use sites that were used to
   seed normal symbol/file impact propagation.
+- `summary` is the concise, globally deduplicated endpoint result for callers
+  that only need how many endpoints were impacted and which endpoints they are.
 
 ### `fileSources`
 

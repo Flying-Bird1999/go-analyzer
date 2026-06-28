@@ -51,12 +51,22 @@ func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupCont
 func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, cfg config.Config) {
 	routeFunc := routeFuncSymbolID(pkg.Path, fn)
 	groups := rootGroups(routeFunc, fn)
-	for i, stmt := range fn.Body.List {
-		collectStmt(p, file, routeFunc, store, groups, stmt, i+1, cfg)
+	cursor := &routeEventCursor{}
+	for _, stmt := range fn.Body.List {
+		collectStmt(p, file, routeFunc, store, groups, stmt, cursor, cfg)
 	}
 }
 
-func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, stmt ast.Stmt, statementIndex int, cfg config.Config) {
+type routeEventCursor struct {
+	next int
+}
+
+func (c *routeEventCursor) Next() int {
+	c.next++
+	return c.next
+}
+
+func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, stmt ast.Stmt, cursor *routeEventCursor, cfg config.Config) {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
 		for i, lhs := range s.Lhs {
@@ -65,6 +75,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 				continue
 			}
 			if parent, prefix, ok := groupCall(groups, s.Rhs[i]); ok {
+				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
 				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix}
 				store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
@@ -78,13 +89,14 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 					Span:           spanFor(p, file, s.Pos(), s.End()),
 				})
 				for _, raw := range groupMiddlewareArgs(s.Rhs[i]) {
+					middlewareIndex := cursor.Next()
 					store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
-						ID:             middlewareID(routeFunc, name.Name, statementIndex) + ":" + strconv.Itoa(len(store.Middleware)),
+						ID:             middlewareID(routeFunc, name.Name, middlewareIndex) + ":" + strconv.Itoa(len(store.Middleware)),
 						GroupID:        groupID,
 						GroupVar:       name.Name,
 						MiddlewareRaw:  raw,
 						RouteFunc:      routeFunc,
-						StatementIndex: statementIndex,
+						StatementIndex: middlewareIndex,
 						Span:           spanFor(p, file, s.Pos(), s.End()),
 					})
 				}
@@ -95,30 +107,34 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 		if !ok {
 			return
 		}
-		if binding, ok := middlewareCall(p, file, routeFunc, groups, call, statementIndex, cfg); ok {
+		nextIndex := cursor.next + 1
+		if binding, ok := middlewareCall(p, file, routeFunc, groups, call, nextIndex, cfg); ok {
+			cursor.Next()
 			store.Middleware = append(store.Middleware, binding)
 			return
 		}
-		if route, ok := routeCall(p, file, routeFunc, store, groups, call, statementIndex, cfg); ok {
+		nextIndex = cursor.next + 1
+		if route, ok := routeCall(p, file, routeFunc, store, groups, call, nextIndex, cfg); ok {
+			cursor.Next()
 			store.Routes = append(store.Routes, route)
 		}
 	case *ast.BlockStmt:
-		for i, child := range s.List {
-			collectStmt(p, file, routeFunc, store, groups, child, statementIndex+i+1, cfg)
+		for _, child := range s.List {
+			collectStmt(p, file, routeFunc, store, groups, child, cursor, cfg)
 		}
 	case *ast.IfStmt:
 		branchGroups := copyGroups(groups)
 		if s.Init != nil {
-			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, statementIndex, cfg)
+			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, cursor, cfg)
 		}
-		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, statementIndex+1, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, cursor, cfg)
 		if s.Else != nil {
-			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, statementIndex+2, cfg)
+			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, cursor, cfg)
 		}
 	case *ast.ForStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, statementIndex+1, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, cfg)
 	case *ast.RangeStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, statementIndex+1, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, cfg)
 	}
 }
 

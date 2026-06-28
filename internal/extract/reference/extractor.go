@@ -103,7 +103,7 @@ func extractGenDeclTypeReferences(p *project.Project, file *project.File, idx *a
 }
 
 func addCallReference(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, call *ast.CallExpr) {
-	to, raw, ok := resolveCall(file, idx, call)
+	to, raw, confidence, ok := resolveCall(file, idx, call)
 	if !ok || to == "" || to == from {
 		callee := unwrapGenericCallee(call.Fun)
 		if !ok && isProjectSelector(file, idx.Project.ModulePath, callee) {
@@ -125,7 +125,7 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 		FromSymbol: from,
 		ToSymbol:   to,
 		ToRaw:      raw,
-		Confidence: facts.ConfidenceHigh,
+		Confidence: confidence,
 		Span:       span,
 	})
 }

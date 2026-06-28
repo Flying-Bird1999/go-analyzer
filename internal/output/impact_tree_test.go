@@ -25,6 +25,9 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 	if len(doc.FileSources) != 1 {
 		t.Fatalf("fileSources = %d", len(doc.FileSources))
 	}
+	if doc.Summary.ImpactedEndpointCount != 1 || len(doc.Summary.ImpactedEndpoints) != 1 {
+		t.Fatalf("summary = %#v", doc.Summary)
+	}
 	source := doc.FileSources[0]
 	if len(source.Symbols) != 2 {
 		t.Fatalf("symbols = %d", len(source.Symbols))
@@ -84,6 +87,9 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpointAndDedupesDiagnostics(t *test
 	}
 	if len(doc.Meta.Diagnostics) != 1 || doc.Meta.Diagnostics[0].Code != "symbol_reference_unresolved" {
 		t.Fatalf("diagnostics = %#v", doc.Meta.Diagnostics)
+	}
+	if doc.Summary.ImpactedEndpointCount != 0 || len(doc.Summary.ImpactedEndpoints) != 0 {
+		t.Fatalf("summary = %#v", doc.Summary)
 	}
 }
 

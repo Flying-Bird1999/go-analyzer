@@ -10,6 +10,7 @@ import (
 
 func MapChanges(changes []FileChange, store *facts.Store, source string) []facts.ChangeFact {
 	var out []facts.ChangeFact
+	index := newChangeIndex(store)
 	for _, fileChange := range changes {
 		file := filepath.ToSlash(fileChange.NewPath)
 		if file == "" {
@@ -21,7 +22,7 @@ func MapChanges(changes []FileChange, store *facts.Store, source string) []facts
 			if r.Kind == RangeKindDeletionAnchor {
 				confidence = facts.ConfidenceMedium
 			}
-			mapped := mapRange(file, changeRange, store, source, len(out), confidence)
+			mapped := mapRange(file, changeRange, index, source, len(out), confidence)
 			out = append(out, mapped...)
 			if r.Kind == RangeKindDeletionAnchor {
 				for _, item := range mapped {
@@ -46,11 +47,50 @@ func MapChanges(changes []FileChange, store *facts.Store, source string) []facts
 	return out
 }
 
-func mapRange(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) []facts.ChangeFact {
+type changeIndex struct {
+	annotations map[string][]facts.AnnotationFact
+	groups      map[string][]facts.RouteGroupFact
+	routes      map[string][]facts.RouteRegistrationFact
+	middleware  map[string][]facts.MiddlewareBindingFact
+	symbols     map[string][]facts.SymbolFact
+}
+
+func newChangeIndex(store *facts.Store) changeIndex {
+	index := changeIndex{
+		annotations: map[string][]facts.AnnotationFact{},
+		groups:      map[string][]facts.RouteGroupFact{},
+		routes:      map[string][]facts.RouteRegistrationFact{},
+		middleware:  map[string][]facts.MiddlewareBindingFact{},
+		symbols:     map[string][]facts.SymbolFact{},
+	}
+	for _, annotation := range store.Annotations {
+		file := filepath.ToSlash(annotation.Span.File)
+		index.annotations[file] = append(index.annotations[file], annotation)
+	}
+	for _, group := range store.RouteGroups {
+		file := filepath.ToSlash(group.Span.File)
+		index.groups[file] = append(index.groups[file], group)
+	}
+	for _, route := range store.Routes {
+		file := filepath.ToSlash(route.Span.File)
+		index.routes[file] = append(index.routes[file], route)
+	}
+	for _, binding := range store.Middleware {
+		file := filepath.ToSlash(binding.Span.File)
+		index.middleware[file] = append(index.middleware[file], binding)
+	}
+	for _, symbol := range store.Symbols {
+		file := filepath.ToSlash(symbol.Span.File)
+		index.symbols[file] = append(index.symbols[file], symbol)
+	}
+	return index
+}
+
+func mapRange(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int, confidence facts.Confidence) []facts.ChangeFact {
 	var out []facts.ChangeFact
 	for line := r.StartLine; line <= r.EndLine; line++ {
 		point := facts.ChangeRange{StartLine: line, EndLine: line}
-		mapped := mapPoint(file, point, store, source, index+len(out), confidence)
+		mapped := mapPoint(file, point, index, source, baseIndex+len(out), confidence)
 		if len(out) > 0 && sameChangeTarget(out[len(out)-1], mapped) && out[len(out)-1].Ranges[0].EndLine+1 == line {
 			out[len(out)-1].Ranges[0].EndLine = line
 			continue
@@ -60,29 +100,29 @@ func mapRange(file string, r facts.ChangeRange, store *facts.Store, source strin
 	return out
 }
 
-func mapPoint(file string, r facts.ChangeRange, store *facts.Store, source string, index int, confidence facts.Confidence) facts.ChangeFact {
-	for _, annotation := range store.Annotations {
+func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int, confidence facts.Confidence) facts.ChangeFact {
+	for _, annotation := range index.annotations[file] {
 		if spanContains(annotation.Span, file, r) {
-			return changeFact(index, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
 		}
 	}
-	for _, group := range store.RouteGroups {
+	for _, group := range index.groups[file] {
 		if spanContains(group.Span, file, r) {
-			return changeFact(index, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, facts.ConfidenceHigh)
 		}
 	}
-	for _, route := range store.Routes {
+	for _, route := range index.routes[file] {
 		if spanContains(route.Span, file, r) {
-			return changeFact(index, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
 		}
 	}
-	for _, binding := range store.Middleware {
+	for _, binding := range index.middleware[file] {
 		if spanContains(binding.Span, file, r) {
-			return changeFact(index, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, facts.ConfidenceHigh)
 		}
 	}
 	var selected *facts.SymbolFact
-	for _, symbol := range store.Symbols {
+	for _, symbol := range index.symbols[file] {
 		if spanContains(symbol.Span, file, r) {
 			if selected == nil || spanSize(symbol.Span) < spanSize(selected.Span) ||
 				(spanSize(symbol.Span) == spanSize(selected.Span) && symbol.ID < selected.ID) {
@@ -92,9 +132,9 @@ func mapPoint(file string, r facts.ChangeRange, store *facts.Store, source strin
 		}
 	}
 	if selected != nil {
-		return changeFact(index, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
+		return changeFact(baseIndex, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
 	}
-	return changeFact(index, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
+	return changeFact(baseIndex, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
 }
 
 func sameChangeTarget(left, right facts.ChangeFact) bool {

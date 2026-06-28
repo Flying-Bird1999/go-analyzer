@@ -157,6 +157,43 @@ func Build() int {
 	)
 }
 
+func TestExtractConstructorInferredMethodCallUsesMediumConfidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/constructor-confidence\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(`package service
+
+type Client struct{}
+
+func NewClient() *Client { return &Client{} }
+
+func (c *Client) Query() {}
+
+var Default = NewClient()
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package service
+
+func Handle() {
+	Default.Query()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"func:example.com/constructor-confidence::Handle",
+		"method:example.com/constructor-confidence:Client:Query",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceMedium {
+		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
+	}
+}
+
 func extractReferenceFixture(t *testing.T) *facts.Store {
 	t.Helper()
 	return extractFixture(t, "reference-chain")
@@ -187,12 +224,18 @@ func extractFixtureRoot(t *testing.T, root string) *facts.Store {
 
 func assertReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) {
 	t.Helper()
+	_ = findReference(t, store, from, to, kind)
+}
+
+func findReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) facts.ReferenceFact {
+	t.Helper()
 	for _, ref := range store.References {
 		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == kind {
-			return
+			return ref
 		}
 	}
 	t.Fatalf("reference %s -[%s]-> %s not found: %#v", from, kind, to, store.References)
+	return facts.ReferenceFact{}
 }
 
 func assertReferenceDiagnostic(t *testing.T, store *facts.Store, code string) {

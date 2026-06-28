@@ -38,9 +38,10 @@ var schemaDocuments = map[string]map[string]any{
 		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"meta", "module_changes", "module_usages", "fileSources"},
+		"required":             []string{"meta", "summary", "module_changes", "module_usages", "fileSources"},
 		"properties": map[string]any{
 			"meta":           ref("impact_meta"),
+			"summary":        ref("impact_summary"),
 			"module_changes": arrayOf(ref("module_change")),
 			"module_usages":  arrayOf(ref("module_usage")),
 			"fileSources":    arrayOf(ref("file_source_impact")),
@@ -106,6 +107,7 @@ func impactDefinitions() map[string]any {
 		"file_source_impact",
 		"impact_meta",
 		"impact_node",
+		"impact_summary",
 		"module_change",
 		"module_usage",
 		"source_span",
@@ -140,7 +142,7 @@ func commonDefinitions() map[string]any {
 			"file":       stringType(),
 			"ranges":     arrayOf(ref("change_range")),
 			"source":     stringType(),
-			"confidence": stringType(),
+			"confidence": confidenceType(),
 		}, "id", "kind", "file", "ranges", "source", "confidence"),
 		"change_range": object(map[string]any{
 			"start_line": numberType(),
@@ -169,6 +171,10 @@ func commonDefinitions() map[string]any {
 			"projectRoot":   stringType(),
 			"diagnostics":   arrayOf(ref("diagnostic")),
 		}, "schemaVersion", "projectRoot", "diagnostics"),
+		"impact_summary": object(map[string]any{
+			"impactedEndpointCount": numberType(),
+			"impactedEndpoints":     arrayOf(ref("endpoint_summary")),
+		}, "impactedEndpointCount", "impactedEndpoints"),
 		"impact_node": object(map[string]any{
 			"id":           stringType(),
 			"kind":         stringType(),
@@ -178,7 +184,7 @@ func commonDefinitions() map[string]any {
 			"relation":     stringType(),
 			"raw":          stringType(),
 			"span":         ref("source_span"),
-			"confidence":   stringType(),
+			"confidence":   confidenceType(),
 			"level":        numberType(),
 			"cycle":        boolType(),
 			"stopBoundary": boolType(),
@@ -191,7 +197,7 @@ func commonDefinitions() map[string]any {
 			"kind":       stringType(),
 			"from_id":    stringType(),
 			"to_id":      stringType(),
-			"confidence": stringType(),
+			"confidence": confidenceType(),
 		}, "id", "kind", "from_id", "to_id", "confidence"),
 		"middleware": object(map[string]any{
 			"id":                 stringType(),
@@ -230,7 +236,7 @@ func commonDefinitions() map[string]any {
 			"basis":       stringType(),
 			"symbol_id":   stringType(),
 			"file":        stringType(),
-			"confidence":  stringType(),
+			"confidence":  confidenceType(),
 		}, "id", "module_path", "basis", "confidence"),
 		"project": object(map[string]any{
 			"root":        stringType(),
@@ -242,7 +248,7 @@ func commonDefinitions() map[string]any {
 			"from_symbol": stringType(),
 			"to_symbol":   stringType(),
 			"to_raw":      stringType(),
-			"confidence":  stringType(),
+			"confidence":  confidenceType(),
 			"span":        ref("source_span"),
 		}, "id", "kind", "from_symbol", "confidence", "span"),
 		"route": object(map[string]any{
@@ -296,6 +302,10 @@ func commonDefinitions() map[string]any {
 
 func stringType() map[string]any {
 	return map[string]any{"type": "string"}
+}
+
+func confidenceType() map[string]any {
+	return map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}}
 }
 
 func numberType() map[string]any {

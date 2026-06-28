@@ -95,7 +95,7 @@ go-analyzer schema --type impact
 go-analyzer facts --project /absolute/path/to/sc1-bff-service --config /absolute/path/to/go-analyzer.json --format json
 ```
 
-impact 输出使用 `go-impact/v1alpha1`，按 diff 源文件分组，保留原始 diff、变更根、完整中间传播节点和去重后的接口摘要。输出契约见 `docs/contracts/output-contract.md`，示例配置见 `docs/examples/go-analyzer.config.json`。
+impact 输出使用 `go-impact/v1alpha1`，顶层 `summary` 汇总影响接口数量和接口列表；`fileSources` 按 diff 源文件保留原始 diff、变更根、完整中间传播节点和分文件接口摘要，便于调试溯源。输出契约见 `docs/contracts/output-contract.md`，示例配置见 `docs/examples/go-analyzer.config.json`。
 
 关键设计点是：Go BFF 不能只做调用图分析。route 注册里 controller 通常不是被调用，而是作为函数值被传给注册函数：
 

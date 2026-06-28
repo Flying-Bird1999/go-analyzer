@@ -4,6 +4,15 @@
     "projectRoot": "testdata/fixtures/type-impact",
     "diagnostics": []
   },
+  "summary": {
+    "impactedEndpointCount": 1,
+    "impactedEndpoints": [
+      {
+        "method": "POST",
+        "path": "/orders"
+      }
+    ]
+  },
   "module_changes": [],
   "module_usages": [],
   "fileSources": [

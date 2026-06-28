@@ -23,6 +23,11 @@ type ValueType struct {
 	Confidence  facts.Confidence
 }
 
+type ResolvedSymbol struct {
+	ID         facts.SymbolID
+	Confidence facts.Confidence
+}
+
 func Build(p *project.Project) (*Index, error) {
 	idx := &Index{
 		Project:          p,
@@ -194,14 +199,19 @@ func valueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 }
 
 func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (facts.SymbolID, bool) {
+	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts)
+	return resolved.ID, ok
+}
+
+func (idx *Index) ResolveSelectorMethodWithConfidence(file *project.File, parts []string) (ResolvedSymbol, bool) {
 	if file == nil || len(parts) < 2 {
-		return "", false
+		return ResolvedSymbol{}, false
 	}
 	var packagePath, varName string
 	var selectors []string
 	if importPath := file.Imports[parts[0]]; importPath != "" {
 		if len(parts) < 3 {
-			return "", false
+			return ResolvedSymbol{}, false
 		}
 		packagePath = importPath
 		varName = parts[1]
@@ -214,19 +224,37 @@ func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (fac
 	varID := ValueSymbolID("var", packagePath, varName)
 	valueType, ok := idx.VarReceiverTypes[string(varID)]
 	if !ok || valueType.TypeName == "" || len(selectors) == 0 {
-		return "", false
+		return ResolvedSymbol{}, false
 	}
+	confidence := valueType.Confidence
 	for _, fieldName := range selectors[:len(selectors)-1] {
 		typeID := TypeSymbolID(valueType.PackagePath, valueType.TypeName)
 		fields := idx.StructFieldTypes[typeID]
 		valueType, ok = fields[fieldName]
 		if !ok {
-			return "", false
+			return ResolvedSymbol{}, false
 		}
+		confidence = combineConfidence(confidence, valueType.Confidence)
 	}
 	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, selectors[len(selectors)-1])
 	_, ok = idx.Symbols[methodID]
-	return methodID, ok
+	return ResolvedSymbol{ID: methodID, Confidence: confidence}, ok
+}
+
+func combineConfidence(left, right facts.Confidence) facts.Confidence {
+	if left == facts.ConfidenceLow || right == facts.ConfidenceLow {
+		return facts.ConfidenceLow
+	}
+	if left == facts.ConfidenceMedium || right == facts.ConfidenceMedium {
+		return facts.ConfidenceMedium
+	}
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+	return facts.ConfidenceHigh
 }
 
 func symbolFact(p *project.Project, file *project.File, id facts.SymbolID, kind, pkgPath, receiver, name string, start, end token.Pos) facts.SymbolFact {

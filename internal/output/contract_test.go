@@ -93,6 +93,29 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 	}
 }
 
+func TestSchemasConstrainConfidenceAndExposeImpactSummary(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	if _, ok := properties["summary"]; !ok {
+		t.Fatalf("summary property missing: %#v", properties)
+	}
+	defs := doc["$defs"].(map[string]any)
+	impactNode := defs["impact_node"].(map[string]any)
+	nodeProps := impactNode["properties"].(map[string]any)
+	confidence := nodeProps["confidence"].(map[string]any)
+	enum, ok := confidence["enum"].([]any)
+	if !ok || len(enum) != 3 {
+		t.Fatalf("confidence enum missing: %#v", confidence)
+	}
+}
+
 func TestSchemaJSONRejectsUnknownType(t *testing.T) {
 	_, err := SchemaJSON("unknown")
 	if err == nil {

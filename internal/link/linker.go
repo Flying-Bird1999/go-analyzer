@@ -26,23 +26,23 @@ func linkRoute(
 	route *facts.RouteRegistrationFact,
 	byHandler map[facts.SymbolID][]facts.AnnotationFact,
 ) bool {
-	handler, ok := ResolveHandlerSymbol(idx, *route)
+	handler, ok := ResolveHandlerSymbolWithConfidence(idx, *route)
 	if !ok {
 		return false
 	}
-	route.HandlerSymbol = handler
+	route.HandlerSymbol = handler.ID
 	store.Links = append(store.Links, facts.LinkFact{
-		ID:         linkID(facts.LinkKindRouteToHandler, route.ID, string(handler)),
+		ID:         linkID(facts.LinkKindRouteToHandler, route.ID, string(handler.ID)),
 		Kind:       facts.LinkKindRouteToHandler,
 		FromID:     route.ID,
-		ToID:       string(handler),
-		Confidence: facts.ConfidenceHigh,
+		ToID:       string(handler.ID),
+		Confidence: handler.Confidence,
 	})
-	for _, annotation := range byHandler[handler] {
+	for _, annotation := range byHandler[handler.ID] {
 		store.Links = append(store.Links, facts.LinkFact{
-			ID:         linkID(facts.LinkKindHandlerToAnnotation, string(handler), annotation.ID),
+			ID:         linkID(facts.LinkKindHandlerToAnnotation, string(handler.ID), annotation.ID),
 			Kind:       facts.LinkKindHandlerToAnnotation,
-			FromID:     string(handler),
+			FromID:     string(handler.ID),
 			ToID:       annotation.ID,
 			Confidence: facts.ConfidenceHigh,
 		})

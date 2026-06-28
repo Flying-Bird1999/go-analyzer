@@ -215,6 +215,37 @@ func (r *Router) Init(g *Group) {
 	}
 }
 
+func TestExtractNestedRouteOrderBeforeFollowingTopLevelRoute(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/route-order\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) GET(path string, handler any) {}
+
+func Handler() {}
+
+func Init(g *Group) {
+	if true {
+		g.GET("/inside", Handler)
+	}
+	g.GET("/after", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	inside := findRoute(t, store, "/inside")
+	after := findRoute(t, store, "/after")
+	if !(inside.StatementIndex < after.StatementIndex) {
+		t.Fatalf("statement order inside=%d after=%d", inside.StatementIndex, after.StatementIndex)
+	}
+}
+
 func extractFixture(t *testing.T, root string) *facts.Store {
 	t.Helper()
 	p, err := project.Load(root, project.Options{})

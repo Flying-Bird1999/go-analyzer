@@ -1004,6 +1004,10 @@ go run ./cmd/go-analyzer impact \
   },
   "module_changes": [],
   "module_usages": [],
+  "summary": {
+    "impactedEndpointCount": 0,
+    "impactedEndpoints": []
+  },
   "fileSources": []
 }
 ```
@@ -1014,6 +1018,9 @@ go run ./cmd/go-analyzer impact \
 - 可选原始 `diff`。
 - `symbols`：changed roots 到递归 impact nodes。
 - `impactedEndpoints`：去重 endpoint 摘要。
+
+顶层 `summary` 是全局去重后的轻量结果，面向默认消费场景：`impactedEndpointCount`
+表示影响接口数量，`impactedEndpoints` 列出这些接口；`fileSources` 继续保留调试和溯源需要的完整树。
 
 `confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
 
@@ -1215,8 +1222,9 @@ PY
 python3 - <<'PY'
 import json
 data = json.load(open("/tmp/go-analyzer-impact.json"))
-for source in data["fileSources"]:
-    print(source["sourceFile"], source["impactedEndpoints"])
+print(data["summary"]["impactedEndpointCount"])
+for endpoint in data["summary"]["impactedEndpoints"]:
+    print(endpoint["method"], endpoint["path"])
 for diagnostic in data["meta"]["diagnostics"]:
     print(diagnostic["code"], diagnostic["message"])
 PY
