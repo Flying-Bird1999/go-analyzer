@@ -74,7 +74,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 			if !ok || i >= len(s.Rhs) {
 				continue
 			}
-			if parent, prefix, ok := groupCall(groups, s.Rhs[i]); ok {
+			if parent, prefix, ok := groupCall(groups, s.Rhs[i], cfg); ok {
 				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
 				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix}
@@ -182,28 +182,31 @@ func groupMiddlewareArgs(expr ast.Expr) []string {
 	return out
 }
 
-func groupCall(groups map[string]groupContext, expr ast.Expr) (parent groupContext, prefix string, ok bool) {
+func groupCall(groups map[string]groupContext, expr ast.Expr, cfg config.Config) (parent groupContext, prefix string, ok bool) {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {
 		return groupContext{}, "", false
 	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != "Group" {
+	if ok && selector.Sel.Name == "Group" {
+		parentIdent, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return groupContext{}, "", false
+		}
+		parent, ok = groups[parentIdent.Name]
+		if !ok {
+			return groupContext{}, "", false
+		}
+		local, ok := stringLiteral(call.Args[0])
+		if !ok {
+			local = exprString(call.Args[0])
+		}
+		return parent, joinPath(parent.prefix, local), true
+	}
+	if !cfg.IsRouteGroupWrapper(shortCallName(call)) {
 		return groupContext{}, "", false
 	}
-	parentIdent, ok := selector.X.(*ast.Ident)
-	if !ok {
-		return groupContext{}, "", false
-	}
-	parent, ok = groups[parentIdent.Name]
-	if !ok {
-		return groupContext{}, "", false
-	}
-	local, ok := stringLiteral(call.Args[0])
-	if !ok {
-		local = exprString(call.Args[0])
-	}
-	return parent, joinPath(parent.prefix, local), true
+	return groupCall(groups, call.Args[0], cfg)
 }
 
 func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int, cfg config.Config) (facts.RouteRegistrationFact, bool) {

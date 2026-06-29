@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
+	annotationextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
 	routeextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/link"
@@ -33,6 +35,7 @@ func RecoverDeletedRoutes(fileChanges []diff.FileChange, idx *astindex.Index, st
 		}
 		for _, block := range fileChange.DeletedBlocks {
 			recoverDeletedRoutesInBlock(file, block, idx, store, cfg, source)
+			recoverDeletedHandlersInBlock(file, block, idx, store, cfg, source)
 		}
 	}
 }
@@ -140,6 +143,243 @@ func parseDeletedRouteLine(line string) (*ast.CallExpr, bool) {
 	}
 	call, ok := expr.(*ast.CallExpr)
 	return call, ok
+}
+
+type deletedHandlerDecl struct {
+	fn          *ast.FuncDecl
+	startOffset int
+	endOffset   int
+}
+
+func recoverDeletedHandlersInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
+	packagePath := deletedFilePackagePath(file, idx, store)
+	if packagePath == "" {
+		return
+	}
+	for _, candidate := range parseDeletedHandlerDecls(block.Lines) {
+		fn := candidate.fn
+		if fn.Name == nil || fn.Name.Name == "" {
+			continue
+		}
+		anchorLine := block.NewAnchorLine
+		if anchorLine <= 0 {
+			anchorLine = block.OldStartLine
+		}
+		if anchorLine <= 0 {
+			anchorLine = 1
+		}
+		startLine := anchorLine + candidate.startOffset
+		if startLine <= 0 {
+			startLine = anchorLine
+		}
+		endLine := anchorLine + candidate.endOffset
+		if endLine < startLine {
+			endLine = startLine
+		}
+		symbol := deletedHandlerSymbol(packagePath, file, fn, facts.SourceSpan{
+			File:      file,
+			StartLine: startLine,
+			EndLine:   endLine,
+		})
+		if symbol.ID == "" || symbolExists(store, symbol.ID) {
+			continue
+		}
+		if idx != nil {
+			idx.Symbols[symbol.ID] = symbol
+		}
+		store.AddSymbol(symbol)
+		annotations := annotationextract.ParseAPIAnnotationsWithConfig(fn.Doc, cfg)
+		for index, annotation := range annotations {
+			store.Annotations = append(store.Annotations, facts.AnnotationFact{
+				ID:            deletedAnnotationID(symbol.ID, annotation.Method, annotation.Path, index),
+				Kind:          "annotation",
+				Method:        annotation.Method,
+				Path:          annotation.Path,
+				Raw:           annotation.Raw,
+				HandlerSymbol: symbol.ID,
+				Span:          symbol.Span,
+			})
+		}
+		store.Changes = append(store.Changes, facts.ChangeFact{
+			ID:       fmt.Sprintf("change:%s:%s:%d:%d", facts.ChangeKindSymbolChanged, file, startLine, len(store.Changes)),
+			Kind:     facts.ChangeKindSymbolChanged,
+			TargetID: string(symbol.ID),
+			SymbolID: symbol.ID,
+			File:     file,
+			Ranges: []facts.ChangeRange{{
+				StartLine: startLine,
+				EndLine:   endLine,
+			}},
+			Source:     source + "_deleted_handler",
+			Confidence: facts.ConfidenceMedium,
+		})
+		removeDeletedBlockFileFallbackChange(store, file, anchorLine, anchorLine+len(block.Lines))
+		relinkUnresolvedRoutesForDeletedHandler(idx, store, symbol.ID)
+	}
+}
+
+func parseDeletedHandlerDecls(lines []string) []deletedHandlerDecl {
+	source := "package deleted\n" + strings.Join(lines, "\n") + "\n"
+	fset := token.NewFileSet()
+	file, _ := parser.ParseFile(fset, "deleted.go", source, parser.ParseComments|parser.AllErrors)
+	var out []deletedHandlerDecl
+	if file == nil {
+		return out
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		startOffset := fset.Position(fn.Pos()).Line - 2
+		endOffset := fset.Position(fn.End()).Line - 2
+		if startOffset < 0 {
+			startOffset = 0
+		}
+		if startOffset >= len(lines) {
+			startOffset = len(lines) - 1
+		}
+		if endOffset < startOffset {
+			endOffset = startOffset
+		}
+		if endOffset >= len(lines) {
+			endOffset = len(lines) - 1
+		}
+		out = append(out, deletedHandlerDecl{fn: fn, startOffset: startOffset, endOffset: endOffset})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].startOffset != out[j].startOffset {
+			return out[i].startOffset < out[j].startOffset
+		}
+		return out[i].fn.Name.Name < out[j].fn.Name.Name
+	})
+	return out
+}
+
+func deletedHandlerSymbol(packagePath, file string, fn *ast.FuncDecl, span facts.SourceSpan) facts.SymbolFact {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return facts.SymbolFact{
+			ID:          astindex.FunctionSymbolID(packagePath, fn.Name.Name),
+			Kind:        "func",
+			PackagePath: packagePath,
+			Name:        fn.Name.Name,
+			Span:        span,
+		}
+	}
+	receiver := deletedReceiverTypeName(fn.Recv.List[0].Type)
+	return facts.SymbolFact{
+		ID:          astindex.MethodSymbolID(packagePath, receiver, fn.Name.Name),
+		Kind:        "method",
+		PackagePath: packagePath,
+		Receiver:    receiver,
+		Name:        fn.Name.Name,
+		Span:        span,
+	}
+}
+
+func deletedReceiverTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return deletedReceiverTypeName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr:
+		return deletedReceiverTypeName(t.X)
+	case *ast.IndexListExpr:
+		return deletedReceiverTypeName(t.X)
+	default:
+		return ""
+	}
+}
+
+func deletedAnnotationID(handler facts.SymbolID, method, routePath string, index int) string {
+	return "annotation:" + string(handler) + ":" + method + ":" + routePath + ":" + strconv.Itoa(index)
+}
+
+func deletedFilePackagePath(file string, idx *astindex.Index, store *facts.Store) string {
+	file = filepath.ToSlash(file)
+	if idx != nil && idx.Project != nil {
+		for _, pkg := range idx.Project.Packages {
+			for _, projectFile := range pkg.Files {
+				rel, err := filepath.Rel(idx.Project.Root, projectFile.Path)
+				if err != nil {
+					continue
+				}
+				if filepath.ToSlash(rel) == file {
+					return pkg.Path
+				}
+			}
+		}
+		if idx.Project.ModulePath != "" {
+			return packagePathFromFile(idx.Project.ModulePath, file)
+		}
+	}
+	if store != nil && store.Project.ModulePath != "" {
+		return packagePathFromFile(store.Project.ModulePath, file)
+	}
+	return ""
+}
+
+func packagePathFromFile(modulePath, file string) string {
+	dir := path.Dir(filepath.ToSlash(file))
+	if dir == "." || dir == "/" {
+		return modulePath
+	}
+	return strings.TrimRight(modulePath, "/") + "/" + dir
+}
+
+func symbolExists(store *facts.Store, id facts.SymbolID) bool {
+	for _, symbol := range store.Symbols {
+		if symbol.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func relinkUnresolvedRoutesForDeletedHandler(idx *astindex.Index, store *facts.Store, handler facts.SymbolID) {
+	if idx == nil || store == nil || handler == "" {
+		return
+	}
+	for i := range store.Routes {
+		if store.Routes[i].HandlerSymbol != "" {
+			continue
+		}
+		if !link.LinkRoute(idx, store, &store.Routes[i]) {
+			continue
+		}
+		if store.Routes[i].HandlerSymbol != handler {
+			continue
+		}
+	}
+}
+
+func removeDeletedBlockFileFallbackChange(store *facts.Store, file string, startLine, endLine int) {
+	if store == nil {
+		return
+	}
+	file = filepath.ToSlash(file)
+	filtered := store.Changes[:0]
+	for _, change := range store.Changes {
+		if change.Kind == facts.ChangeKindFileChanged &&
+			filepath.ToSlash(change.File) == file &&
+			changeRangesOverlap(change.Ranges, startLine, endLine) {
+			continue
+		}
+		filtered = append(filtered, change)
+	}
+	store.Changes = filtered
+}
+
+func changeRangesOverlap(ranges []facts.ChangeRange, startLine, endLine int) bool {
+	for _, item := range ranges {
+		if item.EndLine >= startLine && item.StartLine <= endLine {
+			return true
+		}
+	}
+	return false
 }
 
 type deletedRouteGroup struct {

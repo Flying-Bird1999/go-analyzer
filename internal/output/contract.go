@@ -39,7 +39,6 @@ var schemaDocuments = map[string]map[string]any{
 		"required":             []string{"summary", "fileSources"},
 		"properties": map[string]any{
 			"summary":       ref("impact_summary"),
-			"diagnostics":   arrayOf(ref("impact_diagnostic")),
 			"fileSources":   arrayOf(ref("file_source_impact")),
 			"moduleSources": arrayOf(ref("module_source_impact")),
 		},

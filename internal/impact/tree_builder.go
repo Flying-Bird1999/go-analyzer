@@ -346,13 +346,37 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 }
 
 func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
+	routePath := route.ResolvedPath
+	routePathAuthoritative := routePath != "" && (routePath != route.LocalPath || isLegacyPathGroup(route.GroupVar))
+	if route.SourceFamily == "deleted_diff" && route.LocalPath != "" {
+		routePath = route.LocalPath
+		routePathAuthoritative = true
+	}
+	if annotation.Path == "" && routePath == "" {
+		routePath = route.LocalPath
+		routePathAuthoritative = routePath != ""
+	}
+	if routePathAuthoritative && annotationExtendsRoutePath(annotation.Path, routePath) && !isLegacyPathGroup(route.GroupVar) {
+		routePathAuthoritative = false
+	}
 	method := annotation.Method
+	path := annotation.Path
+	endpointRelation := "annotation_endpoint"
+	endpointSpan := annotation.Span
+	endpointConfidence := facts.ConfidenceHigh
+	if routePathAuthoritative {
+		path = routePath
+		if route.Method != "" {
+			method = route.Method
+		}
+		endpointRelation = "route_endpoint"
+		endpointSpan = route.Span
+		if route.SourceFamily == "deleted_diff" {
+			endpointRelation = "deleted_route_endpoint"
+		}
+	}
 	if method == "" {
 		method = route.Method
-	}
-	path := annotation.Path
-	if path == "" {
-		path = route.ResolvedPath
 	}
 	if path == "" {
 		path = route.LocalPath
@@ -383,13 +407,33 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 			path,
 			annotation.ID,
 			annotation.HandlerSymbol,
-			annotation.Span,
+			endpointSpan,
 			level+1,
-			"annotation_endpoint",
-			facts.ConfidenceHigh,
+			endpointRelation,
+			endpointConfidence,
 		))
 	}
 	return node
+}
+
+func isLegacyPathGroup(groupVar string) bool {
+	return strings.Contains(strings.ToLower(groupVar), "oldpath")
+}
+
+func annotationExtendsRoutePath(annotationPath, routePath string) bool {
+	return annotationPath != "" &&
+		routePath != "" &&
+		annotationPath != routePath &&
+		routePathSegmentCount(routePath) >= 2 &&
+		strings.HasSuffix(annotationPath, routePath)
+}
+
+func routePathSegmentCount(routePath string) int {
+	trimmed := strings.Trim(routePath, "/")
+	if trimmed == "" {
+		return 0
+	}
+	return len(strings.Split(trimmed, "/"))
 }
 
 func (b *treeBuilder) endpointNode(

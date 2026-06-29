@@ -74,6 +74,36 @@ func TestExtractWrapperStackAndFinalHandler(t *testing.T) {
 	}
 }
 
+func TestExtractRouteGroupAssignedThroughBuiltInWrapper(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/wrapped-route-group\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) Group(path string) *Group { return g }
+func (g *Group) GET(path string, handler any) {}
+
+func AddStaffFlowControl(g *Group) *Group { return g }
+func GetConversations() {}
+
+func Init(oldPathGroup *Group) {
+	officialMsgRouter := AddStaffFlowControl(oldPathGroup.Group("/officialmsg/v1/admin"))
+	officialMsgRouter.GET("/conversations", GetConversations)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/officialmsg/v1/admin/conversations")
+	if route.HandlerRaw != "GetConversations" {
+		t.Fatalf("handler raw = %q", route.HandlerRaw)
+	}
+}
+
 func TestExtractMiddlewareBindingStatementOrder(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "middleware-order")
 	store := extractFixture(t, root)

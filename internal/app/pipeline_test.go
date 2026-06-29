@@ -302,7 +302,7 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
 }
 
-func TestRunImpactReportsUnresolvedGoModDiff(t *testing.T) {
+func TestRunImpactOmitsUnresolvedGoModDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/gomod-unresolved\n\ngo 1.24\n")
 	writeTestFile(t, root, "main.go", "package main\n\nfunc main() {}\n")
@@ -326,12 +326,9 @@ func TestRunImpactReportsUnresolvedGoModDiff(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, diagnostic := range doc.Diagnostics {
-		if diagnostic.Code == "module_diff_unresolved" {
-			return
-		}
+	if bytes.Contains(got, []byte(`"diagnostics"`)) {
+		t.Fatalf("impact output should omit diagnostics: %s", got)
 	}
-	t.Fatalf("module_diff_unresolved diagnostic not found: %#v", doc.Diagnostics)
 }
 
 func TestRunImpactMapsMiddlewareMethodDiffToEndpoint(t *testing.T) {
@@ -442,7 +439,216 @@ func Init(g *RouterGroup) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	assertEndpointSummary(t, doc, "POST", "/public/orders")
+	assertEndpointSummary(t, doc, "POST", "/internal/orders")
+}
+
+func TestRunImpactRecoversDeletedHandlerAnnotationAndRoute(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/deleted-handler\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/user.go", `package controller
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/deleted-handler/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func Init(g *RouterGroup) {
+	api := g.Group("/internal")
+	api.GET("/users/:id", controller.GetUser)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "deleted-handler.diff")
+	patch := []byte("diff --git a/controller/user.go b/controller/user.go\n" +
+		"--- a/controller/user.go\n" +
+		"+++ b/controller/user.go\n" +
+		"@@ -1,5 +1 @@\n" +
+		" package controller\n" +
+		"-\n" +
+		"-// @Get /public/users/:id\n" +
+		"-func GetUser() {\n" +
+		"-}\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertSourceRoot(t, doc, "controller/user.go", "func:example.com/deleted-handler/controller::GetUser")
+	for _, source := range doc.FileSources {
+		if source.SourceFile != "controller/user.go" {
+			continue
+		}
+		if _, ok := source.Symbols["__non_symbol__"]; ok {
+			t.Fatalf("deleted handler should replace file fallback root: %#v", source.Symbols)
+		}
+	}
+	assertEndpointSummary(t, doc, "GET", "/internal/users/:id")
+}
+
+func TestRunImpactUsesRouteEndpointWhenAnnotationDisagrees(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/route-authority\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/order.go", `package controller
+
+// @Post /public/orders
+func Create() {}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/route-authority/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) POST(path string, handler any) {}
+
+func Init(g *RouterGroup) {
+	api := g.Group("/internal")
+	api.POST("/orders", controller.Create)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "route.diff")
+	patch := []byte("diff --git a/router/router.go b/router/router.go\n" +
+		"--- a/router/router.go\n" +
+		"+++ b/router/router.go\n" +
+		"@@ -9,6 +9,6 @@ func (g *RouterGroup) POST(path string, handler any) {}\n" +
+		" \n" +
+		" func Init(g *RouterGroup) {\n" +
+		" \tapi := g.Group(\"/internal\")\n" +
+		"-\tapi.POST(\"/orders\", controller.Create)\n" +
+		"+\tapi.POST(\"/orders\", controller.Create) // touched\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/internal/orders")
+	for _, endpoint := range doc.Summary.ImpactedEndpoints {
+		if endpoint.Method == "POST" && endpoint.Path == "/public/orders" {
+			t.Fatalf("annotation endpoint should not override route endpoint: %#v", doc.Summary)
+		}
+	}
+}
+
+func TestRunImpactKeepsAnnotationWhenItAddsMissingParentPrefix(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/parent-prefix\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/socialuser.go", `package controller
+
+// @Put /admin/api/bff-web/mc/social-user/:psid/tag
+func CreateThirdUserTag() {}
+`)
+	writeTestFile(t, root, "router/socialuser.go", `package router
+
+import "example.com/parent-prefix/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) PUT(path string, handler any) {}
+
+func Init(adminWebGroup *RouterGroup) {
+	socialUserGroup := adminWebGroup.Group("/mc/social-user")
+	socialUserGroup.PUT("/:psid/tag", controller.CreateThirdUserTag)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "prefix.diff")
+	patch := []byte("diff --git a/router/socialuser.go b/router/socialuser.go\n" +
+		"--- a/router/socialuser.go\n" +
+		"+++ b/router/socialuser.go\n" +
+		"@@ -10,6 +10,6 @@ func (g *RouterGroup) PUT(path string, handler any) {}\n" +
+		" \n" +
+		" func Init(adminWebGroup *RouterGroup) {\n" +
+		" \tsocialUserGroup := adminWebGroup.Group(\"/mc/social-user\")\n" +
+		"-\tsocialUserGroup.PUT(\"/:psid/tag\", controller.CreateThirdUserTag)\n" +
+		"+\tsocialUserGroup.PUT(\"/:psid/tag\", controller.CreateThirdUserTag) // touched\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "PUT", "/admin/api/bff-web/mc/social-user/:psid/tag")
+	for _, endpoint := range doc.Summary.ImpactedEndpoints {
+		if endpoint.Method == "PUT" && endpoint.Path == "/mc/social-user/:psid/tag" {
+			t.Fatalf("partial route endpoint should not override prefix-complete annotation: %#v", doc.Summary)
+		}
+	}
+}
+
+func TestRunImpactUsesOldPathGroupRouteWhenAnnotationDisagrees(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/oldpath-authority\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/socialuser.go", `package controller
+
+// @Put /admin/api/bff-web/mc/social-user/:psid/tag
+func CreateThirdUserTag() {}
+`)
+	writeTestFile(t, root, "router/socialuser.go", `package router
+
+import "example.com/oldpath-authority/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) PUT(path string, handler any) {}
+
+func Init(oldPathGroup *RouterGroup) {
+	oldPathGroup.PUT("/uc/tags/v2/user/createTag/:psid", controller.CreateThirdUserTag)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "oldpath.diff")
+	patch := []byte("diff --git a/router/socialuser.go b/router/socialuser.go\n" +
+		"--- a/router/socialuser.go\n" +
+		"+++ b/router/socialuser.go\n" +
+		"@@ -8,5 +8,5 @@ func (g *RouterGroup) PUT(path string, handler any) {}\n" +
+		" \n" +
+		" func Init(oldPathGroup *RouterGroup) {\n" +
+		"-\toldPathGroup.PUT(\"/uc/tags/v2/user/createTag/:psid\", controller.CreateThirdUserTag)\n" +
+		"+\toldPathGroup.PUT(\"/uc/tags/v2/user/createTag/:psid\", controller.CreateThirdUserTag) // touched\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "PUT", "/uc/tags/v2/user/createTag/:psid")
+	for _, endpoint := range doc.Summary.ImpactedEndpoints {
+		if endpoint.Method == "PUT" && endpoint.Path == "/admin/api/bff-web/mc/social-user/:psid/tag" {
+			t.Fatalf("annotation endpoint should not override oldPathGroup route endpoint: %#v", doc.Summary)
+		}
+	}
 }
 
 func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
@@ -478,10 +684,8 @@ func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, diagnostic := range doc.Diagnostics {
-		if diagnostic.Code == "package_load_failed" && diagnostic.File == "broken.go" {
-			t.Fatalf("unrelated package load diagnostic leaked into impact output: %#v", doc.Diagnostics)
-		}
+	if bytes.Contains(got, []byte(`"diagnostics"`)) {
+		t.Fatalf("impact output should omit diagnostics: %s", got)
 	}
 }
 

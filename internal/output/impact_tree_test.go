@@ -222,9 +222,15 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	}
 }
 
-func TestRenderImpactTreeJSONOmitsEmptyDiagnostics(t *testing.T) {
+func TestRenderImpactTreeJSONOmitsDiagnostics(t *testing.T) {
 	doc := ImpactDocument{
-		Summary:     ImpactSummary{ImpactedEndpoints: []EndpointSummary{}},
+		Summary: ImpactSummary{ImpactedEndpoints: []EndpointSummary{}},
+		Diagnostics: []ImpactDiagnostic{{
+			Code:     "symbol_reference_unresolved",
+			Severity: "warning",
+			Message:  "reference could not be resolved",
+			File:     "controller/a.go",
+		}},
 		FileSources: []FileSourceImpact{},
 	}
 
@@ -233,7 +239,7 @@ func TestRenderImpactTreeJSONOmitsEmptyDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bytes.Contains(payload, []byte(`"diagnostics"`)) {
-		t.Fatalf("empty diagnostics should be omitted: %s", payload)
+		t.Fatalf("diagnostics should be omitted from impact output: %s", payload)
 	}
 }
 
@@ -425,7 +431,7 @@ func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
 	}
 }
 
-func TestCompactImpactProjectsDiagnosticsWithoutSpan(t *testing.T) {
+func TestImpactDocumentKeepsInternalDiagnosticsButOmitsFromJSON(t *testing.T) {
 	doc := BuildImpactDocument(
 		facts.ProjectFact{},
 		nil,
@@ -446,8 +452,8 @@ func TestCompactImpactProjectsDiagnosticsWithoutSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(payload, []byte(`"span"`)) {
-		t.Fatalf("diagnostic span should be omitted: %s", payload)
+	if bytes.Contains(payload, []byte(`"diagnostics"`)) {
+		t.Fatalf("diagnostics should be omitted from impact output: %s", payload)
 	}
 }
 

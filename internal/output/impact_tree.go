@@ -13,7 +13,7 @@ import (
 
 type ImpactDocument struct {
 	Summary       ImpactSummary        `json:"summary"`
-	Diagnostics   []ImpactDiagnostic   `json:"diagnostics,omitempty"`
+	Diagnostics   []ImpactDiagnostic   `json:"-"`
 	FileSources   []FileSourceImpact   `json:"fileSources"`
 	ModuleSources []ModuleSourceImpact `json:"moduleSources,omitempty"`
 }
