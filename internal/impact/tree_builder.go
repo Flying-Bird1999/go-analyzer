@@ -30,7 +30,7 @@ type treeContext struct {
 func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 	result := TreeResult{
 		Roots:       []RootImpact{},
-		Diagnostics: append([]facts.DiagnosticFact(nil), store.Diagnostics...),
+		Diagnostics: []facts.DiagnosticFact{},
 	}
 	context := newTreeContext(store)
 	changes := append([]facts.ChangeFact(nil), store.Changes...)
@@ -57,8 +57,50 @@ func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 			Endpoints: endpoints,
 		})
 	}
+	result.Diagnostics = append(result.Diagnostics, relevantStoreDiagnostics(store.Diagnostics, result.Roots)...)
 	result.Diagnostics = dedupeTreeDiagnostics(result.Diagnostics)
 	return result
+}
+
+func relevantStoreDiagnostics(items []facts.DiagnosticFact, roots []RootImpact) []facts.DiagnosticFact {
+	relevantIDs := map[string]bool{}
+	relevantFiles := map[string]bool{}
+	for _, root := range roots {
+		addRelevantValue(relevantIDs, root.Change.ID)
+		addRelevantValue(relevantIDs, root.Change.TargetID)
+		addRelevantValue(relevantIDs, string(root.Change.SymbolID))
+		addRelevantValue(relevantIDs, root.Change.SourceFactID)
+		addRelevantValue(relevantFiles, root.Change.File)
+		collectRelevantNodeFacts(root.Root, relevantIDs, relevantFiles)
+	}
+	var out []facts.DiagnosticFact
+	for _, item := range items {
+		relevant := item.Span.File != "" && relevantFiles[item.Span.File]
+		for _, id := range item.RelatedFactIDs {
+			if relevantIDs[id] {
+				relevant = true
+				break
+			}
+		}
+		if relevant {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func collectRelevantNodeFacts(node Node, ids, files map[string]bool) {
+	addRelevantValue(ids, node.ID)
+	addRelevantValue(files, node.File)
+	for _, child := range node.Children {
+		collectRelevantNodeFacts(child, ids, files)
+	}
+}
+
+func addRelevantValue(set map[string]bool, value string) {
+	if value != "" {
+		set[value] = true
+	}
 }
 
 func newTreeContext(store *facts.Store) *treeContext {

@@ -1,12 +1,14 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestLoadMergesProjectOverridesWithDefaults(t *testing.T) {
+func TestLoadIgnoresBusinessSyntaxOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-analyzer.json")
 	body := []byte(`{
   "project": {
@@ -30,22 +32,8 @@ func TestLoadMergesProjectOverridesWithDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertContains(t, got.Project.SkipDirs, "vendor")
-	assertContains(t, got.Project.SkipDirs, "fixtures")
-	assertContains(t, got.Route.HTTPMethods, "GET")
-	assertContains(t, got.Route.HTTPMethods, "SEARCH")
-	assertContains(t, got.Route.HandlerWrappers, "ControllerWithResp")
-	assertContains(t, got.Route.HandlerWrappers, "CustomController")
-	assertContains(t, got.Annotation.Methods, "GET")
-	assertContains(t, got.Annotation.Methods, "SEARCH")
-	if !got.IsRouteGroupWrapper("TenantShield") {
-		t.Fatalf("TenantShield should match configured route group wrapper: %#v", got.Route.RouteGroupWrappers)
-	}
-	if got.Analysis.IncludeRawEvidence == nil || !*got.Analysis.IncludeRawEvidence {
-		t.Fatalf("default includeRawEvidence was not preserved: %#v", got.Analysis)
-	}
-	if got.Analysis.IncludeDiff == nil || !*got.Analysis.IncludeDiff {
-		t.Fatalf("default includeDiff was not preserved: %#v", got.Analysis)
+	if got.Analysis.MaxDepth != 0 || len(got.Analysis.StopPropagation) != 0 {
+		t.Fatalf("unexpected analysis defaults: %#v", got.Analysis)
 	}
 }
 
@@ -54,8 +42,7 @@ func TestLoadMergesAnalysisConfig(t *testing.T) {
 	body := []byte(`{
   "analysis": {
     "maxDepth": 3,
-    "stopPropagation": ["internal/generated/**", "internal/generated/**"],
-    "includeRawEvidence": false
+    "stopPropagation": ["internal/generated/**", "internal/generated/**"]
   }
 }`)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
@@ -72,11 +59,17 @@ func TestLoadMergesAnalysisConfig(t *testing.T) {
 	if len(got.Analysis.StopPropagation) != 1 || got.Analysis.StopPropagation[0] != "internal/generated/**" {
 		t.Fatalf("stopPropagation = %#v", got.Analysis.StopPropagation)
 	}
-	if got.Analysis.IncludeRawEvidence == nil || *got.Analysis.IncludeRawEvidence {
-		t.Fatalf("includeRawEvidence = %#v", got.Analysis.IncludeRawEvidence)
+}
+
+func TestDefaultConfigDoesNotExposeOutputEvidenceSwitches(t *testing.T) {
+	data, err := json.Marshal(Default())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got.Analysis.IncludeDiff == nil || !*got.Analysis.IncludeDiff {
-		t.Fatalf("default includeDiff was not preserved: %#v", got.Analysis.IncludeDiff)
+	for _, retired := range [][]byte{[]byte("includeDiff"), []byte("includeRawEvidence")} {
+		if bytes.Contains(data, retired) {
+			t.Fatalf("retired output config %q remains: %s", retired, data)
+		}
 	}
 }
 
@@ -89,14 +82,4 @@ func TestLoadRejectsNegativeMaxDepth(t *testing.T) {
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected negative maxDepth to be rejected")
 	}
-}
-
-func assertContains(t *testing.T, items []string, want string) {
-	t.Helper()
-	for _, item := range items {
-		if item == want {
-			return
-		}
-	}
-	t.Fatalf("%q not found in %#v", want, items)
 }

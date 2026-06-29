@@ -9,20 +9,20 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-func resolveCall(file *project.File, idx *astindex.Index, call *ast.CallExpr) (facts.SymbolID, string, facts.Confidence, bool) {
+func resolveCall(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, call *ast.CallExpr) (facts.SymbolID, string, facts.Confidence, bool) {
 	switch fun := unwrapGenericCallee(call.Fun).(type) {
 	case *ast.Ident:
 		id := astindex.FunctionSymbolID(file.Package.Path, fun.Name)
 		_, ok := idx.Symbols[id]
 		return id, fun.Name, facts.ConfidenceHigh, ok
 	case *ast.SelectorExpr:
-		return resolveSelector(file, idx, fun)
+		return resolveSelector(file, idx, scopedTypes, fun)
 	default:
 		return "", "", "", false
 	}
 }
 
-func resolveSelector(file *project.File, idx *astindex.Index, selector *ast.SelectorExpr) (facts.SymbolID, string, facts.Confidence, bool) {
+func resolveSelector(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, selector *ast.SelectorExpr) (facts.SymbolID, string, facts.Confidence, bool) {
 	parts := selectorParts(selector)
 	raw := strings.Join(parts, ".")
 	if len(parts) == 2 {
@@ -30,6 +30,13 @@ func resolveSelector(file *project.File, idx *astindex.Index, selector *ast.Sele
 			id := astindex.FunctionSymbolID(importPath, parts[1])
 			_, ok := idx.Symbols[id]
 			return id, raw, facts.ConfidenceHigh, ok
+		}
+	}
+	if len(parts) >= 2 {
+		if valueType, ok := scopedTypes.resolve(parts[0], selector.Pos()); ok {
+			if resolved, ok := idx.ResolveValueTypeMethod(valueType, parts[1:]); ok {
+				return resolved.ID, raw, resolved.Confidence, true
+			}
 		}
 	}
 	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts); ok {

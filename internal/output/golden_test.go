@@ -105,7 +105,6 @@ func TestTypeImpactTreeGolden(t *testing.T) {
 	store.Changes = diff.MapChanges(fileChanges, store, "git_diff")
 	result := impact.AnalyzeTrees(store, impact.TreeOptions{})
 	doc := output.BuildImpactDocument(store.Project, fileChanges, result, output.ImpactDocumentOptions{})
-	doc.Meta.ProjectRoot = "testdata/fixtures/type-impact"
 	got, err := output.RenderImpactTreeJSON(doc)
 	if err != nil {
 		t.Fatal(err)

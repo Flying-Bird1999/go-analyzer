@@ -194,6 +194,107 @@ func Handle() {
 	}
 }
 
+func TestExtractReceiverMethodCallReference(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/receiver-call\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type controllerHandler struct{}
+
+func (c *controllerHandler) executeFlow() {
+	c.convert()
+}
+
+func (c *controllerHandler) convert() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"method:example.com/receiver-call:controllerHandler:executeFlow",
+		"method:example.com/receiver-call:controllerHandler:convert",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractConstructorLocalMethodCallUsesMediumConfidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-constructor\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type controllerHandler struct{}
+
+func newControllerHandler() *controllerHandler {
+	return &controllerHandler{}
+}
+
+func controller() {
+	c := newControllerHandler()
+	c.executeFlow()
+}
+
+func (c *controllerHandler) executeFlow() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"func:example.com/local-constructor::controller",
+		"method:example.com/local-constructor:controllerHandler:executeFlow",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceMedium {
+		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractConstructorTupleOnlyInfersFirstLocal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-constructor-tuple\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type controllerHandler struct{}
+
+func newControllerHandler() (*controllerHandler, error) {
+	return &controllerHandler{}, nil
+}
+
+func controller() {
+	c, err := newControllerHandler()
+	c.executeFlow()
+	err.executeFlow()
+}
+
+func (c *controllerHandler) executeFlow() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/local-constructor-tuple::controller")
+	to := facts.SymbolID("method:example.com/local-constructor-tuple:controllerHandler:executeFlow")
+	var count int
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == facts.ReferenceKindCall {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("constructor method references = %d, want 1: %#v", count, store.References)
+	}
+}
+
 func extractReferenceFixture(t *testing.T) *facts.Store {
 	t.Helper()
 	return extractFixture(t, "reference-chain")

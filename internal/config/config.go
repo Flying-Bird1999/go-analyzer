@@ -1,20 +1,7 @@
 package config
 
 type Config struct {
-	Project    ProjectConfig    `json:"project,omitempty"`
-	Route      RouteConfig      `json:"route,omitempty"`
-	Annotation AnnotationConfig `json:"annotation,omitempty"`
-	Analysis   AnalysisConfig   `json:"analysis,omitempty"`
-}
-
-type ProjectConfig struct {
-	SkipDirs []string `json:"skipDirs,omitempty"`
-}
-
-type RouteConfig struct {
-	HTTPMethods        []string      `json:"httpMethods,omitempty"`
-	HandlerWrappers    []string      `json:"handlerWrappers,omitempty"`
-	RouteGroupWrappers []WrapperRule `json:"routeGroupWrappers,omitempty"`
+	Analysis AnalysisConfig `json:"analysis,omitempty"`
 }
 
 type WrapperRule struct {
@@ -23,13 +10,7 @@ type WrapperRule struct {
 	Contains string `json:"contains,omitempty"`
 }
 
-type AnnotationConfig struct {
-	Methods []string `json:"methods,omitempty"`
-}
-
 type AnalysisConfig struct {
-	MaxDepth           int      `json:"maxDepth,omitempty"`
-	StopPropagation    []string `json:"stopPropagation,omitempty"`
-	IncludeRawEvidence *bool    `json:"includeRawEvidence,omitempty"`
-	IncludeDiff        *bool    `json:"includeDiff,omitempty"`
+	MaxDepth        int      `json:"maxDepth,omitempty"`
+	StopPropagation []string `json:"stopPropagation,omitempty"`
 }

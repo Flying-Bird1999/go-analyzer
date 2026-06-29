@@ -40,7 +40,7 @@ func CheckIn() {}
 	}
 }
 
-func TestParseAPIAnnotationsUsesConfiguredMethods(t *testing.T) {
+func TestParseAPIAnnotationsIgnoresConfiguredBusinessMethods(t *testing.T) {
 	src := `package p
 // @Search /ready
 // @Post /ignored
@@ -51,14 +51,14 @@ func CheckIn() {}
 		t.Fatal(err)
 	}
 	decl := file.Decls[0].(*ast.FuncDecl)
-	cfg := config.Config{Annotation: config.AnnotationConfig{Methods: []string{"SEARCH"}}}
+	cfg := config.Config{}
 
 	got := ParseAPIAnnotationsWithConfig(decl.Doc, cfg)
 
 	if len(got) != 1 {
 		t.Fatalf("annotation count = %d: %#v", len(got), got)
 	}
-	if got[0].Method != "SEARCH" || got[0].Path != "/ready" {
+	if got[0].Method != "POST" || got[0].Path != "/ignored" {
 		t.Fatalf("annotation = %#v", got[0])
 	}
 }

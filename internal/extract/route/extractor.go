@@ -218,7 +218,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 	}
 	wrappers := append(groupWrappers, parsed.HandlerWrappers...)
 	resolved := ""
-	if parsed.LocalPath != "" {
+	if parsed.PathRaw == "" {
 		resolved = joinPath(group.prefix, parsed.LocalPath)
 	}
 	route := facts.RouteRegistrationFact{

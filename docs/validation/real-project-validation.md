@@ -13,19 +13,24 @@ bash scripts/smoke-real-projects.sh
 
 The CLI accepts absolute paths at the command boundary. The smoke script
 resolves the sibling demo projects to absolute paths, writes JSON outputs to
-`.analyzer-smoke/`, and validates that each output is parseable JSON.
-Optional `--config` files are JSON and must also be passed as absolute paths.
+`.analyzer-smoke/`, and validates that each output is parseable JSON. Real
+impact cases temporarily edit business files, collect `git diff` from the BFF
+project, and restore the files before running impact analysis.
+Optional `--config` files are reserved for analysis/debug options and must also
+be passed as absolute paths; lego BFF syntax is recognized by built-in rules.
 
 ## Current Expectations
 
 The MVP validation target is stability rather than perfect precision:
 
 - Both projects should run without panic.
-- Facts JSON should be parseable.
+- Facts JSON should be parseable and every route should have both
+  `handler_symbol` and `resolved_path`.
 - Annotation, route, symbol, and diagnostic counts should be recorded from each
   smoke run.
-- Impact smoke should record changed source count, changed root count, impact
-  tree node count and endpoint count.
+- Impact smoke should record changed source count, changed root count, shared
+  graph node count and endpoint count.
+- Real BFF impact smoke should assert exact impacted endpoint method/path.
 - Unsupported patterns should appear as diagnostics instead of being silently
   lost where the analyzer can identify them.
 
@@ -61,16 +66,16 @@ The smoke script records:
 
 - changed source count.
 - changed root count.
-- impact tree node count.
+- shared impact graph node count.
 - endpoint count.
 - unresolved-reference diagnostics.
 - runtime.
 
 Latest fixture result:
 
-| Schema | Changed sources | Changed roots | Tree nodes | Endpoints | Unresolved diagnostics | Runtime |
+| Fixture | Changed sources | Changed roots | Graph nodes | Endpoints | Unresolved diagnostics | Runtime |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `go-impact/v1alpha1` | 1 | 1 | 9 | 1 (`POST /orders`) | 0 | <1s |
+| `type-impact` | 1 | 1 | 8 | 1 (`POST /orders`) | 0 | <1s |
 
 ## Specialized Impact Fixtures
 
@@ -85,6 +90,28 @@ The smoke script also validates the three post-MVP propagation paths:
 All three fixtures currently complete with one impacted endpoint and no
 diagnostics.
 
+## Real BFF Impact Cases
+
+The smoke script validates eight real-file diff cases across the two target BFF
+projects:
+
+| Case | Project file | Expected endpoint |
+| --- | --- | --- |
+| `real-admin-customer-empty-path` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `GET /admin/api/bff-web/mc/customer/:customerId` |
+| `real-admin-customer-wrapper` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `PUT /admin/api/bff-web/mc/customer/:customerId` |
+| `real-admin-product-set-list` | `sl-sc1-admin-bff/controller/trade/product/product.go` | `GET /admin/api/bff-web/trade/product/product_set/list` |
+| `real-admin-user-info` | `sl-sc1-admin-bff/controller/user/user.go` | `GET /admin/api/bff-web/user/info` |
+| `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
+| `real-client-common-checkin` | `sl-sc1-bff-service/controller/common/common.go` | `POST /api/bff-web/common/checkIn` |
+| `real-client-gomod-and-checkin` | `sl-sc1-bff-service/go.mod` + `sl-sc1-bff-service/controller/common/common.go` | 1 `fileSources` endpoint plus 10 Nexus endpoints from upgraded `github.com/shopspring/decimal` |
+| `real-client-live-view` | `sl-sc1-bff-service/controller/live/view/redirect.go` | `GET /api/bff-web/live/view/:salesId/redirect` |
+
+The seven single-file cases complete with one impacted endpoint. The combined
+go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
+`fileSources`, while the ten decimal-dependent Nexus routes are grouped under
+`moduleSources`. Its compact impact JSON is 44,707 bytes in the 2026-06-29
+snapshot.
+
 ## Known Unsupported Patterns
 
 - Dynamic route paths are preserved as raw expressions and reported with
@@ -95,5 +122,5 @@ diagnostics.
   local import usages; external module API/source differences are not analyzed.
 - Declarations absent from the post-change snapshot can degrade to
   `deleted_symbol_unresolved`.
-- Interface dispatch, reflection, flow-sensitive local receiver inference and
-  full runtime route reconstruction remain outside the AST-only scope.
+- Interface dispatch, reflection, arbitrary control-flow receiver reassignment
+  and full runtime route reconstruction remain outside the AST-only scope.

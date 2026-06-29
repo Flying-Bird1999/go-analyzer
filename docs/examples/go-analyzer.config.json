@@ -1,29 +1,6 @@
 {
-  "project": {
-    "skipDirs": [".git", "vendor", "node_modules", "testdata"]
-  },
-  "route": {
-    "httpMethods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    "handlerWrappers": [
-      "ControllerWithReqResp",
-      "AppControllerWithReqResp",
-      "ControllerWithResp",
-      "Controller",
-      "MiddlewareController"
-    ],
-    "routeGroupWrappers": [
-      {"prefix": "Add"},
-      {"contains": "Guard"},
-      {"contains": "Validator"}
-    ]
-  },
-  "annotation": {
-    "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"]
-  },
   "analysis": {
     "maxDepth": 0,
-    "stopPropagation": ["internal/generated/**"],
-    "includeRawEvidence": true,
-    "includeDiff": true
+    "stopPropagation": []
   }
 }

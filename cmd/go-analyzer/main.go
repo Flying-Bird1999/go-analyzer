@@ -48,7 +48,7 @@ func runFacts(args []string) error {
 	fs := flag.NewFlagSet("facts", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "project path")
-	configPath := fs.String("config", "", "absolute analyzer config path")
+	configPath := fs.String("config", "", "absolute analysis/debug config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,7 +76,7 @@ func runImpact(args []string) error {
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "absolute project path")
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
-	configPath := fs.String("config", "", "absolute analyzer config path")
+	configPath := fs.String("config", "", "absolute analysis/debug config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -141,13 +141,13 @@ func usage(command string) string {
 		return `Usage:
   go-analyzer facts --project /absolute/path/to/project [--config /absolute/path/to/go-analyzer.json] [--format json]
 
-Extract project facts as JSON.
+Extract project facts as JSON. Optional config is reserved for analysis/debug fields.
 `
 	case "impact":
 		return `Usage:
   go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--config /absolute/path/to/go-analyzer.json] [--format json]
 
-Analyze impacted endpoints from a unified diff.
+Analyze impacted endpoints from a unified diff. Optional config is reserved for analysis/debug fields.
 `
 	case "schema":
 		return `Usage:

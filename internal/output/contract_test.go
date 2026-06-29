@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -11,7 +12,7 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 		wantProp string
 	}{
 		{name: "facts", wantProp: "project"},
-		{name: "impact", wantProp: "meta"},
+		{name: "impact", wantProp: "nodes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,7 +68,7 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 		name   string
 		absent []string
 	}{
-		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_meta", "impact_node"}},
+		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_diagnostic", "impact_edge", "impact_node", "impact_root"}},
 		{name: "impact", absent: []string{"annotation", "change", "link", "middleware", "module", "project", "reference", "route", "route_group", "symbol", "wrapper"}},
 	}
 	for _, tc := range cases {
@@ -107,12 +108,81 @@ func TestSchemasConstrainConfidenceAndExposeImpactSummary(t *testing.T) {
 		t.Fatalf("summary property missing: %#v", properties)
 	}
 	defs := doc["$defs"].(map[string]any)
-	impactNode := defs["impact_node"].(map[string]any)
-	nodeProps := impactNode["properties"].(map[string]any)
-	confidence := nodeProps["confidence"].(map[string]any)
-	enum, ok := confidence["enum"].([]any)
-	if !ok || len(enum) != 3 {
-		t.Fatalf("confidence enum missing: %#v", confidence)
+	for _, definition := range []string{"impact_root", "impact_edge"} {
+		item := defs[definition].(map[string]any)
+		itemProps := item["properties"].(map[string]any)
+		confidence := itemProps["confidence"].(map[string]any)
+		enum, ok := confidence["enum"].([]any)
+		if !ok || len(enum) != 2 || enum[0] != "medium" || enum[1] != "low" {
+			t.Fatalf("%s confidence enum missing: %#v", definition, confidence)
+		}
+	}
+	nodeProps := defs["impact_node"].(map[string]any)["properties"].(map[string]any)
+	for _, forbidden := range []string{"id", "span", "raw", "package", "level", "confidence", "cycle"} {
+		if _, ok := nodeProps[forbidden]; ok {
+			t.Fatalf("compact node should not expose %q: %#v", forbidden, nodeProps)
+		}
+	}
+}
+
+func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	if _, ok := properties["moduleSources"]; !ok {
+		t.Fatalf("moduleSources property missing: %#v", properties)
+	}
+	for _, retired := range []string{"module_changes", "module_usages"} {
+		if _, ok := properties[retired]; ok {
+			t.Fatalf("retired impact property %q remains: %#v", retired, properties)
+		}
+	}
+	defs := doc["$defs"].(map[string]any)
+	for _, required := range []string{"module_source_impact", "module_replacement"} {
+		if _, ok := defs[required]; !ok {
+			t.Fatalf("definition %q missing: %#v", required, defs)
+		}
+	}
+	for _, retired := range []string{"module_change", "module_usage"} {
+		if _, ok := defs[retired]; ok {
+			t.Fatalf("retired impact definition %q remains", retired)
+		}
+	}
+}
+
+func TestImpactSchemaDoesNotExposeSchemaVersion(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	if _, ok := properties["meta"]; ok {
+		t.Fatalf("impact should not expose meta: %#v", properties)
+	}
+	if _, ok := doc["$defs"].(map[string]any)["impact_meta"]; ok {
+		t.Fatal("impact_meta definition should be removed")
+	}
+}
+
+func TestImpactSchemaDoesNotExposeSpanOrDebugEvidence(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"span"`, `"raw"`, `"package"`, `"level"`, `"source_span"`} {
+		if bytes.Contains(got, []byte(forbidden)) {
+			t.Fatalf("impact schema should not expose %s: %s", forbidden, got)
+		}
 	}
 }
 

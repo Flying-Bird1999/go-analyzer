@@ -18,12 +18,13 @@ type ChangeRange struct {
 }
 
 type ChangeFact struct {
-	ID         string        `json:"id"`
-	Kind       ChangeKind    `json:"kind"`
-	TargetID   string        `json:"target_id,omitempty"`
-	SymbolID   SymbolID      `json:"symbol_id,omitempty"`
-	File       string        `json:"file"`
-	Ranges     []ChangeRange `json:"ranges"`
-	Source     string        `json:"source"`
-	Confidence Confidence    `json:"confidence"`
+	ID           string        `json:"id"`
+	Kind         ChangeKind    `json:"kind"`
+	TargetID     string        `json:"target_id,omitempty"`
+	SymbolID     SymbolID      `json:"symbol_id,omitempty"`
+	File         string        `json:"file"`
+	Ranges       []ChangeRange `json:"ranges"`
+	Source       string        `json:"source"`
+	SourceFactID string        `json:"source_fact_id,omitempty"`
+	Confidence   Confidence    `json:"confidence"`
 }

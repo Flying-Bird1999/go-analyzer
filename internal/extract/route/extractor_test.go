@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -143,41 +142,6 @@ func TestExtractUnresolvedHandlerEmitsDiagnostic(t *testing.T) {
 	assertDiagnosticCode(t, store, "route_unresolved_handler")
 }
 
-func TestExtractUsesConfiguredRouteRules(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "configurable-rules")
-	p, err := project.Load(root, project.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	idx, err := astindex.Build(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := facts.NewStore(p.Root, p.ModulePath)
-	cfg := config.Default()
-	cfg.Route.HTTPMethods = append(cfg.Route.HTTPMethods, "SEARCH")
-	cfg.Route.HandlerWrappers = append(cfg.Route.HandlerWrappers, "CustomController")
-	cfg.Route.RouteGroupWrappers = append(cfg.Route.RouteGroupWrappers, config.WrapperRule{Contains: "Shield"})
-
-	if err := ExtractWithConfig(p, idx, store, cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(store.Routes) != 1 {
-		t.Fatalf("routes = %d: %#v", len(store.Routes), store.Routes)
-	}
-	route := store.Routes[0]
-	if route.Method != "SEARCH" {
-		t.Fatalf("method = %q", route.Method)
-	}
-	if route.HandlerRaw != "common.CheckIn" {
-		t.Fatalf("handler raw = %q", route.HandlerRaw)
-	}
-	if len(route.Wrappers) != 2 || route.Wrappers[0].Name != "TenantShield" || route.Wrappers[1].Name != "CustomController" {
-		t.Fatalf("wrappers = %#v", route.Wrappers)
-	}
-}
-
 func TestExtractRouteInsideIfFromMethodRouteFunc(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/route-method\n\ngo 1.24\n"), 0o644); err != nil {
@@ -212,6 +176,74 @@ func (r *Router) Init(g *Group) {
 	}
 	if route.RouteFunc != "method:example.com/route-method:Router:Init" {
 		t.Fatalf("route func = %q", route.RouteFunc)
+	}
+}
+
+func TestExtractRecursivelyFindsLegoHandlerInsideBusinessWrapper(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/lego-wrapper\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) PUT(path string, handler any) {}
+
+func ControllerWithReqResp(handler any) any { return handler }
+func AppendDisplayMessageOnControllerWithReqRespHandler(handler any) any { return handler }
+
+func UpdateCustomer() {}
+
+func Init(g *Group) {
+	g.PUT("/:customerId", ControllerWithReqResp(AppendDisplayMessageOnControllerWithReqRespHandler(UpdateCustomer)))
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/:customerId")
+	if route.HandlerRaw != "UpdateCustomer" {
+		t.Fatalf("handler raw = %q", route.HandlerRaw)
+	}
+	if len(route.Wrappers) != 2 {
+		t.Fatalf("wrappers = %#v", route.Wrappers)
+	}
+	if route.Wrappers[0].Name != "ControllerWithReqResp" || route.Wrappers[1].Name != "AppendDisplayMessageOnControllerWithReqRespHandler" {
+		t.Fatalf("wrappers = %#v", route.Wrappers)
+	}
+}
+
+func TestExtractEmptyRoutePathResolvesToGroupPrefix(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/empty-route-path\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) Group(path string) *Group { return g }
+func (g *Group) GET(path string, handler any) {}
+
+func Handler() {}
+
+func Init(g *Group) {
+	api := g.Group("/api")
+	api.GET("", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/api")
+	if route.LocalPath != "" {
+		t.Fatalf("local path = %q", route.LocalPath)
+	}
+	if route.ResolvedPath != "/api" {
+		t.Fatalf("resolved path = %q", route.ResolvedPath)
 	}
 }
 

@@ -95,11 +95,9 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		StopPropagation: cfg.Analysis.StopPropagation,
 	})
 	doc := output.BuildImpactDocument(store.Project, fileChanges, result, output.ImpactDocumentOptions{
-		IncludeDiff:        cfg.Analysis.IncludeDiff,
-		IncludeRawEvidence: cfg.Analysis.IncludeRawEvidence,
+		ModuleChanges: store.ModuleChanges,
+		ModuleUsages:  store.ModuleUsages,
 	})
-	doc.ModuleChanges = append([]facts.ModuleChangeFact(nil), store.ModuleChanges...)
-	doc.ModuleUsages = append([]facts.ModuleUsageFact(nil), store.ModuleUsages...)
 	return output.RenderImpactTreeJSON(doc)
 }
 
@@ -126,7 +124,7 @@ func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error)
 }
 
 func buildFacts(projectPath string, cfg config.Config) (builtFacts, error) {
-	p, err := project.Load(projectPath, project.Options{ExcludeDirs: cfg.Project.SkipDirs})
+	p, err := project.Load(projectPath, project.Options{ExcludeDirs: config.DefaultSkipDirs()})
 	if err != nil {
 		return builtFacts{}, err
 	}
@@ -182,10 +180,11 @@ func moduleUsageChanges(usages []facts.ModuleUsageFact, store *facts.Store, sour
 			continue
 		}
 		change := facts.ChangeFact{
-			ID:         fmt.Sprintf("change:module_usage:%s:%d", usage.ID, len(out)),
-			File:       usage.File,
-			Source:     source,
-			Confidence: usage.Confidence,
+			ID:           fmt.Sprintf("change:module_usage:%s:%d", usage.ID, len(out)),
+			File:         usage.File,
+			Source:       source,
+			SourceFactID: usage.ID,
+			Confidence:   usage.Confidence,
 		}
 		if usage.SymbolID != "" {
 			change.Kind = facts.ChangeKindSymbolChanged

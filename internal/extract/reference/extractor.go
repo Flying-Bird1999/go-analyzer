@@ -31,6 +31,7 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 
 func extractFuncReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, pkgPath string, fn *ast.FuncDecl) {
 	from := functionSymbol(pkgPath, fn)
+	scopedTypes := collectScopedValueTypes(file, idx, fn)
 	if fn.Recv != nil {
 		for _, field := range fn.Recv.List {
 			addTypeReferences(p, file, idx, store, from, field.Type)
@@ -65,7 +66,7 @@ func extractFuncReferences(p *project.Project, file *project.File, idx *astindex
 			if len(collectTypeIDs(file, idx, callee)) > 0 {
 				addTypeReferences(p, file, idx, store, from, callee)
 			} else {
-				addCallReference(p, file, idx, store, from, x)
+				addCallReference(p, file, idx, store, from, scopedTypes, x)
 			}
 		case *ast.CompositeLit:
 			addTypeReferences(p, file, idx, store, from, x.Type)
@@ -102,8 +103,8 @@ func extractGenDeclTypeReferences(p *project.Project, file *project.File, idx *a
 	}
 }
 
-func addCallReference(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, call *ast.CallExpr) {
-	to, raw, confidence, ok := resolveCall(file, idx, call)
+func addCallReference(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, scopedTypes scopedValueTypes, call *ast.CallExpr) {
+	to, raw, confidence, ok := resolveCall(file, idx, scopedTypes, call)
 	if !ok || to == "" || to == from {
 		callee := unwrapGenericCallee(call.Fun)
 		if !ok && isProjectSelector(file, idx.Project.ModulePath, callee) {

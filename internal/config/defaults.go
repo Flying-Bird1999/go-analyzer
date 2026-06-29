@@ -8,25 +8,10 @@ import (
 )
 
 func Default() Config {
-	includeRawEvidence := true
-	includeDiff := true
 	return Config{
-		Project: ProjectConfig{
-			SkipDirs: []string{".git", ".cache", "vendor", "node_modules", "testdata"},
-		},
-		Route: RouteConfig{
-			HTTPMethods:        []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
-			HandlerWrappers:    []string{"ControllerWithReqResp", "AppControllerWithReqResp", "ControllerWithResp", "Controller", "MiddlewareController"},
-			RouteGroupWrappers: []WrapperRule{{Prefix: "Add"}, {Contains: "Guard"}, {Contains: "Validator"}},
-		},
-		Annotation: AnnotationConfig{
-			Methods: []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"},
-		},
 		Analysis: AnalysisConfig{
-			MaxDepth:           0,
-			StopPropagation:    []string{},
-			IncludeRawEvidence: &includeRawEvidence,
-			IncludeDiff:        &includeDiff,
+			MaxDepth:        0,
+			StopPropagation: []string{},
 		},
 	}
 }
@@ -50,20 +35,24 @@ func Load(path string) (Config, error) {
 	return merge(cfg, override), nil
 }
 
+func DefaultSkipDirs() []string {
+	return []string{".git", ".cache", "vendor", "node_modules", "testdata", ".analyzer"}
+}
+
 func (c Config) IsHTTPMethod(name string) bool {
-	return containsFold(c.Route.HTTPMethods, name)
+	return containsFold(defaultHTTPMethods, name)
 }
 
 func (c Config) IsAnnotationMethod(name string) bool {
-	return containsFold(c.Annotation.Methods, name)
+	return containsFold(defaultAnnotationMethods, name)
 }
 
 func (c Config) IsHandlerWrapper(name string) bool {
-	return containsFold(c.Route.HandlerWrappers, name)
+	return containsFold(defaultHandlerWrappers, name)
 }
 
 func (c Config) IsRouteGroupWrapper(name string) bool {
-	for _, rule := range c.Route.RouteGroupWrappers {
+	for _, rule := range defaultRouteGroupWrappers {
 		if rule.Exact != "" && strings.EqualFold(rule.Exact, name) {
 			return true
 		}
@@ -78,23 +67,17 @@ func (c Config) IsRouteGroupWrapper(name string) bool {
 }
 
 func merge(base Config, override Config) Config {
-	base.Project.SkipDirs = appendUniqueFold(base.Project.SkipDirs, override.Project.SkipDirs...)
-	base.Route.HTTPMethods = appendUniqueUpper(base.Route.HTTPMethods, override.Route.HTTPMethods...)
-	base.Route.HandlerWrappers = appendUniqueFold(base.Route.HandlerWrappers, override.Route.HandlerWrappers...)
-	base.Route.RouteGroupWrappers = append(base.Route.RouteGroupWrappers, override.Route.RouteGroupWrappers...)
-	base.Annotation.Methods = appendUniqueUpper(base.Annotation.Methods, override.Annotation.Methods...)
 	if override.Analysis.MaxDepth != 0 {
 		base.Analysis.MaxDepth = override.Analysis.MaxDepth
 	}
 	base.Analysis.StopPropagation = appendUniqueFold(base.Analysis.StopPropagation, override.Analysis.StopPropagation...)
-	if override.Analysis.IncludeRawEvidence != nil {
-		base.Analysis.IncludeRawEvidence = override.Analysis.IncludeRawEvidence
-	}
-	if override.Analysis.IncludeDiff != nil {
-		base.Analysis.IncludeDiff = override.Analysis.IncludeDiff
-	}
 	return base
 }
+
+var defaultHTTPMethods = []string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+var defaultAnnotationMethods = defaultHTTPMethods
+var defaultHandlerWrappers = []string{"ControllerWithReqResp", "AppControllerWithReqResp", "ControllerWithResp", "Controller", "MiddlewareController"}
+var defaultRouteGroupWrappers = []WrapperRule{{Prefix: "Add"}, {Contains: "Guard"}, {Contains: "Validator"}}
 
 func containsFold(items []string, want string) bool {
 	for _, item := range items {

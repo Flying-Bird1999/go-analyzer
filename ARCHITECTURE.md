@@ -2,7 +2,7 @@
 
 > 文档状态：当前实现基线，更新于 2026-06-27。
 > 适用读者：项目维护者、代码评审者、首次接手的开发者，以及需要继续迭代本项目的 agent。
-> 当前输出协议：`go-impact/v1alpha1`。
+> 当前输出：facts JSON 与 impact JSON。
 
 ## 1. 项目定位
 
@@ -82,7 +82,7 @@ flowchart LR
     Head["变更后 Go BFF 源码"] --> Analyzer
     Config["可选 JSON 配置"] --> Analyzer
     Analyzer --> Facts["facts JSON<br/>提取与调试"]
-    Analyzer --> Impact["go-impact/v1alpha1<br/>原始影响树"]
+    Analyzer --> Impact["impact JSON<br/>紧凑影响图"]
     Impact --> Human["开发 / QA 人工 review"]
     Impact --> Agent["后续 skill / agent 消费"]
 ```
@@ -96,7 +96,7 @@ flowchart LR
 当前输出：
 
 - `facts`：完整事实库，用于 extractor/linker 调试。
-- `impact`：按 diff 源文件组织的原始影响树和 endpoint 摘要。
+- `impact`：按 diff 来源组织的紧凑影响图和 endpoint 摘要。
 - `schema`：facts/impact 的 JSON Schema。
 
 当前不负责：
@@ -288,7 +288,7 @@ go-analyzer/
 | `internal/diff`               | 把 unified diff 映射到语义 root                                    | 改`service/merchant.go` 的函数体 -> `symbol_changed` root                                                        |
 | `internal/graph`              | 构造传播查询视图                                                   | `GetMerchantInfo` <- `LiveViewRedirect`；handler -> route/annotation                                             |
 | `internal/impact`             | 从 change root 扩散并产出 endpoint                                 | `GetMerchantInfo` 变更最终落到 `GET /api/bff-web/live/view/:salesId/redirect`                                    |
-| `internal/output`             | 输出稳定 JSON/schema                                               | 输出`go-impact/v1alpha1` 的 roots/endpoints/diagnostics                                                            |
+| `internal/output`             | 输出稳定 JSON/schema                                               | 输出 impact roots/endpoints/diagnostics                                                                            |
 
 ### 5.1 `cmd/go-analyzer`
 
@@ -399,8 +399,9 @@ g.Use(provider.Default.Auth.Middleware)
 
 - package-level var 的静态类型。
 - struct field 的静态类型。
+- callable 的首个返回值类型。
 
-解析时从 package-level var 开始，按 field 链一路走到最终 receiver type，再拼出 method symbol。它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；local var、接口动态派发、复杂工厂返回值、运行时注入不在当前精度目标内。
+解析 selector 时既支持从 package-level var 开始，也支持当前方法 receiver、显式类型参数/局部变量，以及由项目内 constructor 返回值推断出的局部变量；随后按 field 链一路走到最终 receiver type，再拼出 method symbol。它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；接口动态派发、复杂控制流赋值、运行时注入不在当前精度目标内。
 
 以当前“diff 发生在哪个符号，然后扩散到 endpoint”的目标来看，这组 declaration symbol 是足够的；后续如果要做更精细的动态绑定或接口实现分析，才需要引入 `go/types` / SSA。
 
@@ -829,7 +830,7 @@ sequenceDiagram
     App->>Impact: AnalyzeTrees
     Impact-->>App: roots + endpoints + diagnostics
     App->>Output: BuildImpactDocument
-    Output-->>CLI: go-impact/v1alpha1 JSON
+    Output-->>CLI: impact JSON
 ```
 
 `RunImpact` 的源码入口是 `internal/app/pipeline.go:45`。
@@ -898,12 +899,12 @@ changed module
   -> normal impact propagation
 ```
 
-因此 go.mod 可以在 `fileSources` 中同时出现：
+公开 impact 输出将两类来源分开：
 
-- `go.mod` 原始 diff source。
-- 实际被 module usage seed 的本仓源码 source。
+- 普通文件逻辑变更进入 `fileSources`。
+- go.mod 语义模块变更进入 `moduleSources`，其中 `sourceFiles` 是实际命中的本仓 usage 入口。
 
-顶层 `module_changes` / `module_usages` 保留这段转换的解释证据。
+成功解析出 module change 后，`go.mod` 不再作为低置信度 `__non_symbol__` root 出现在 `fileSources`。内部 facts 仍分别保留 `module_changes` / `module_usages`，公开 impact projection 将它们合并成面向消费方的 `moduleSources`。
 
 ## 9. Route 与 endpoint 语义
 
@@ -997,30 +998,36 @@ go run ./cmd/go-analyzer impact \
 
 ```json
 {
-  "meta": {
-    "schemaVersion": "go-impact/v1alpha1",
-    "projectRoot": "/absolute/path/to/project",
-    "diagnostics": []
-  },
-  "module_changes": [],
-  "module_usages": [],
   "summary": {
     "impactedEndpointCount": 0,
     "impactedEndpoints": []
   },
-  "fileSources": []
+  "fileSources": [],
+  "moduleSources": [],
+  "nodes": {}
 }
 ```
 
 每个 `fileSources[]` 保留：
 
 - `sourceFile`。
-- 可选原始 `diff`。
-- `symbols`：changed roots 到递归 impact nodes。
+- 原始 `diff`。
+- `roots`：指向顶层 `nodes` 的 changed root 引用。
 - `impactedEndpoints`：去重 endpoint 摘要。
 
 顶层 `summary` 是全局去重后的轻量结果，面向默认消费场景：`impactedEndpointCount`
-表示影响接口数量，`impactedEndpoints` 列出这些接口；`fileSources` 继续保留调试和溯源需要的完整树。
+表示影响接口数量，`impactedEndpoints` 列出这些接口；它是 `fileSources` 与 `moduleSources` 命中接口的并集。
+
+每个 `moduleSources[]` 保留：
+
+- `modulePath`、`changeType`、`versionBefore`、`versionAfter`。
+- replace 变化时的可选 `replacementBefore` / `replacementAfter`。
+- `basis`：模块传播入口的依据。
+- `sourceFiles`：实际引用该 module 的本仓文件、root 引用和接口摘要，不重复 go.mod diff。
+
+顶层 `nodes` 是按稳定 ID 去重的共享传播 DAG；children 只保存目标 ID、relation 和必要的非 high confidence。endpoint 已在摘要中表达，不再重复为图节点。
+
+顶层 `diagnostics` 只保留与当前变更或传播图相关的可恢复问题，并去除 span、内部 ID 等调试字段；没有相关诊断时省略。完整项目 diagnostics 仍可通过 facts 输出检查。
 
 `confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
 
@@ -1050,21 +1057,18 @@ go run ./cmd/go-analyzer schema --type impact
 
 示例：`docs/examples/go-analyzer.config.json`。
 
-支持项：
+正式接入目标是一键分析 lego BFF，业务方不需要配置 route、annotation、handler
+wrapper 或 route group wrapper。BFF 语法规则由 analyzer 内置并通过真实项目 smoke
+持续校准。
 
-| 配置                            | 用途                        |
-| ------------------------------- | --------------------------- |
-| `project.skipDirs`            | 追加跳过目录                |
-| `route.httpMethods`           | 追加 HTTP 注册方法          |
-| `route.handlerWrappers`       | 追加 handler wrapper        |
-| `route.routeGroupWrappers`    | 追加 group wrapper 匹配规则 |
-| `annotation.methods`          | 追加 annotation method      |
-| `analysis.maxDepth`           | 最大传播深度；0 为不限      |
-| `analysis.stopPropagation`    | 文件 glob 截断边界          |
-| `analysis.includeRawEvidence` | impact 是否保留 raw         |
-| `analysis.includeDiff`        | impact 是否保留原始 diff    |
+当前 JSON 配置只保留 analysis 类调试/保护开关：
 
-配置是“默认规则 + override 追加/覆盖”，不是完全替换默认列表。
+| 配置                         | 用途                   |
+| ---------------------------- | ---------------------- |
+| `analysis.maxDepth`          | 最大传播深度；0 为不限 |
+| `analysis.stopPropagation`   | 文件 glob 截断边界     |
+
+这些字段只用于传播保护，不是业务仓接入前置条件。impact 始终保留普通文件 diff，不输出 raw/span 调试证据。
 
 ## 13. 构建、运行和测试
 
@@ -1196,9 +1200,10 @@ bash scripts/smoke-real-projects.sh
 
 1. 对两个真实项目运行 facts。
 2. 校验 JSON。
-3. 输出 symbol/annotation/route/diagnostic 数量。
+3. 输出 symbol/annotation/route/route_link/diagnostic 数量，并校验每条 route 都有 handler 和 resolved path。
 4. 运行 type-impact、deleted-route、gomod-impact、middleware-selector。
 5. 验证每个专项 fixture 的 endpoint。
+6. 临时真实改动两个 BFF 的多个业务文件，通过目标项目 `git diff` 生成 patch，恢复文件后验证 impact endpoint。
 
 输出写入 `.analyzer-smoke/`，该目录被 git ignore。
 
@@ -1225,7 +1230,7 @@ data = json.load(open("/tmp/go-analyzer-impact.json"))
 print(data["summary"]["impactedEndpointCount"])
 for endpoint in data["summary"]["impactedEndpoints"]:
     print(endpoint["method"], endpoint["path"])
-for diagnostic in data["meta"]["diagnostics"]:
+for diagnostic in data.get("diagnostics", []):
     print(diagnostic["code"], diagnostic["message"])
 PY
 ```
@@ -1240,9 +1245,9 @@ PY
 | impact          | `internal/impact`                      | tree、cycle、depth、deleted route  |
 | pipeline E2E    | `internal/app/pipeline_test.go`        | diff -> endpoint 完整闭环          |
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
-| real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture |
+| real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 真实文件 diff |
 
-2026-06-27 验证快照：
+2026-06-28 验证快照：
 
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
@@ -1252,6 +1257,19 @@ PY
 | `deleted-route`       | 1 endpoint (`POST /public/orders`)                       |
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
+
+真实 BFF 文件 diff smoke 当前覆盖 8 个 case：
+
+| Case | Endpoint |
+| ---- | -------- |
+| `real-admin-customer-empty-path` | `GET /admin/api/bff-web/mc/customer/:customerId` |
+| `real-admin-customer-wrapper` | `PUT /admin/api/bff-web/mc/customer/:customerId` |
+| `real-admin-product-set-list` | `GET /admin/api/bff-web/trade/product/product_set/list` |
+| `real-admin-user-info` | `GET /admin/api/bff-web/user/info` |
+| `real-admin-app-live-statistics` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
+| `real-client-common-checkin` | `POST /api/bff-web/common/checkIn` |
+| `real-client-gomod-and-checkin` | `POST /api/bff-web/common/checkIn` + `github.com/shopspring/decimal` upgraded |
+| `real-client-live-view` | `GET /api/bff-web/live/view/:salesId/redirect` |
 
 ## 16. 当前能力边界
 
@@ -1265,10 +1283,11 @@ PY
 - route/group/middleware/wrapper。
 - route handler 与 common package-var method。
 - package var、constructor、imported explicit type、struct field 的轻量 receiver 推断。
+- 当前方法 receiver、显式类型局部变量、constructor 返回值局部变量的方法调用解析。
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace diff 到本仓 usage 和 endpoint。
 - cycle/maxDepth/stopPropagation。
-- 原始可追踪 impact tree 和 endpoint 摘要。
+- 去重后的可追踪 impact DAG 和 endpoint 摘要。
 
 ### 16.2 有降级但不会静默丢失
 
@@ -1286,7 +1305,7 @@ PY
 - 二方包跨仓传播。
 - `go/types`、SSA、interface 动态分发和完整 call graph。
 - 反射、运行时 DI、运行时 route 构造。
-- flow-sensitive local variable receiver type inference。
+- 任意控制流赋值下的完整 flow-sensitive local variable receiver type inference。
 - build tags、不同 GOOS/GOARCH 的条件编译模型。
 - `_test.go` 分析。
 - 任意控制流中的完整 route table 还原；当前 route 提取重点覆盖 route function 的顺序式注册。
@@ -1326,7 +1345,7 @@ post-change diff -> project-local semantic propagation -> affected BFF endpoints
 
 ### 17.3 新输出字段
 
-必须同步 Go struct、schema、contract 文档、测试和 golden。`go-impact/v1alpha1` 仍处于 alpha，但消费者需要确定性排序和明确迁移说明。
+必须同步 Go struct、schema、contract 文档、测试和 golden。消费者需要确定性排序和明确迁移说明。
 
 ### 17.4 保持模块边界
 

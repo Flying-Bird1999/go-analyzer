@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
@@ -117,39 +119,43 @@ func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
 	t.Fatalf("replaced gin module not found: %#v", doc.Modules)
 }
 
-func TestRunFactsUsesConfigFile(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "configurable-rules"))
+func TestRunImpactIgnoresRetiredOutputConfig(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "type-impact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffPath, err := filepath.Abs(filepath.Join("..", "..", "testdata", "diffs", "type-impact.diff"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(t.TempDir(), "go-analyzer.json")
 	configBody := []byte(`{
-  "route": {
-    "httpMethods": ["SEARCH"],
-    "handlerWrappers": ["CustomController"],
-    "routeGroupWrappers": [{"contains": "Shield"}]
-  },
-  "annotation": {
-    "methods": ["Search"]
+  "analysis": {
+    "includeDiff": false,
+    "includeRawEvidence": false
   }
 }`)
 	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := RunFacts(Options{ProjectPath: root, ConfigPath: configPath, Format: "json"})
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, ConfigPath: configPath, Format: "json"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc output.Document
+	var doc output.ImpactDocument
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Annotations) != 1 || doc.Annotations[0].Method != "SEARCH" {
-		t.Fatalf("annotations = %#v", doc.Annotations)
+	if len(doc.FileSources) != 1 {
+		t.Fatalf("fileSources = %#v", doc.FileSources)
 	}
-	if len(doc.Routes) != 1 || doc.Routes[0].Method != "SEARCH" {
-		t.Fatalf("routes = %#v", doc.Routes)
+	if doc.FileSources[0].Diff == "" {
+		t.Fatal("diff should remain after retired includeDiff=false")
+	}
+	payload := string(got)
+	if strings.Contains(payload, `"raw"`) || strings.Contains(payload, `"span"`) {
+		t.Fatalf("compact impact should omit raw/span evidence: %s", payload)
 	}
 }
 
@@ -276,11 +282,19 @@ func InitRouter(g *RouterGroup) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.ModuleChanges) != 1 || doc.ModuleChanges[0].Path != "gopkg.inshopline.com/sc1/commons/utils" {
-		t.Fatalf("module changes = %#v", doc.ModuleChanges)
+	if len(doc.ModuleSources) != 1 || doc.ModuleSources[0].ModulePath != "gopkg.inshopline.com/sc1/commons/utils" {
+		t.Fatalf("module sources = %#v", doc.ModuleSources)
 	}
-	if len(doc.ModuleUsages) == 0 {
-		t.Fatalf("module usages = %#v", doc.ModuleUsages)
+	if len(doc.ModuleSources[0].SourceFiles) == 0 {
+		t.Fatalf("module source files = %#v", doc.ModuleSources[0].SourceFiles)
+	}
+	for _, source := range doc.FileSources {
+		if source.SourceFile == "go.mod" {
+			t.Fatalf("resolved go.mod change leaked into fileSources: %#v", doc.FileSources)
+		}
+	}
+	if bytes.Contains(got, []byte(`"module_changes"`)) || bytes.Contains(got, []byte(`"module_usages"`)) {
+		t.Fatalf("retired module fact arrays remain in impact output: %s", got)
 	}
 	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
 }
@@ -309,12 +323,12 @@ func TestRunImpactReportsUnresolvedGoModDiff(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, diagnostic := range doc.Meta.Diagnostics {
+	for _, diagnostic := range doc.Diagnostics {
 		if diagnostic.Code == "module_diff_unresolved" {
 			return
 		}
 	}
-	t.Fatalf("module_diff_unresolved diagnostic not found: %#v", doc.Meta.Diagnostics)
+	t.Fatalf("module_diff_unresolved diagnostic not found: %#v", doc.Diagnostics)
 }
 
 func TestRunImpactMapsMiddlewareMethodDiffToEndpoint(t *testing.T) {
@@ -428,7 +442,7 @@ func Init(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "POST", "/public/orders")
 }
 
-func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {
+func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -461,12 +475,11 @@ func TestRunImpactIncludesRecoverableProjectLoadDiagnostics(t *testing.T) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	for _, diagnostic := range doc.Meta.Diagnostics {
-		if diagnostic.Code == "package_load_failed" && diagnostic.Span.File == "broken.go" {
-			return
+	for _, diagnostic := range doc.Diagnostics {
+		if diagnostic.Code == "package_load_failed" && diagnostic.File == "broken.go" {
+			t.Fatalf("unrelated package load diagnostic leaked into impact output: %#v", doc.Diagnostics)
 		}
 	}
-	t.Fatalf("package load diagnostic not found: %#v", doc.Meta.Diagnostics)
 }
 
 func writeTestFile(t *testing.T, root, name, body string) {
@@ -486,22 +499,22 @@ func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootI
 		if source.SourceFile != sourceFile {
 			continue
 		}
-		if _, ok := source.Symbols[rootID]; ok {
-			return
+		for _, root := range source.Roots {
+			if root.ID == rootID {
+				return
+			}
 		}
-		t.Fatalf("root %q not found in %q: %#v", rootID, sourceFile, source.Symbols)
+		t.Fatalf("root %q not found in %q: %#v", rootID, sourceFile, source.Roots)
 	}
 	t.Fatalf("source file %q not found: %#v", sourceFile, doc.FileSources)
 }
 
 func assertEndpointSummary(t *testing.T, doc output.ImpactDocument, method, path string) {
 	t.Helper()
-	for _, source := range doc.FileSources {
-		for _, endpoint := range source.ImpactedEndpoints {
-			if endpoint.Method == method && endpoint.Path == path {
-				return
-			}
+	for _, endpoint := range doc.Summary.ImpactedEndpoints {
+		if endpoint.Method == method && endpoint.Path == path {
+			return
 		}
 	}
-	t.Fatalf("endpoint %s %s not found: %#v", method, path, doc.FileSources)
+	t.Fatalf("endpoint %s %s not found: %#v", method, path, doc.Summary)
 }

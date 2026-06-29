@@ -135,6 +135,37 @@ func TestAnalyzeHonorsMaxDepth(t *testing.T) {
 	assertTreeDiagnostic(t, result, "propagation_depth_truncated")
 }
 
+func TestAnalyzeFiltersDiagnosticsOutsideCurrentImpactTree(t *testing.T) {
+	store := referenceImpactStore()
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
+		File:     "service/common.go",
+	})
+	store.Diagnostics = append(store.Diagnostics,
+		facts.DiagnosticFact{
+			ID:             "diagnostic:related",
+			Code:           "symbol_reference_unresolved",
+			RelatedFactIDs: []string{string(controllerSymbol)},
+		},
+		facts.DiagnosticFact{
+			ID:             "diagnostic:unrelated",
+			Code:           "symbol_reference_unresolved",
+			RelatedFactIDs: []string{"func:example.com/project/unrelated::Load"},
+			Span:           facts.SourceSpan{File: "unrelated/load.go"},
+		},
+	)
+
+	result := AnalyzeTrees(store, TreeOptions{})
+	assertTreeDiagnostic(t, result, "symbol_reference_unresolved")
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.ID == "diagnostic:unrelated" {
+			t.Fatalf("unrelated diagnostic leaked into impact result: %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	middlewareSymbol := facts.SymbolID("method:example.com/project/auth:Auth:Middleware")

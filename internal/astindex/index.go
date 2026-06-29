@@ -11,10 +11,11 @@ import (
 )
 
 type Index struct {
-	Project          *project.Project
-	Symbols          map[facts.SymbolID]facts.SymbolFact
-	VarReceiverTypes map[string]ValueType
-	StructFieldTypes map[facts.SymbolID]map[string]ValueType
+	Project             *project.Project
+	Symbols             map[facts.SymbolID]facts.SymbolFact
+	VarReceiverTypes    map[string]ValueType
+	CallableReturnTypes map[facts.SymbolID]ValueType
+	StructFieldTypes    map[facts.SymbolID]map[string]ValueType
 }
 
 type ValueType struct {
@@ -30,10 +31,11 @@ type ResolvedSymbol struct {
 
 func Build(p *project.Project) (*Index, error) {
 	idx := &Index{
-		Project:          p,
-		Symbols:          map[facts.SymbolID]facts.SymbolFact{},
-		VarReceiverTypes: map[string]ValueType{},
-		StructFieldTypes: map[facts.SymbolID]map[string]ValueType{},
+		Project:             p,
+		Symbols:             map[facts.SymbolID]facts.SymbolFact{},
+		VarReceiverTypes:    map[string]ValueType{},
+		CallableReturnTypes: map[facts.SymbolID]ValueType{},
+		StructFieldTypes:    map[facts.SymbolID]map[string]ValueType{},
 	}
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
@@ -103,11 +105,23 @@ func (idx *Index) indexFuncDecl(p *project.Project, pkg *project.Package, file *
 	if decl.Recv == nil || len(decl.Recv.List) == 0 {
 		id := FunctionSymbolID(pkg.Path, decl.Name.Name)
 		idx.Symbols[id] = symbolFact(p, file, id, "func", pkg.Path, "", decl.Name.Name, decl.Pos(), decl.End())
+		idx.indexCallableReturnType(file, id, decl)
 		return
 	}
 	receiver := receiverTypeName(decl.Recv.List[0].Type)
 	id := MethodSymbolID(pkg.Path, receiver, decl.Name.Name)
 	idx.Symbols[id] = symbolFact(p, file, id, "method", pkg.Path, receiver, decl.Name.Name, decl.Pos(), decl.End())
+	idx.indexCallableReturnType(file, id, decl)
+}
+
+func (idx *Index) indexCallableReturnType(file *project.File, id facts.SymbolID, decl *ast.FuncDecl) {
+	if decl.Type.Results == nil || len(decl.Type.Results.List) == 0 {
+		return
+	}
+	valueType := valueTypeFromTypeExpr(file, decl.Type.Results.List[0].Type)
+	if valueType.TypeName != "" {
+		idx.CallableReturnTypes[id] = valueType
+	}
 }
 
 func valueKind(tok token.Token) string {
@@ -226,18 +240,26 @@ func (idx *Index) ResolveSelectorMethodWithConfidence(file *project.File, parts 
 	if !ok || valueType.TypeName == "" || len(selectors) == 0 {
 		return ResolvedSymbol{}, false
 	}
+	return idx.ResolveValueTypeMethod(valueType, selectors)
+}
+
+func (idx *Index) ResolveValueTypeMethod(valueType ValueType, selectors []string) (ResolvedSymbol, bool) {
+	if valueType.TypeName == "" || len(selectors) == 0 {
+		return ResolvedSymbol{}, false
+	}
 	confidence := valueType.Confidence
 	for _, fieldName := range selectors[:len(selectors)-1] {
 		typeID := TypeSymbolID(valueType.PackagePath, valueType.TypeName)
 		fields := idx.StructFieldTypes[typeID]
-		valueType, ok = fields[fieldName]
+		nextType, ok := fields[fieldName]
 		if !ok {
 			return ResolvedSymbol{}, false
 		}
+		valueType = nextType
 		confidence = combineConfidence(confidence, valueType.Confidence)
 	}
 	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, selectors[len(selectors)-1])
-	_, ok = idx.Symbols[methodID]
+	_, ok := idx.Symbols[methodID]
 	return ResolvedSymbol{ID: methodID, Confidence: confidence}, ok
 }
 
