@@ -1257,7 +1257,7 @@ PY
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 8 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 9 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1268,6 +1268,7 @@ PY
 | `real-admin-app-live-statistics` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
 | `real-client-common-checkin` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `POST /api/bff-web/common/checkIn` + `github.com/shopspring/decimal` upgraded |
+| `real-client-multi-module-and-multi-source` | 3 个业务文件 root + `decimal` / `uuid` / `otel/trace` 3 个模块升级，共 22 个 endpoint |
 | `real-client-live-view` | `GET /api/bff-web/live/view/:salesId/redirect` |
 
 ## 16. 当前能力边界

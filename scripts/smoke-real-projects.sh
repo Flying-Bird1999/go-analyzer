@@ -157,37 +157,44 @@ items = sys.argv[3:]
 if len(items) == 0 or len(items) % 3 != 0:
     raise SystemExit("expected replacement triples: rel_file old new")
 
-replacements = []
+files = {}
 for i in range(0, len(items), 3):
     rel_file, old, new = items[i], items[i + 1], items[i + 2]
-    path = project / rel_file
-    original = path.read_text(encoding="utf-8")
-    if old not in original:
+    if rel_file not in files:
+        path = project / rel_file
+        original = path.read_text(encoding="utf-8")
+        files[rel_file] = {
+            "path": path,
+            "original": original,
+            "updated": original,
+        }
+    item = files[rel_file]
+    if old not in item["updated"]:
         raise SystemExit(f"text not found in {rel_file}: {old!r}")
-    replacements.append((rel_file, path, original, old, new))
+    item["updated"] = item["updated"].replace(old, new, 1)
 
 def git(*args, check=True, stdout=None):
     return subprocess.run(["git", "-C", str(project), *args], check=check, stdout=stdout)
 
-for rel_file, _, _, _, _ in replacements:
+for rel_file in files:
     if git("diff", "--quiet", "--", rel_file, check=False).returncode != 0:
         raise SystemExit(f"{rel_file} already has unstaged changes")
     if git("diff", "--cached", "--quiet", "--", rel_file, check=False).returncode != 0:
         raise SystemExit(f"{rel_file} already has staged changes")
 
 try:
-    for _, path, original, old, new in replacements:
-        path.write_text(original.replace(old, new, 1), encoding="utf-8")
-    rel_files = [item[0] for item in replacements]
+    for item in files.values():
+        item["path"].write_text(item["updated"], encoding="utf-8")
+    rel_files = list(files)
     with out.open("wb") as f:
         git("diff", "--", *rel_files, stdout=f)
 finally:
-    for _, path, original, _, _ in replacements:
-        path.write_text(original, encoding="utf-8")
+    for item in files.values():
+        item["path"].write_text(item["original"], encoding="utf-8")
 
 if not out.read_text(encoding="utf-8").strip():
     raise SystemExit("generated empty diff")
-for rel_file, _, _, _, _ in replacements:
+for rel_file in files:
     if git("diff", "--quiet", "--", rel_file, check=False).returncode != 0:
         raise SystemExit(f"{rel_file} was not restored")
 PY
@@ -321,6 +328,116 @@ if summary.get("impactedEndpointCount") != 11:
     raise SystemExit(f"unexpected combined endpoint count: {summary}")
 if data.get("diagnostics"):
     raise SystemExit(f"unrelated diagnostics leaked into impact output: {data['diagnostics']}")
+PY
+}
+
+validate_multi_module_case() {
+  local out="${OUT_DIR}/real-client-multi-module-and-multi-source.impact.json"
+
+  python3 - "$out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+expected_file_roots = {
+    "controller/common/common.go": "func:sc1-client-bff-service/controller/common::CheckIn",
+    "model/form_product.go": "func:sc1-client-bff-service/model::ConvertPrice",
+    "service/merchant.go": "func:sc1-client-bff-service/service::GetMerchantInfo",
+}
+file_sources = {
+    source.get("sourceFile"): source
+    for source in (data.get("fileSources") or [])
+}
+if set(file_sources) != set(expected_file_roots):
+    raise SystemExit(f"unexpected multi-source files: {file_sources.keys()}")
+for source_file, root_id in expected_file_roots.items():
+    source = file_sources[source_file]
+    if not source.get("diff"):
+        raise SystemExit(f"diff missing from {source_file}")
+    if root_id not in (source.get("symbols") or {}):
+        raise SystemExit(f"root {root_id} missing from {source_file}: {source.get('symbols')}")
+
+expected_modules = {
+    "github.com/shopspring/decimal": (
+        "util/transform/transform.go",
+        "func:sc1-client-bff-service/util/transform::ParseStringToFloat64",
+    ),
+    "github.com/google/uuid": (
+        "util/trace/trace.go",
+        "func:sc1-client-bff-service/util/trace::GetTraceID",
+    ),
+    "go.opentelemetry.io/otel/trace": (
+        "util/trace/trace.go",
+        "func:sc1-client-bff-service/util/trace::GetTraceID",
+    ),
+}
+module_sources = {
+    source.get("modulePath"): source
+    for source in (data.get("moduleSources") or [])
+}
+if set(module_sources) != set(expected_modules):
+    raise SystemExit(f"unexpected module sources: {module_sources.keys()}")
+
+def collect_endpoint_nodes(node, out):
+    if node.get("kind") == "endpoint":
+        out.add((node.get("method"), node.get("path")))
+    for child in node.get("children") or []:
+        collect_endpoint_nodes(child, out)
+
+all_source_endpoints = set()
+for source in file_sources.values():
+    all_source_endpoints.update(
+        (item.get("method"), item.get("path"))
+        for item in (source.get("impactedEndpoints") or [])
+    )
+
+for module_path, (source_file, root_id) in expected_modules.items():
+    module = module_sources[module_path]
+    if module.get("changeType") != "upgraded":
+        raise SystemExit(f"module was not upgraded: {module}")
+    sources = module.get("sourceFiles") or []
+    if len(sources) != 1 or sources[0].get("sourceFile") != source_file:
+        raise SystemExit(f"unexpected usage files for {module_path}: {sources}")
+    root = (sources[0].get("symbols") or {}).get(root_id)
+    if not root:
+        raise SystemExit(f"root {root_id} missing for {module_path}: {sources[0]}")
+    tree_endpoints = set()
+    collect_endpoint_nodes(root, tree_endpoints)
+    summary_endpoints = {
+        (item.get("method"), item.get("path"))
+        for item in (sources[0].get("impactedEndpoints") or [])
+    }
+    if tree_endpoints != summary_endpoints:
+        raise SystemExit(
+            f"tree/summary endpoint mismatch for {module_path}: "
+            f"tree={tree_endpoints}, summary={summary_endpoints}"
+        )
+    if not tree_endpoints:
+        raise SystemExit(f"module {module_path} did not propagate to endpoints")
+    all_source_endpoints.update(summary_endpoints)
+
+summary = data.get("summary") or {}
+global_endpoints = {
+    (item.get("method"), item.get("path"))
+    for item in (summary.get("impactedEndpoints") or [])
+}
+if global_endpoints != all_source_endpoints:
+    raise SystemExit(
+        f"global endpoint union mismatch: missing={all_source_endpoints - global_endpoints}, "
+        f"unexpected={global_endpoints - all_source_endpoints}"
+    )
+if summary.get("impactedEndpointCount") != len(global_endpoints):
+    raise SystemExit(f"invalid endpoint count: {summary}")
+
+print(
+    "multi_module_case files={files} modules={modules} endpoints={endpoints}".format(
+        files=len(file_sources),
+        modules=len(module_sources),
+        endpoints=len(global_endpoints),
+    )
+)
 PY
 }
 
@@ -482,6 +599,30 @@ write_real_multi_file_diff \
   "			ReleaseTime:  time.Now().UTC().UnixMilli(),"
 run_real_impact_case "real-client-gomod-and-checkin" "${SC1_BFF}" "${OUT_DIR}/real-client-gomod-and-checkin.diff" "POST" "/api/bff-web/common/checkIn" "github.com/shopspring/decimal" "upgraded"
 validate_decimal_module_case
+
+write_real_multi_file_diff \
+  "${SC1_BFF}" \
+  "${OUT_DIR}/real-client-multi-module-and-multi-source.diff" \
+  "go.mod" \
+  "	github.com/shopspring/decimal v1.3.1" \
+  "	github.com/shopspring/decimal v1.4.0" \
+  "go.mod" \
+  "	github.com/google/uuid v1.6.0" \
+  "	github.com/google/uuid v1.7.0" \
+  "go.mod" \
+  "	go.opentelemetry.io/otel/trace v1.36.0" \
+  "	go.opentelemetry.io/otel/trace v1.37.0" \
+  "controller/common/common.go" \
+  "			ReleaseTime:  time.Now().UnixMilli()," \
+  "			ReleaseTime:  time.Now().UTC().UnixMilli()," \
+  "model/form_product.go" \
+  "	if price == nil {" \
+  "	if price == nil { // smoke multi-source" \
+  "service/merchant.go" \
+  "	merchantInfo := redis.GetOaMerchantInfo(c, merchantId)" \
+  "	merchantInfo := redis.GetOaMerchantInfo(c, merchantId) // smoke multi-source"
+run_real_impact_case "real-client-multi-module-and-multi-source" "${SC1_BFF}" "${OUT_DIR}/real-client-multi-module-and-multi-source.diff" "POST" "/api/bff-web/common/checkIn" "github.com/google/uuid" "upgraded"
+validate_multi_module_case
 
 write_real_file_diff \
   "${SC1_BFF}" \

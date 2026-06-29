@@ -92,7 +92,7 @@ diagnostics.
 
 ## Real BFF Impact Cases
 
-The smoke script validates eight real-file diff cases across the two target BFF
+The smoke script validates nine real-file diff cases across the two target BFF
 projects:
 
 | Case | Project file | Expected endpoint |
@@ -104,6 +104,7 @@ projects:
 | `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
 | `real-client-common-checkin` | `sl-sc1-bff-service/controller/common/common.go` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `sl-sc1-bff-service/go.mod` + `sl-sc1-bff-service/controller/common/common.go` | 1 `fileSources` endpoint plus 10 Nexus endpoints from upgraded `github.com/shopspring/decimal` |
+| `real-client-multi-module-and-multi-source` | `go.mod` + `controller/common/common.go` + `model/form_product.go` + `service/merchant.go` | 3 file roots, 3 upgraded module sources and 22 deduplicated endpoints |
 | `real-client-live-view` | `sl-sc1-bff-service/controller/live/view/redirect.go` | `GET /api/bff-web/live/view/:salesId/redirect` |
 
 The seven single-file cases complete with one impacted endpoint. The combined
@@ -111,6 +112,11 @@ go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
 `moduleSources`. The module source tree explicitly contains
 `ParseStringToFloat64 -> ConvertPrice -> endpoint`.
+
+The multi-module case generates six real diff hunks in four files. It verifies
+independent module trees for `github.com/shopspring/decimal`,
+`github.com/google/uuid`, and `go.opentelemetry.io/otel/trace`, plus ordinary
+file roots for `CheckIn`, `ConvertPrice`, and `GetMerchantInfo`.
 
 ## Known Unsupported Patterns
 
