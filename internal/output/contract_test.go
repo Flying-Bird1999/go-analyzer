@@ -12,7 +12,7 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 		wantProp string
 	}{
 		{name: "facts", wantProp: "project"},
-		{name: "impact", wantProp: "nodes"},
+		{name: "impact", wantProp: "fileSources"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 		name   string
 		absent []string
 	}{
-		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_diagnostic", "impact_edge", "impact_node", "impact_root"}},
+		{name: "facts", absent: []string{"endpoint_summary", "file_source_impact", "impact_diagnostic", "impact_node"}},
 		{name: "impact", absent: []string{"annotation", "change", "link", "middleware", "module", "project", "reference", "route", "route_group", "symbol", "wrapper"}},
 	}
 	for _, tc := range cases {
@@ -94,7 +94,7 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 	}
 }
 
-func TestSchemasConstrainConfidenceAndExposeImpactSummary(t *testing.T) {
+func TestImpactSchemaExposesRecursiveReviewableNodes(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
 		t.Fatal(err)
@@ -108,20 +108,24 @@ func TestSchemasConstrainConfidenceAndExposeImpactSummary(t *testing.T) {
 		t.Fatalf("summary property missing: %#v", properties)
 	}
 	defs := doc["$defs"].(map[string]any)
-	for _, definition := range []string{"impact_root", "impact_edge"} {
-		item := defs[definition].(map[string]any)
-		itemProps := item["properties"].(map[string]any)
-		confidence := itemProps["confidence"].(map[string]any)
-		enum, ok := confidence["enum"].([]any)
-		if !ok || len(enum) != 2 || enum[0] != "medium" || enum[1] != "low" {
-			t.Fatalf("%s confidence enum missing: %#v", definition, confidence)
-		}
+	if _, ok := properties["nodes"]; ok {
+		t.Fatalf("raw report should not expose top-level nodes: %#v", properties)
 	}
 	nodeProps := defs["impact_node"].(map[string]any)["properties"].(map[string]any)
-	for _, forbidden := range []string{"id", "span", "raw", "package", "level", "confidence", "cycle"} {
-		if _, ok := nodeProps[forbidden]; ok {
-			t.Fatalf("compact node should not expose %q: %#v", forbidden, nodeProps)
+	for _, required := range []string{"id", "kind", "file", "relation", "raw", "package", "level", "confidence", "cycle", "children", "method", "path"} {
+		if _, ok := nodeProps[required]; !ok {
+			t.Fatalf("reviewable node should expose %q: %#v", required, nodeProps)
 		}
+	}
+	children := nodeProps["children"].(map[string]any)
+	items := children["items"].(map[string]any)
+	if items["$ref"] != "#/$defs/impact_node" {
+		t.Fatalf("impact children should recurse: %#v", children)
+	}
+	fileProps := defs["file_source_impact"].(map[string]any)["properties"].(map[string]any)
+	symbols := fileProps["symbols"].(map[string]any)
+	if symbols["additionalProperties"].(map[string]any)["$ref"] != "#/$defs/impact_node" {
+		t.Fatalf("file source symbols should contain impact trees: %#v", symbols)
 	}
 }
 
@@ -179,7 +183,7 @@ func TestImpactSchemaDoesNotExposeSpanOrDebugEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{`"span"`, `"raw"`, `"package"`, `"level"`, `"source_span"`} {
+	for _, forbidden := range []string{`"span"`, `"source_span"`} {
 		if bytes.Contains(got, []byte(forbidden)) {
 			t.Fatalf("impact schema should not expose %s: %s", forbidden, got)
 		}

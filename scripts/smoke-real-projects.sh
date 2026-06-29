@@ -20,7 +20,7 @@ resolve_sibling() {
   return 1
 }
 
-validate_compact_impact() {
+validate_raw_impact() {
   local out="$1"
 
   python3 - "$out" <<'PY'
@@ -30,22 +30,30 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     data = json.load(f)
 
-for required in ("summary", "fileSources", "nodes"):
+for required in ("summary", "fileSources"):
     if required not in data:
-        raise SystemExit(f"missing compact impact field {required}: {sys.argv[1]}")
+        raise SystemExit(f"missing raw impact field {required}: {sys.argv[1]}")
+if "nodes" in data:
+    raise SystemExit("raw impact report must keep trees in sources, not top-level nodes")
 
 for source in data.get("fileSources") or []:
     if not source.get("diff"):
         raise SystemExit(f"ordinary source diff was not retained: {source}")
+    if not isinstance(source.get("symbols"), dict):
+        raise SystemExit(f"ordinary source symbols missing: {source}")
+for module in data.get("moduleSources") or []:
+    for source in module.get("sourceFiles") or []:
+        if not isinstance(source.get("symbols"), dict):
+            raise SystemExit(f"module source symbols missing: {source}")
 
-forbidden = {"meta", "schemaVersion", "projectRoot", "span", "raw", "package", "level", "cycle"}
+forbidden = {"meta", "schemaVersion", "projectRoot", "span"}
 def walk(value):
     if isinstance(value, dict):
         leaked = forbidden.intersection(value)
         if leaked:
-            raise SystemExit(f"debug fields leaked into compact impact output: {sorted(leaked)}")
-        if value.get("confidence") == "high":
-            raise SystemExit("high confidence should be omitted from compact impact output")
+            raise SystemExit(f"retired fields leaked into raw impact output: {sorted(leaked)}")
+        if "kind" in value and ("id" not in value or not isinstance(value.get("children"), list)):
+            raise SystemExit(f"invalid recursive impact node: {value}")
         for item in value.values():
             walk(item)
     elif isinstance(value, list):
@@ -53,8 +61,6 @@ def walk(value):
             walk(item)
 
 walk(data)
-if any(node.get("kind") == "endpoint" for node in (data.get("nodes") or {}).values()):
-    raise SystemExit("endpoint nodes should not be duplicated in compact graph")
 PY
 }
 
@@ -200,7 +206,7 @@ run_real_impact_case() {
   echo "analyzing ${name} real impact case"
   (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
   python3 -m json.tool "${out}" > /dev/null
-  validate_compact_impact "${out}"
+  validate_raw_impact "${out}"
   python3 - "$out" "$method" "$endpoint_path" "$name" "$module_path" "$module_kind" <<'PY'
 import json
 import sys
@@ -274,6 +280,32 @@ if decimal.get("changeType") != "upgraded":
 source_files = decimal.get("sourceFiles") or []
 if len(source_files) != 1 or source_files[0].get("sourceFile") != "util/transform/transform.go":
     raise SystemExit(f"unexpected decimal sourceFiles: {source_files}")
+symbols = source_files[0].get("symbols") or {}
+parse_id = "func:sc1-client-bff-service/util/transform::ParseStringToFloat64"
+convert_id = "func:sc1-client-bff-service/model::ConvertPrice"
+parse_node = symbols.get(parse_id)
+if not parse_node:
+    raise SystemExit(f"ParseStringToFloat64 root missing from module source: {symbols.keys()}")
+convert_nodes = [
+    child for child in (parse_node.get("children") or [])
+    if child.get("id") == convert_id
+]
+if len(convert_nodes) != 1:
+    raise SystemExit(f"ParseStringToFloat64 -> ConvertPrice chain missing: {parse_node}")
+
+def collect_endpoint_nodes(node, out):
+    if node.get("kind") == "endpoint":
+        out.add((node.get("method"), node.get("path")))
+    for child in node.get("children") or []:
+        collect_endpoint_nodes(child, out)
+
+tree_endpoints = set()
+collect_endpoint_nodes(parse_node, tree_endpoints)
+if tree_endpoints != expected_module_endpoints:
+    raise SystemExit(
+        f"decimal tree endpoint mismatch: missing={expected_module_endpoints - tree_endpoints}, "
+        f"unexpected={tree_endpoints - expected_module_endpoints}"
+    )
 module_endpoints = {
     (item.get("method"), item.get("path"))
     for item in (source_files[0].get("impactedEndpoints") or [])
@@ -301,7 +333,7 @@ run_impact_fixture() {
   echo "analyzing type-impact fixture"
   (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
   python3 -m json.tool "${out}" > /dev/null
-  validate_compact_impact "${out}"
+  validate_raw_impact "${out}"
   python3 - "$out" "$((SECONDS - started))" <<'PY'
 import json
 import sys
@@ -310,7 +342,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as f:
     data = json.load(f)
 
 sources = data.get("fileSources") or []
-roots = sum(len(source.get("roots") or []) for source in sources)
+roots = sum(len(source.get("symbols") or {}) for source in sources)
 endpoints = [
     endpoint
     for source in sources
@@ -319,7 +351,14 @@ endpoints = [
 if not any(endpoint.get("method") == "POST" and endpoint.get("path") == "/orders" for endpoint in endpoints):
     raise SystemExit("POST /orders not found")
 
-nodes = len(data.get("nodes") or {})
+def count_node(node):
+    return 1 + sum(count_node(child) for child in (node.get("children") or []))
+
+nodes = sum(
+    count_node(node)
+    for source in sources
+    for node in (source.get("symbols") or {}).values()
+)
 unresolved = sum(
     diagnostic.get("code") in {"symbol_reference_unresolved", "type_reference_unresolved"}
     for diagnostic in (data.get("diagnostics") or [])
@@ -349,7 +388,7 @@ run_impact_case() {
   echo "analyzing ${name} impact fixture"
   (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
   python3 -m json.tool "${out}" > /dev/null
-  validate_compact_impact "${out}"
+  validate_raw_impact "${out}"
   python3 - "$out" "$method" "$endpoint_path" "$name" <<'PY'
 import json
 import sys

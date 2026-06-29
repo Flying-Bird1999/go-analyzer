@@ -22,12 +22,11 @@ go-analyzer facts --project /absolute/path/to/project --format json
 
 It retains complete project metadata, symbols, annotations, routes,
 middleware, module facts, references, links, source spans, raw evidence and
-diagnostics. It is intended for analyzer development, not as the primary MR
-report.
+diagnostics.
 
 ## Impact Output
 
-`impact` is the compact MR impact contract:
+`impact` is the original human-reviewable MR impact report:
 
 ```bash
 go-analyzer impact \
@@ -47,21 +46,15 @@ Top-level shape:
     ]
   },
   "fileSources": [],
-  "moduleSources": [],
-  "nodes": {}
+  "moduleSources": []
 }
 ```
 
 - `summary` is the globally deduplicated endpoint result.
-- `fileSources` contains ordinary source-file changes.
-- `moduleSources` contains semantic go.mod changes and their local usages.
-- `nodes` is one document-wide propagation DAG keyed by stable node ID.
+- `fileSources` contains ordinary source-file changes and their complete trees.
+- `moduleSources` contains semantic go.mod changes and their local usage trees.
 - `diagnostics` is optional and contains only recoverable issues relevant to
-  the current diff or reachable graph.
-
-The impact contract deliberately omits project root, source spans, raw
-expressions, package names, graph levels and endpoint leaf nodes. Complete
-evidence remains available from `facts`.
+  the current diff or propagation trees.
 
 ### `fileSources`
 
@@ -72,21 +65,26 @@ endpoint:
 {
   "sourceFile": "model/order.go",
   "diff": "diff --git ...",
-  "roots": [
-    {"id": "type:example.com/app/model::Order"}
-  ],
-  "impactedEndpoints": [
-    {"method": "POST", "path": "/orders"}
-  ]
+  "symbols": {
+    "type:example.com/app/model::Order": {
+      "id": "type:example.com/app/model::Order",
+      "kind": "type",
+      "name": "Order",
+      "file": "model/order.go",
+      "confidence": "high",
+      "level": 0,
+      "children": []
+    }
+  },
+  "impactedEndpoints": []
 }
 ```
 
 - `sourceFile` is project-relative.
-- `diff` is the original per-file unified diff and is always retained for
-  ordinary diff sources.
-- `roots` references entries in the top-level `nodes` map.
-- file fallback uses the stable `__non_symbol__` root ID.
-- `impactedEndpoints` is the deduplicated endpoint result for this file.
+- `diff` is the original per-file unified diff and is always retained.
+- `symbols` is keyed by stable changed-root ID and contains recursive trees.
+- file fallback uses the reserved `__non_symbol__` key.
+- `impactedEndpoints` is the deduplicated endpoint result for this source.
 
 ### `moduleSources`
 
@@ -102,9 +100,13 @@ Resolved dependency changes are separate from ordinary source changes:
   "sourceFiles": [
     {
       "sourceFile": "util/transform/transform.go",
-      "roots": [
-        {"id": "func:example.com/app/util/transform::ParseStringToFloat64"}
-      ],
+      "symbols": {
+        "func:example.com/app/util/transform::ParseStringToFloat64": {
+          "id": "func:example.com/app/util/transform::ParseStringToFloat64",
+          "kind": "func",
+          "children": []
+        }
+      },
       "impactedEndpoints": []
     }
   ]
@@ -114,23 +116,28 @@ Resolved dependency changes are separate from ordinary source changes:
 - version and optional replacement fields describe the semantic go.mod change.
 - `basis` is `matched_import_usage`, `matched_file_usage`, or
   `module_unreferenced`.
-- `sourceFiles` contains local usage roots and endpoint summaries. It does not
-  duplicate the go.mod diff.
+- `sourceFiles` uses the same recursive `symbols` and endpoint summary shape as
+  `fileSources`.
+- module usage files do not duplicate the go.mod diff.
 - a resolved go.mod change is not repeated as a file fallback source.
 
-### `nodes`
+### Recursive Impact Nodes
 
-Each graph entry may contain:
+Every root and descendant may contain:
 
-- `kind`, optional `name`, and project-relative `file`.
-- optional route/annotation `method` and `path`.
-- optional `stopBoundary`.
-- `children`, where each edge contains `to`, optional `relation`, and optional
-  non-high `confidence`.
+- `id`, `kind`, optional `name`;
+- project-relative `file` and optional Go `package`;
+- incoming `relation` and source `raw`;
+- `confidence` and `level`;
+- optional `cycle` and `stopBoundary`;
+- recursive `children`;
+- optional `method` and `path` for route, annotation and endpoint nodes.
 
-Endpoint leaves are represented by `summary` and per-source
-`impactedEndpoints`, so they are not duplicated in `nodes`. Cycles are ordinary
-DAG references instead of repeated recursive objects.
+Endpoint nodes remain in the tree so reviewers can follow a changed symbol to
+the final HTTP endpoint without joining another top-level graph.
+
+Source spans are intentionally absent from impact JSON. Full spans remain
+available from `facts`.
 
 ### Confidence
 
@@ -141,17 +148,13 @@ control propagation:
 - `medium`: targeted inference or fallback.
 - `low`: weak file-level fallback.
 
-High confidence is the default and is omitted from compact impact JSON.
-`medium` and `low` remain on affected roots or edges so consumers can highlight
-results that deserve review.
-
 ### Diagnostics
 
 Relevant recoverable failures appear in the optional top-level `diagnostics`
 array with `code`, `severity`, `message`, and optional project-relative `file`.
 Diagnostic spans, IDs and related fact IDs remain available only from `facts`.
 
-## Single-snapshot limitation
+## Single-snapshot Limitation
 
 Impact analysis indexes the post-change project. A deletion-only hunk is
 anchored to a surviving declaration when possible. Deleted route registrations

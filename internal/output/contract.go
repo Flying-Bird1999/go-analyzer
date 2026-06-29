@@ -33,19 +33,15 @@ var schemaDocuments = map[string]map[string]any{
 	"impact": {
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
 		"$id":                  "https://gopkg.inshopline.com/bff/go-analyzer/schemas/go-impact.v1alpha1.schema.json",
-		"title":                "go-analyzer compact impact output",
+		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"summary", "fileSources", "nodes"},
+		"required":             []string{"summary", "fileSources"},
 		"properties": map[string]any{
 			"summary":       ref("impact_summary"),
 			"diagnostics":   arrayOf(ref("impact_diagnostic")),
 			"fileSources":   arrayOf(ref("file_source_impact")),
 			"moduleSources": arrayOf(ref("module_source_impact")),
-			"nodes": map[string]any{
-				"type":                 "object",
-				"additionalProperties": ref("impact_node"),
-			},
 		},
 		"$defs": impactDefinitions(),
 	},
@@ -106,9 +102,7 @@ func impactDefinitions() map[string]any {
 		"endpoint_summary",
 		"file_source_impact",
 		"impact_diagnostic",
-		"impact_edge",
 		"impact_node",
-		"impact_root",
 		"impact_summary",
 		"module_replacement",
 		"module_source_impact",
@@ -165,37 +159,35 @@ func commonDefinitions() map[string]any {
 		"file_source_impact": object(map[string]any{
 			"sourceFile":        stringType(),
 			"diff":              stringType(),
-			"roots":             arrayOf(ref("impact_root")),
+			"symbols":           map[string]any{"type": "object", "additionalProperties": ref("impact_node")},
 			"impactedEndpoints": arrayOf(ref("endpoint_summary")),
-		}, "sourceFile", "roots", "impactedEndpoints"),
+		}, "sourceFile", "symbols", "impactedEndpoints"),
 		"impact_diagnostic": object(map[string]any{
 			"code":     stringType(),
 			"severity": stringType(),
 			"message":  stringType(),
 			"file":     stringType(),
 		}, "code", "severity", "message"),
-		"impact_edge": object(map[string]any{
-			"to":         stringType(),
-			"relation":   stringType(),
-			"confidence": compactConfidenceType(),
-		}, "to"),
 		"impact_summary": object(map[string]any{
 			"impactedEndpointCount": numberType(),
 			"impactedEndpoints":     arrayOf(ref("endpoint_summary")),
 		}, "impactedEndpointCount", "impactedEndpoints"),
 		"impact_node": object(map[string]any{
+			"id":           stringType(),
 			"kind":         stringType(),
 			"name":         stringType(),
 			"file":         stringType(),
+			"package":      stringType(),
+			"relation":     stringType(),
+			"raw":          stringType(),
+			"confidence":   confidenceType(),
+			"level":        numberType(),
+			"cycle":        boolType(),
 			"stopBoundary": boolType(),
-			"children":     arrayOf(ref("impact_edge")),
+			"children":     arrayOf(ref("impact_node")),
 			"method":       stringType(),
 			"path":         stringType(),
-		}, "kind"),
-		"impact_root": object(map[string]any{
-			"id":         stringType(),
-			"confidence": compactConfidenceType(),
-		}, "id"),
+		}, "id", "kind", "level", "children"),
 		"module_replacement": object(map[string]any{
 			"path":    stringType(),
 			"version": stringType(),
@@ -324,10 +316,6 @@ func stringType() map[string]any {
 
 func confidenceType() map[string]any {
 	return map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}}
-}
-
-func compactConfidenceType() map[string]any {
-	return map[string]any{"type": "string", "enum": []string{"medium", "low"}}
 }
 
 func numberType() map[string]any {

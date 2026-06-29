@@ -82,7 +82,7 @@ flowchart LR
     Head["变更后 Go BFF 源码"] --> Analyzer
     Config["可选 JSON 配置"] --> Analyzer
     Analyzer --> Facts["facts JSON<br/>提取与调试"]
-    Analyzer --> Impact["impact JSON<br/>紧凑影响图"]
+    Analyzer --> Impact["impact JSON<br/>原始传播树"]
     Impact --> Human["开发 / QA 人工 review"]
     Impact --> Agent["后续 skill / agent 消费"]
 ```
@@ -96,7 +96,7 @@ flowchart LR
 当前输出：
 
 - `facts`：完整事实库，用于 extractor/linker 调试。
-- `impact`：按 diff 来源组织的紧凑影响图和 endpoint 摘要。
+- `impact`：按 diff 来源组织的原始传播树和 endpoint 摘要。
 - `schema`：facts/impact 的 JSON Schema。
 
 当前不负责：
@@ -1003,8 +1003,7 @@ go run ./cmd/go-analyzer impact \
     "impactedEndpoints": []
   },
   "fileSources": [],
-  "moduleSources": [],
-  "nodes": {}
+  "moduleSources": []
 }
 ```
 
@@ -1012,7 +1011,7 @@ go run ./cmd/go-analyzer impact \
 
 - `sourceFile`。
 - 原始 `diff`。
-- `roots`：指向顶层 `nodes` 的 changed root 引用。
+- `symbols`：按 changed root ID 组织的递归传播树。
 - `impactedEndpoints`：去重 endpoint 摘要。
 
 顶层 `summary` 是全局去重后的轻量结果，面向默认消费场景：`impactedEndpointCount`
@@ -1023,11 +1022,11 @@ go run ./cmd/go-analyzer impact \
 - `modulePath`、`changeType`、`versionBefore`、`versionAfter`。
 - replace 变化时的可选 `replacementBefore` / `replacementAfter`。
 - `basis`：模块传播入口的依据。
-- `sourceFiles`：实际引用该 module 的本仓文件、root 引用和接口摘要，不重复 go.mod diff。
+- `sourceFiles`：实际引用该 module 的本仓文件、递归传播树和接口摘要，不重复 go.mod diff。
 
-顶层 `nodes` 是按稳定 ID 去重的共享传播 DAG；children 只保存目标 ID、relation 和必要的非 high confidence。endpoint 已在摘要中表达，不再重复为图节点。
+每个 source 的 `symbols` 都保留从 changed root 到 endpoint 的完整 `children` 递归链路，消费者不需要再与顶层图做 join。节点保留 relation、raw、confidence、level、cycle 和 stopBoundary 等 review 证据，但不输出 span。
 
-顶层 `diagnostics` 只保留与当前变更或传播图相关的可恢复问题，并去除 span、内部 ID 等调试字段；没有相关诊断时省略。完整项目 diagnostics 仍可通过 facts 输出检查。
+顶层 `diagnostics` 只保留与当前变更或传播树相关的可恢复问题，并去除 span、内部 ID 等调试字段；没有相关诊断时省略。完整项目 diagnostics 仍可通过 facts 输出检查。
 
 `confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
 
@@ -1287,7 +1286,7 @@ PY
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace diff 到本仓 usage 和 endpoint。
 - cycle/maxDepth/stopPropagation。
-- 去重后的可追踪 impact DAG 和 endpoint 摘要。
+- 按来源组织的可追踪 impact tree 和 endpoint 摘要。
 
 ### 16.2 有降级但不会静默丢失
 

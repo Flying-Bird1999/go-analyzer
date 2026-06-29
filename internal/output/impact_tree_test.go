@@ -29,8 +29,8 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 		t.Fatalf("summary = %#v", doc.Summary)
 	}
 	source := doc.FileSources[0]
-	if len(source.Roots) != 2 {
-		t.Fatalf("roots = %d", len(source.Roots))
+	if len(source.Symbols) != 2 {
+		t.Fatalf("symbols = %d", len(source.Symbols))
 	}
 	if !strings.Contains(source.Diff, "diff --git") {
 		t.Fatalf("diff missing: %q", source.Diff)
@@ -82,7 +82,7 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpointAndDedupesDiagnostics(t *test
 	if len(doc.FileSources) != 1 {
 		t.Fatalf("fileSources = %#v", doc.FileSources)
 	}
-	if len(doc.FileSources[0].Roots) != 1 || len(doc.FileSources[0].ImpactedEndpoints) != 0 {
+	if len(doc.FileSources[0].Symbols) != 1 || len(doc.FileSources[0].ImpactedEndpoints) != 0 {
 		t.Fatalf("source = %#v", doc.FileSources[0])
 	}
 	if len(doc.Diagnostics) != 1 || doc.Diagnostics[0].Code != "symbol_reference_unresolved" {
@@ -118,6 +118,27 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	)
 	moduleRoot.Change.Source = "go_mod_diff"
 	moduleRoot.Change.SourceFactID = "module_usage:decimal"
+	moduleRoot.Root.Children = []impact.Node{{
+		ID:         "func:example.com/project/model::ConvertPrice",
+		Kind:       "func",
+		Name:       "ConvertPrice",
+		File:       "model/price.go",
+		Relation:   "call",
+		Raw:        "transform.ParsePrice(value)",
+		Confidence: facts.ConfidenceHigh,
+		Level:      1,
+		Children: []impact.Node{{
+			ID:         "endpoint:GET:/products",
+			Kind:       "endpoint",
+			Name:       "GET /products",
+			Method:     "GET",
+			Path:       "/products",
+			Relation:   "resolved_endpoint",
+			Confidence: facts.ConfidenceHigh,
+			Level:      2,
+			Children:   []impact.Node{},
+		}},
+	}}
 	fallbackRoot := testRootImpact(
 		"change:module-fallback",
 		"func:example.com/project/util::FormatPrice",
@@ -176,8 +197,16 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	}
 	if len(moduleSource.SourceFiles) != 2 ||
 		moduleSource.SourceFiles[1].SourceFile != "util/price.go" ||
+		len(moduleSource.SourceFiles[1].Symbols) != 1 ||
 		len(moduleSource.SourceFiles[1].ImpactedEndpoints) != 1 {
 		t.Fatalf("module source files = %#v", moduleSource.SourceFiles)
+	}
+	moduleTree := moduleSource.SourceFiles[1].Symbols["func:example.com/project/util::ParsePrice"]
+	if len(moduleTree.Children) != 1 ||
+		moduleTree.Children[0].Name != "ConvertPrice" ||
+		len(moduleTree.Children[0].Children) != 1 ||
+		moduleTree.Children[0].Children[0].Kind != "endpoint" {
+		t.Fatalf("module propagation tree = %#v", moduleTree)
 	}
 	if doc.Summary.ImpactedEndpointCount != 2 {
 		t.Fatalf("summary = %#v", doc.Summary)
@@ -197,7 +226,6 @@ func TestRenderImpactTreeJSONOmitsEmptyDiagnostics(t *testing.T) {
 	doc := ImpactDocument{
 		Summary:     ImpactSummary{ImpactedEndpoints: []EndpointSummary{}},
 		FileSources: []FileSourceImpact{},
-		Nodes:       map[string]ImpactGraphNode{},
 	}
 
 	payload, err := RenderImpactTreeJSON(doc)
@@ -239,7 +267,7 @@ func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 	}
 }
 
-func TestBuildImpactDocumentDeduplicatesNodesAndReferencesRoots(t *testing.T) {
+func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	project := facts.ProjectFact{Root: "/tmp/project"}
 	shared := impact.Node{
 		ID:         "func:example.com/project/service::Shared",
@@ -254,12 +282,14 @@ func TestBuildImpactDocumentDeduplicatesNodesAndReferencesRoots(t *testing.T) {
 			Name:       "GET /shared",
 			Method:     "GET",
 			Path:       "/shared",
+			Relation:   "resolved_endpoint",
 			Confidence: facts.ConfidenceHigh,
+			Level:      2,
 			Children:   []impact.Node{},
 		}},
 	}
-	rootA := compactTestRoot("change:a", "func:example.com/project/controller::A", "controller/a.go", "A", shared)
-	rootB := compactTestRoot("change:b", "func:example.com/project/controller::B", "controller/a.go", "B", shared)
+	rootA := rawTestRoot("change:a", "func:example.com/project/controller::A", "controller/a.go", "A", shared)
+	rootB := rawTestRoot("change:b", "func:example.com/project/controller::B", "controller/a.go", "B", shared)
 
 	doc := BuildImpactDocument(project, []diff.FileChange{{
 		NewPath: "controller/a.go",
@@ -270,37 +300,43 @@ func TestBuildImpactDocumentDeduplicatesNodesAndReferencesRoots(t *testing.T) {
 		t.Fatalf("fileSources = %#v", doc.FileSources)
 	}
 	source := doc.FileSources[0]
-	if len(source.Roots) != 2 {
-		t.Fatalf("roots = %#v", source.Roots)
+	if len(source.Symbols) != 2 {
+		t.Fatalf("symbols = %#v", source.Symbols)
 	}
 	if source.Diff == "" {
 		t.Fatal("ordinary source diff should be retained")
-	}
-	if len(doc.Nodes) != 3 {
-		t.Fatalf("nodes = %#v", doc.Nodes)
-	}
-	if _, ok := doc.Nodes["endpoint:GET:/shared"]; ok {
-		t.Fatalf("endpoint should not be projected as a graph node: %#v", doc.Nodes)
-	}
-	sharedNode := doc.Nodes["func:example.com/project/service::Shared"]
-	if len(sharedNode.Children) != 0 {
-		t.Fatalf("endpoint edge should be omitted: %#v", sharedNode.Children)
 	}
 	for _, rootID := range []string{
 		"func:example.com/project/controller::A",
 		"func:example.com/project/controller::B",
 	} {
-		node := doc.Nodes[rootID]
-		if len(node.Children) != 1 ||
-			node.Children[0].To != "func:example.com/project/service::Shared" ||
-			node.Children[0].Relation != "call" {
+		node := source.Symbols[rootID]
+		if len(node.Children) != 1 || node.Children[0].ID != "func:example.com/project/service::Shared" {
 			t.Fatalf("root node %s = %#v", rootID, node)
 		}
+		sharedNode := node.Children[0]
+		if sharedNode.Relation != "call" || sharedNode.Confidence != facts.ConfidenceMedium {
+			t.Fatalf("shared node evidence = %#v", sharedNode)
+		}
+		if len(sharedNode.Children) != 1 ||
+			sharedNode.Children[0].Kind != "endpoint" ||
+			sharedNode.Children[0].Method != "GET" ||
+			sharedNode.Children[0].Path != "/shared" {
+			t.Fatalf("endpoint chain missing from %s: %#v", rootID, sharedNode.Children)
+		}
+	}
+
+	payload, err := RenderImpactTreeJSON(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(payload, []byte(`"nodes"`)) {
+		t.Fatalf("top-level nodes should not be required to read source chains: %s", payload)
 	}
 }
 
-func TestRenderCompactImpactJSONOmitsSpanAndDebugFields(t *testing.T) {
-	root := compactTestRoot(
+func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
+	root := rawTestRoot(
 		"change:a",
 		"func:example.com/project/controller::A",
 		"controller/a.go",
@@ -334,10 +370,7 @@ func TestRenderCompactImpactJSONOmitsSpanAndDebugFields(t *testing.T) {
 		`"meta"`,
 		`"projectRoot"`,
 		`"span"`,
-		`"raw"`,
-		`"package"`,
-		`"level"`,
-		`"confidence": "high"`,
+		`"nodes"`,
 	} {
 		if bytes.Contains(payload, []byte(forbidden)) {
 			t.Fatalf("forbidden field %s remains: %s", forbidden, payload)
@@ -346,10 +379,21 @@ func TestRenderCompactImpactJSONOmitsSpanAndDebugFields(t *testing.T) {
 	if !bytes.Contains(payload, []byte(`"diff": "diff --git`)) {
 		t.Fatalf("source diff missing: %s", payload)
 	}
+	for _, required := range []string{
+		`"symbols"`,
+		`"raw": "service.Shared()"`,
+		`"relation": "call"`,
+		`"level": 1`,
+		`"confidence": "high"`,
+	} {
+		if !bytes.Contains(payload, []byte(required)) {
+			t.Fatalf("review evidence %s missing: %s", required, payload)
+		}
+	}
 }
 
-func TestCompactImpactKeepsOnlyNonHighConfidence(t *testing.T) {
-	root := compactTestRoot(
+func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
+	root := rawTestRoot(
 		"change:a",
 		"func:example.com/project/controller::A",
 		"controller/a.go",
@@ -372,12 +416,12 @@ func TestCompactImpactKeepsOnlyNonHighConfidence(t *testing.T) {
 		ImpactDocumentOptions{},
 	)
 
-	if doc.FileSources[0].Roots[0].Confidence != facts.ConfidenceLow {
-		t.Fatalf("root confidence = %#v", doc.FileSources[0].Roots)
+	rootNode := doc.FileSources[0].Symbols["func:example.com/project/controller::A"]
+	if rootNode.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("root confidence = %#v", rootNode)
 	}
-	edge := doc.Nodes["func:example.com/project/controller::A"].Children[0]
-	if edge.Confidence != facts.ConfidenceMedium {
-		t.Fatalf("edge confidence = %#v", edge)
+	if rootNode.Children[0].Confidence != facts.ConfidenceMedium {
+		t.Fatalf("child confidence = %#v", rootNode.Children[0])
 	}
 }
 
@@ -407,7 +451,7 @@ func TestCompactImpactProjectsDiagnosticsWithoutSpan(t *testing.T) {
 	}
 }
 
-func compactTestRoot(changeID, rootID, file, name string, child impact.Node) impact.RootImpact {
+func rawTestRoot(changeID, rootID, file, name string, child impact.Node) impact.RootImpact {
 	return impact.RootImpact{
 		Change: facts.ChangeFact{
 			ID:         changeID,

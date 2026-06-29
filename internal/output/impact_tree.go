@@ -12,39 +12,34 @@ import (
 )
 
 type ImpactDocument struct {
-	Summary       ImpactSummary              `json:"summary"`
-	Diagnostics   []ImpactDiagnostic         `json:"diagnostics,omitempty"`
-	FileSources   []FileSourceImpact         `json:"fileSources"`
-	ModuleSources []ModuleSourceImpact       `json:"moduleSources,omitempty"`
-	Nodes         map[string]ImpactGraphNode `json:"nodes"`
+	Summary       ImpactSummary        `json:"summary"`
+	Diagnostics   []ImpactDiagnostic   `json:"diagnostics,omitempty"`
+	FileSources   []FileSourceImpact   `json:"fileSources"`
+	ModuleSources []ModuleSourceImpact `json:"moduleSources,omitempty"`
 }
 
 type FileSourceImpact struct {
-	SourceFile        string            `json:"sourceFile"`
-	Diff              string            `json:"diff,omitempty"`
-	Roots             []ImpactRoot      `json:"roots"`
-	ImpactedEndpoints []EndpointSummary `json:"impactedEndpoints"`
+	SourceFile        string                `json:"sourceFile"`
+	Diff              string                `json:"diff,omitempty"`
+	Symbols           map[string]ImpactNode `json:"symbols"`
+	ImpactedEndpoints []EndpointSummary     `json:"impactedEndpoints"`
 }
 
-type ImpactRoot struct {
-	ID         string           `json:"id"`
-	Confidence facts.Confidence `json:"confidence,omitempty"`
-}
-
-type ImpactGraphNode struct {
-	Kind         string       `json:"kind"`
-	Name         string       `json:"name,omitempty"`
-	File         string       `json:"file,omitempty"`
-	Method       string       `json:"method,omitempty"`
-	Path         string       `json:"path,omitempty"`
-	StopBoundary bool         `json:"stopBoundary,omitempty"`
-	Children     []ImpactEdge `json:"children,omitempty"`
-}
-
-type ImpactEdge struct {
-	To         string           `json:"to"`
-	Relation   string           `json:"relation,omitempty"`
-	Confidence facts.Confidence `json:"confidence,omitempty"`
+type ImpactNode struct {
+	ID           string           `json:"id"`
+	Kind         string           `json:"kind"`
+	Name         string           `json:"name,omitempty"`
+	File         string           `json:"file,omitempty"`
+	Package      string           `json:"package,omitempty"`
+	Relation     string           `json:"relation,omitempty"`
+	Raw          string           `json:"raw,omitempty"`
+	Confidence   facts.Confidence `json:"confidence,omitempty"`
+	Level        int              `json:"level"`
+	Cycle        bool             `json:"cycle,omitempty"`
+	StopBoundary bool             `json:"stopBoundary,omitempty"`
+	Children     []ImpactNode     `json:"children"`
+	Method       string           `json:"method,omitempty"`
+	Path         string           `json:"path,omitempty"`
 }
 
 type ImpactDiagnostic struct {
@@ -87,7 +82,6 @@ type ImpactDocumentOptions struct {
 
 type fileSourceBuilder struct {
 	source    FileSourceImpact
-	roots     map[string]ImpactRoot
 	endpoints map[string]EndpointSummary
 }
 
@@ -96,21 +90,11 @@ type moduleSourceBuilder struct {
 	files  map[string]*fileSourceBuilder
 }
 
-type graphNodeBuilder struct {
-	node  ImpactGraphNode
-	edges map[string]ImpactEdge
-}
-
-type impactGraphBuilder struct {
-	nodes map[string]*graphNodeBuilder
-}
-
 func BuildImpactDocument(_ facts.ProjectFact, fileChanges []diff.FileChange, result impact.TreeResult, opts ImpactDocumentOptions) ImpactDocument {
 	files := map[string]*fileSourceBuilder{}
 	moduleSources := buildModuleSourceBuilders(opts.ModuleChanges)
 	moduleUsages := indexModuleUsages(opts.ModuleUsages)
 	globalEndpoints := map[string]EndpointSummary{}
-	graph := newImpactGraphBuilder()
 
 	for _, change := range fileChanges {
 		file := changedFile(change)
@@ -128,27 +112,32 @@ func BuildImpactDocument(_ facts.ProjectFact, fileChanges []diff.FileChange, res
 			continue
 		}
 		builder := sourceBuilderForRoot(files, moduleSources, moduleUsages, root)
-		rootID := graph.addTree(root.Root)
-		builder.addRoot(rootID, root.Change.Confidence)
+		key := root.Root.ID
+		if root.Root.Kind == "file" || root.Change.SymbolID == "" && root.Change.TargetID == "" {
+			key = "__non_symbol__"
+		}
+		node := projectImpactNode(root.Root)
+		if existing, ok := builder.source.Symbols[key]; ok {
+			node = mergeImpactNodes(existing, node)
+		}
+		builder.source.Symbols[key] = node
 		for _, endpoint := range root.Endpoints {
 			if endpoint.Method == "" || endpoint.Path == "" {
 				continue
 			}
 			summary := EndpointSummary{Method: endpoint.Method, Path: endpoint.Path}
-			key := endpointKey(summary)
-			builder.endpoints[key] = summary
-			globalEndpoints[key] = summary
+			endpointID := endpointKey(summary)
+			builder.endpoints[endpointID] = summary
+			globalEndpoints[endpointID] = summary
 		}
 	}
 
-	doc := ImpactDocument{
+	return normalizeImpactDocument(ImpactDocument{
 		Summary:       buildImpactSummary(globalEndpoints),
 		Diagnostics:   projectImpactDiagnostics(result.Diagnostics),
 		FileSources:   finalizeFileSources(files),
 		ModuleSources: finalizeModuleSources(moduleSources),
-		Nodes:         graph.finalize(),
-	}
-	return normalizeImpactDocument(doc)
+	})
 }
 
 func changedFile(change diff.FileChange) string {
@@ -184,36 +173,21 @@ func ensureFileSource(files map[string]*fileSourceBuilder, file string) *fileSou
 	builder := &fileSourceBuilder{
 		source: FileSourceImpact{
 			SourceFile:        file,
-			Roots:             []ImpactRoot{},
+			Symbols:           map[string]ImpactNode{},
 			ImpactedEndpoints: []EndpointSummary{},
 		},
-		roots:     map[string]ImpactRoot{},
 		endpoints: map[string]EndpointSummary{},
 	}
 	files[file] = builder
 	return builder
 }
 
-func (b *fileSourceBuilder) addRoot(id string, confidence facts.Confidence) {
-	if id == "" {
-		return
-	}
-	root := ImpactRoot{ID: id, Confidence: compactConfidence(confidence)}
-	if existing, ok := b.roots[id]; ok {
-		root.Confidence = weakerConfidence(existing.Confidence, root.Confidence)
-	}
-	b.roots[id] = root
-}
-
 func finalizeFileSources(files map[string]*fileSourceBuilder) []FileSourceImpact {
 	out := make([]FileSourceImpact, 0, len(files))
 	for _, builder := range files {
-		for _, root := range builder.roots {
-			builder.source.Roots = append(builder.source.Roots, root)
+		for key, node := range builder.source.Symbols {
+			builder.source.Symbols[key] = normalizeImpactNode(node)
 		}
-		sort.Slice(builder.source.Roots, func(i, j int) bool {
-			return builder.source.Roots[i].ID < builder.source.Roots[j].ID
-		})
 		for _, endpoint := range builder.endpoints {
 			builder.source.ImpactedEndpoints = append(builder.source.ImpactedEndpoints, endpoint)
 		}
@@ -303,125 +277,84 @@ func strongerModuleBasis(left, right string) string {
 	return left
 }
 
-func newImpactGraphBuilder() *impactGraphBuilder {
-	return &impactGraphBuilder{nodes: map[string]*graphNodeBuilder{}}
+func projectImpactNode(node impact.Node) ImpactNode {
+	projected := ImpactNode{
+		ID:           node.ID,
+		Kind:         node.Kind,
+		Name:         node.Name,
+		File:         filepath.ToSlash(node.File),
+		Package:      node.Package,
+		Relation:     node.Relation,
+		Raw:          node.Raw,
+		Confidence:   node.Confidence,
+		Level:        node.Level,
+		Cycle:        node.Cycle,
+		StopBoundary: node.StopBoundary,
+		Method:       node.Method,
+		Path:         node.Path,
+		Children:     make([]ImpactNode, 0, len(node.Children)),
+	}
+	for _, child := range node.Children {
+		projected.Children = append(projected.Children, projectImpactNode(child))
+	}
+	return normalizeImpactNode(projected)
 }
 
-func (b *impactGraphBuilder) addTree(root impact.Node) string {
-	id := root.ID
-	if id == "" {
-		id = root.File
-	}
-	if id == "" || root.Kind == "endpoint" {
-		return ""
-	}
-	b.addNode(id, root)
-	return id
+func mergeImpactNodes(left, right ImpactNode) ImpactNode {
+	left.Children = append(left.Children, right.Children...)
+	left.Children = mergeImpactNodeChildren(left.Children)
+	left.Cycle = left.Cycle || right.Cycle
+	left.StopBoundary = left.StopBoundary || right.StopBoundary
+	return left
 }
 
-func (b *impactGraphBuilder) addNode(id string, source impact.Node) {
-	builder := b.nodes[id]
-	if builder == nil {
-		builder = &graphNodeBuilder{
-			node: ImpactGraphNode{
-				Kind:         source.Kind,
-				Name:         compactNodeName(source),
-				File:         filepath.ToSlash(source.File),
-				Method:       source.Method,
-				Path:         source.Path,
-				StopBoundary: source.StopBoundary,
-			},
-			edges: map[string]ImpactEdge{},
-		}
-		b.nodes[id] = builder
-	} else {
-		mergeGraphNode(&builder.node, source)
-	}
-	for _, child := range source.Children {
-		if child.Kind == "endpoint" || child.ID == "" {
+func mergeImpactNodeChildren(children []ImpactNode) []ImpactNode {
+	merged := make([]ImpactNode, 0, len(children))
+	indexes := map[string]int{}
+	for _, child := range children {
+		key := child.ID + "\x00" + child.Relation
+		if index, ok := indexes[key]; ok {
+			merged[index] = mergeImpactNodes(merged[index], child)
 			continue
 		}
-		edge := ImpactEdge{
-			To:         child.ID,
-			Relation:   child.Relation,
-			Confidence: compactConfidence(child.Confidence),
+		indexes[key] = len(merged)
+		merged = append(merged, child)
+	}
+	sortImpactNodes(merged)
+	return merged
+}
+
+func normalizeImpactNode(node ImpactNode) ImpactNode {
+	node.Children = mergeImpactNodeChildren(node.Children)
+	if node.Children == nil {
+		node.Children = []ImpactNode{}
+	}
+	return node
+}
+
+func sortImpactNodes(nodes []ImpactNode) {
+	for i := range nodes {
+		nodes[i] = normalizeImpactNode(nodes[i])
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		left, right := nodes[i], nodes[j]
+		if left.Level != right.Level {
+			return left.Level < right.Level
 		}
-		key := edge.To + "\x00" + edge.Relation
-		if existing, ok := builder.edges[key]; ok {
-			edge.Confidence = weakerConfidence(existing.Confidence, edge.Confidence)
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
 		}
-		builder.edges[key] = edge
-		b.addNode(child.ID, child)
-	}
-}
-
-func mergeGraphNode(target *ImpactGraphNode, source impact.Node) {
-	if target.Kind == "" {
-		target.Kind = source.Kind
-	}
-	if target.Name == "" {
-		target.Name = compactNodeName(source)
-	}
-	if target.File == "" {
-		target.File = filepath.ToSlash(source.File)
-	}
-	if target.Method == "" {
-		target.Method = source.Method
-	}
-	if target.Path == "" {
-		target.Path = source.Path
-	}
-	target.StopBoundary = target.StopBoundary || source.StopBoundary
-}
-
-func compactNodeName(node impact.Node) string {
-	if node.Method != "" && node.Path != "" && node.Name == node.Method+" "+node.Path {
-		return ""
-	}
-	return node.Name
-}
-
-func (b *impactGraphBuilder) finalize() map[string]ImpactGraphNode {
-	out := make(map[string]ImpactGraphNode, len(b.nodes))
-	for id, builder := range b.nodes {
-		for _, edge := range builder.edges {
-			builder.node.Children = append(builder.node.Children, edge)
+		if left.File != right.File {
+			return left.File < right.File
 		}
-		sort.Slice(builder.node.Children, func(i, j int) bool {
-			if builder.node.Children[i].To != builder.node.Children[j].To {
-				return builder.node.Children[i].To < builder.node.Children[j].To
-			}
-			return builder.node.Children[i].Relation < builder.node.Children[j].Relation
-		})
-		out[id] = builder.node
-	}
-	return out
-}
-
-func compactConfidence(confidence facts.Confidence) facts.Confidence {
-	if confidence == facts.ConfidenceHigh {
-		return ""
-	}
-	return confidence
-}
-
-func weakerConfidence(left, right facts.Confidence) facts.Confidence {
-	rank := func(confidence facts.Confidence) int {
-		switch confidence {
-		case facts.ConfidenceLow:
-			return 3
-		case facts.ConfidenceMedium:
-			return 2
-		case facts.ConfidenceHigh, "":
-			return 1
-		default:
-			return 0
+		if left.Package != right.Package {
+			return left.Package < right.Package
 		}
-	}
-	if rank(right) > rank(left) {
-		return right
-	}
-	return left
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		return left.Relation < right.Relation
+	})
 }
 
 func buildImpactSummary(endpoints map[string]EndpointSummary) ImpactSummary {
@@ -473,8 +406,16 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 	if doc.FileSources == nil {
 		doc.FileSources = []FileSourceImpact{}
 	}
-	if doc.Nodes == nil {
-		doc.Nodes = map[string]ImpactGraphNode{}
+	for i := range doc.FileSources {
+		doc.FileSources[i] = normalizeFileSource(doc.FileSources[i])
+	}
+	for i := range doc.ModuleSources {
+		for j := range doc.ModuleSources[i].SourceFiles {
+			doc.ModuleSources[i].SourceFiles[j] = normalizeFileSource(doc.ModuleSources[i].SourceFiles[j])
+		}
+		sort.Slice(doc.ModuleSources[i].SourceFiles, func(left, right int) bool {
+			return doc.ModuleSources[i].SourceFiles[left].SourceFile < doc.ModuleSources[i].SourceFiles[right].SourceFile
+		})
 	}
 	sort.Slice(doc.FileSources, func(i, j int) bool {
 		return doc.FileSources[i].SourceFile < doc.FileSources[j].SourceFile
@@ -483,6 +424,20 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 		return doc.ModuleSources[i].ModulePath < doc.ModuleSources[j].ModulePath
 	})
 	return doc
+}
+
+func normalizeFileSource(source FileSourceImpact) FileSourceImpact {
+	if source.Symbols == nil {
+		source.Symbols = map[string]ImpactNode{}
+	}
+	for key, node := range source.Symbols {
+		source.Symbols[key] = normalizeImpactNode(node)
+	}
+	if source.ImpactedEndpoints == nil {
+		source.ImpactedEndpoints = []EndpointSummary{}
+	}
+	sortEndpointSummaries(source.ImpactedEndpoints)
+	return source
 }
 
 func RenderImpactTreeJSON(doc ImpactDocument) ([]byte, error) {

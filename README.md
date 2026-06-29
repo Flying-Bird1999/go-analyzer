@@ -2,7 +2,7 @@
 
 `go-analyzer` 是面向 Go BFF 项目的影响范围分析工具项目。它服务于前端团队维护的 BFF 代码仓，目标是把一次 Go MR 的 diff 转换成“受影响的 HTTP 接口列表”，帮助测试、开发和后续自动化流程判断本次服务端改动需要重点回归哪些接口。
 
-当前已经完成基于变更后项目的符号级影响分析闭环，并输出按 diff 来源组织的紧凑影响图和接口摘要。
+当前已经完成基于变更后项目的符号级影响分析闭环，并输出按 diff 来源组织的原始传播树和接口摘要。
 
 ## 背景
 
@@ -39,7 +39,7 @@ MVP 覆盖范围：
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace 变更到本仓使用点再到 endpoint 的传播。
 - 常见 package var / struct field middleware selector 的轻量类型推断。
-- 输出去重后的 symbol → route → annotation 传播图及接口摘要。
+- 输出完整的 symbol → route → annotation → endpoint 传播树及接口摘要。
 
 MVP 暂不覆盖：
 
@@ -91,7 +91,7 @@ go-analyzer schema --type impact
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 
-impact 输出的顶层 `summary` 汇总影响接口数量和接口列表；`fileSources` 承载普通文件逻辑变更及原始 diff，`moduleSources` 承载 go.mod 模块升级及其本仓使用入口，`nodes` 保存去重后的共享传播图。输出契约见 `docs/contracts/output-contract.md`。
+impact 输出的顶层 `summary` 汇总影响接口数量和接口列表；`fileSources[].symbols` 承载普通文件逻辑变更的完整传播树和原始 diff，`moduleSources[].sourceFiles[].symbols` 承载 go.mod 模块升级从本仓使用入口开始的完整传播树。输出契约见 `docs/contracts/output-contract.md`。
 
 关键设计点是：Go BFF 不能只做调用图分析。route 注册里 controller 通常不是被调用，而是作为函数值被传给注册函数：
 

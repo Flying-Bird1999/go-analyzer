@@ -28,8 +28,8 @@ The MVP validation target is stability rather than perfect precision:
   `handler_symbol` and `resolved_path`.
 - Annotation, route, symbol, and diagnostic counts should be recorded from each
   smoke run.
-- Impact smoke should record changed source count, changed root count, shared
-  graph node count and endpoint count.
+- Impact smoke should record changed source count, changed root count,
+  recursive tree node count and endpoint count.
 - Real BFF impact smoke should assert exact impacted endpoint method/path.
 - Unsupported patterns should appear as diagnostics instead of being silently
   lost where the analyzer can identify them.
@@ -66,16 +66,16 @@ The smoke script records:
 
 - changed source count.
 - changed root count.
-- shared impact graph node count.
+- recursive impact tree node count.
 - endpoint count.
 - unresolved-reference diagnostics.
 - runtime.
 
 Latest fixture result:
 
-| Fixture | Changed sources | Changed roots | Graph nodes | Endpoints | Unresolved diagnostics | Runtime |
+| Fixture | Changed sources | Changed roots | Tree nodes | Endpoints | Unresolved diagnostics | Runtime |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `type-impact` | 1 | 1 | 8 | 1 (`POST /orders`) | 0 | <1s |
+| `type-impact` | 1 | 1 | 9 | 1 (`POST /orders`) | 0 | <1s |
 
 ## Specialized Impact Fixtures
 
@@ -109,8 +109,8 @@ projects:
 The seven single-file cases complete with one impacted endpoint. The combined
 go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
-`moduleSources`. Its compact impact JSON is 44,707 bytes in the 2026-06-29
-snapshot.
+`moduleSources`. The module source tree explicitly contains
+`ParseStringToFloat64 -> ConvertPrice -> endpoint`.
 
 ## Known Unsupported Patterns
 

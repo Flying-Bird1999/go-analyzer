@@ -154,8 +154,11 @@ func TestRunImpactIgnoresRetiredOutputConfig(t *testing.T) {
 		t.Fatal("diff should remain after retired includeDiff=false")
 	}
 	payload := string(got)
-	if strings.Contains(payload, `"raw"`) || strings.Contains(payload, `"span"`) {
-		t.Fatalf("compact impact should omit raw/span evidence: %s", payload)
+	if strings.Contains(payload, `"span"`) {
+		t.Fatalf("impact should omit span evidence: %s", payload)
+	}
+	if !strings.Contains(payload, `"raw"`) || !strings.Contains(payload, `"symbols"`) {
+		t.Fatalf("raw review tree should remain after retired output config: %s", payload)
 	}
 }
 
@@ -499,12 +502,10 @@ func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootI
 		if source.SourceFile != sourceFile {
 			continue
 		}
-		for _, root := range source.Roots {
-			if root.ID == rootID {
-				return
-			}
+		if _, ok := source.Symbols[rootID]; ok {
+			return
 		}
-		t.Fatalf("root %q not found in %q: %#v", rootID, sourceFile, source.Roots)
+		t.Fatalf("root %q not found in %q: %#v", rootID, sourceFile, source.Symbols)
 	}
 	t.Fatalf("source file %q not found: %#v", sourceFile, doc.FileSources)
 }

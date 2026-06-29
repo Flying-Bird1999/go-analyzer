@@ -12,11 +12,122 @@
     {
       "sourceFile": "model/model.go",
       "diff": "diff --git a/model/model.go b/model/model.go\n--- a/model/model.go\n+++ b/model/model.go\n@@ -1,5 +1,5 @@\n package model\n \n type Address struct {\n-\tCity string `json:\"city_name\"`\n+\tCity string `json:\"city\"`\n }\n",
-      "roots": [
-        {
-          "id": "type:example.com/type-impact/model::Address"
+      "symbols": {
+        "type:example.com/type-impact/model::Address": {
+          "id": "type:example.com/type-impact/model::Address",
+          "kind": "type",
+          "name": "Address",
+          "file": "model/model.go",
+          "package": "example.com/type-impact/model",
+          "confidence": "high",
+          "level": 0,
+          "children": [
+            {
+              "id": "type:example.com/type-impact/model::CreateOrderRequest",
+              "kind": "type",
+              "name": "CreateOrderRequest",
+              "file": "model/model.go",
+              "package": "example.com/type-impact/model",
+              "relation": "type_ref",
+              "raw": "Address",
+              "confidence": "high",
+              "level": 1,
+              "children": [
+                {
+                  "id": "method:example.com/type-impact/controller:OrderAPI:Create",
+                  "kind": "method",
+                  "name": "Create",
+                  "file": "controller/controller.go",
+                  "package": "example.com/type-impact/controller",
+                  "relation": "type_ref",
+                  "raw": "model.CreateOrderRequest",
+                  "confidence": "high",
+                  "level": 2,
+                  "children": [
+                    {
+                      "id": "func:example.com/type-impact/router::Init",
+                      "kind": "func",
+                      "name": "Init",
+                      "file": "router/router.go",
+                      "package": "example.com/type-impact/router",
+                      "relation": "value_ref",
+                      "raw": "controller.API.Create",
+                      "confidence": "high",
+                      "level": 3,
+                      "children": []
+                    },
+                    {
+                      "id": "route:func:example.com/type-impact/router::Init:POST:/orders:1",
+                      "kind": "route",
+                      "name": "POST /orders",
+                      "file": "router/router.go",
+                      "relation": "registered_handler",
+                      "raw": "controller.API.Create",
+                      "confidence": "high",
+                      "level": 3,
+                      "children": [
+                        {
+                          "id": "annotation:method:example.com/type-impact/controller:OrderAPI:Create:POST:/orders:0",
+                          "kind": "annotation",
+                          "name": "POST /orders",
+                          "file": "controller/controller.go",
+                          "relation": "handler_annotation",
+                          "raw": "@Post /orders",
+                          "confidence": "high",
+                          "level": 4,
+                          "children": [
+                            {
+                              "id": "endpoint:POST:/orders",
+                              "kind": "endpoint",
+                              "name": "POST /orders",
+                              "file": "controller/controller.go",
+                              "relation": "annotation_endpoint",
+                              "confidence": "high",
+                              "level": 5,
+                              "children": [],
+                              "method": "POST",
+                              "path": "/orders"
+                            }
+                          ],
+                          "method": "POST",
+                          "path": "/orders"
+                        }
+                      ],
+                      "method": "POST",
+                      "path": "/orders"
+                    }
+                  ]
+                },
+                {
+                  "id": "var:example.com/type-impact/controller::DefaultRequest",
+                  "kind": "var",
+                  "name": "DefaultRequest",
+                  "file": "controller/controller.go",
+                  "package": "example.com/type-impact/controller",
+                  "relation": "type_ref",
+                  "raw": "model.CreateOrderRequest",
+                  "confidence": "high",
+                  "level": 2,
+                  "children": [
+                    {
+                      "id": "func:example.com/type-impact/controller::Build",
+                      "kind": "func",
+                      "name": "Build",
+                      "file": "controller/controller.go",
+                      "package": "example.com/type-impact/controller",
+                      "relation": "value_ref",
+                      "raw": "DefaultRequest",
+                      "confidence": "high",
+                      "level": 3,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
-      ],
+      },
       "impactedEndpoints": [
         {
           "method": "POST",
@@ -24,87 +135,5 @@
         }
       ]
     }
-  ],
-  "nodes": {
-    "annotation:method:example.com/type-impact/controller:OrderAPI:Create:POST:/orders:0": {
-      "kind": "annotation",
-      "file": "controller/controller.go",
-      "method": "POST",
-      "path": "/orders"
-    },
-    "func:example.com/type-impact/controller::Build": {
-      "kind": "func",
-      "name": "Build",
-      "file": "controller/controller.go"
-    },
-    "func:example.com/type-impact/router::Init": {
-      "kind": "func",
-      "name": "Init",
-      "file": "router/router.go"
-    },
-    "method:example.com/type-impact/controller:OrderAPI:Create": {
-      "kind": "method",
-      "name": "Create",
-      "file": "controller/controller.go",
-      "children": [
-        {
-          "to": "func:example.com/type-impact/router::Init",
-          "relation": "value_ref"
-        },
-        {
-          "to": "route:func:example.com/type-impact/router::Init:POST:/orders:1",
-          "relation": "registered_handler"
-        }
-      ]
-    },
-    "route:func:example.com/type-impact/router::Init:POST:/orders:1": {
-      "kind": "route",
-      "file": "router/router.go",
-      "method": "POST",
-      "path": "/orders",
-      "children": [
-        {
-          "to": "annotation:method:example.com/type-impact/controller:OrderAPI:Create:POST:/orders:0",
-          "relation": "handler_annotation"
-        }
-      ]
-    },
-    "type:example.com/type-impact/model::Address": {
-      "kind": "type",
-      "name": "Address",
-      "file": "model/model.go",
-      "children": [
-        {
-          "to": "type:example.com/type-impact/model::CreateOrderRequest",
-          "relation": "type_ref"
-        }
-      ]
-    },
-    "type:example.com/type-impact/model::CreateOrderRequest": {
-      "kind": "type",
-      "name": "CreateOrderRequest",
-      "file": "model/model.go",
-      "children": [
-        {
-          "to": "method:example.com/type-impact/controller:OrderAPI:Create",
-          "relation": "type_ref"
-        },
-        {
-          "to": "var:example.com/type-impact/controller::DefaultRequest",
-          "relation": "type_ref"
-        }
-      ]
-    },
-    "var:example.com/type-impact/controller::DefaultRequest": {
-      "kind": "var",
-      "name": "DefaultRequest",
-      "file": "controller/controller.go",
-      "children": [
-        {
-          "to": "func:example.com/type-impact/controller::Build",
-          "relation": "value_ref"
-        }
-      ]
-    }
-  }
+  ]
 }
