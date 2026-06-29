@@ -16,7 +16,7 @@ func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 		Confidence: facts.ConfidenceHigh,
 	})
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	root := mustTreeRoot(t, result, "change:service")
 	path := firstEndpointPath(t, root.Root)
 	assertNodeKinds(t, path, "func", "func", "route", "annotation", "endpoint")
@@ -36,7 +36,7 @@ func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 		File:     "router/router.go",
 	})
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	root := mustTreeRoot(t, result, "change:route")
 	if root.Root.Kind != "route" || root.Root.ID != "route:checkIn" {
 		t.Fatalf("route root = %#v", root.Root)
@@ -58,7 +58,7 @@ func TestAnalyzeMarksCycles(t *testing.T) {
 		SymbolID: serviceSymbol,
 	})
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	root := mustTreeRoot(t, result, "change:service")
 	if !containsCycle(root.Root) {
 		t.Fatalf("cycle marker not found: %#v", root.Root)
@@ -86,83 +86,13 @@ func TestAnalyzeKeepsMultipleEndpointsAndSeparateRoots(t *testing.T) {
 		facts.ChangeFact{ID: "change:controller", Kind: facts.ChangeKindSymbolChanged, SymbolID: controllerSymbol},
 	)
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	if len(result.Roots) != 2 {
 		t.Fatalf("roots = %#v", result.Roots)
 	}
 	service := mustTreeRoot(t, result, "change:service")
 	if len(service.Endpoints) != 2 {
 		t.Fatalf("service endpoints = %#v", service.Endpoints)
-	}
-}
-
-func TestAnalyzeStopsAtBoundary(t *testing.T) {
-	store := referenceImpactStore()
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:service",
-		Kind:     facts.ChangeKindSymbolChanged,
-		SymbolID: serviceSymbol,
-	})
-
-	result := AnalyzeTrees(store, TreeOptions{StopPropagation: []string{"controller/**"}})
-	root := mustTreeRoot(t, result, "change:service")
-	controller := findTreeNode(t, root.Root, string(controllerSymbol))
-	if !controller.StopBoundary {
-		t.Fatalf("controller boundary = %#v", controller)
-	}
-	if len(controller.Children) != 0 {
-		t.Fatalf("boundary children = %#v", controller.Children)
-	}
-	if len(root.Endpoints) != 0 {
-		t.Fatalf("boundary endpoints = %#v", root.Endpoints)
-	}
-}
-
-func TestAnalyzeHonorsMaxDepth(t *testing.T) {
-	store := referenceImpactStore()
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:service",
-		Kind:     facts.ChangeKindSymbolChanged,
-		SymbolID: serviceSymbol,
-	})
-
-	result := AnalyzeTrees(store, TreeOptions{MaxDepth: 1})
-	root := mustTreeRoot(t, result, "change:service")
-	controller := findTreeNode(t, root.Root, string(controllerSymbol))
-	if len(controller.Children) != 0 {
-		t.Fatalf("depth-limited children = %#v", controller.Children)
-	}
-	assertTreeDiagnostic(t, result, "propagation_depth_truncated")
-}
-
-func TestAnalyzeFiltersDiagnosticsOutsideCurrentImpactTree(t *testing.T) {
-	store := referenceImpactStore()
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:       "change:service",
-		Kind:     facts.ChangeKindSymbolChanged,
-		SymbolID: serviceSymbol,
-		File:     "service/common.go",
-	})
-	store.Diagnostics = append(store.Diagnostics,
-		facts.DiagnosticFact{
-			ID:             "diagnostic:related",
-			Code:           "symbol_reference_unresolved",
-			RelatedFactIDs: []string{string(controllerSymbol)},
-		},
-		facts.DiagnosticFact{
-			ID:             "diagnostic:unrelated",
-			Code:           "symbol_reference_unresolved",
-			RelatedFactIDs: []string{"func:example.com/project/unrelated::Load"},
-			Span:           facts.SourceSpan{File: "unrelated/load.go"},
-		},
-	)
-
-	result := AnalyzeTrees(store, TreeOptions{})
-	assertTreeDiagnostic(t, result, "symbol_reference_unresolved")
-	for _, diagnostic := range result.Diagnostics {
-		if diagnostic.ID == "diagnostic:unrelated" {
-			t.Fatalf("unrelated diagnostic leaked into impact result: %#v", result.Diagnostics)
-		}
 	}
 }
 
@@ -203,13 +133,59 @@ func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
 		Confidence: facts.ConfidenceHigh,
 	})
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	root := mustTreeRoot(t, result, "change:middleware-symbol")
 	path := firstEndpointPath(t, root.Root)
 	assertNodeKinds(t, path, "method", "middleware", "route", "endpoint")
 	endpoint := path[len(path)-1]
 	if endpoint.Method != "GET" || endpoint.Path != "/api/checkIn" {
 		t.Fatalf("endpoint = %#v", endpoint)
+	}
+}
+
+func TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	guard := facts.SymbolID("func:example.com/project/router::Guard")
+	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
+	store.Symbols = append(store.Symbols,
+		facts.SymbolFact{ID: guard, Kind: "func", Span: facts.SourceSpan{File: "router/router.go", StartLine: 10, EndLine: 10}},
+		facts.SymbolFact{ID: routeFunc, Kind: "func", Span: facts.SourceSpan{File: "router/router.go", StartLine: 15, EndLine: 22}},
+	)
+	store.References = append(store.References, facts.ReferenceFact{
+		ID:         "ref:guard",
+		Kind:       facts.ReferenceKindCall,
+		FromSymbol: routeFunc,
+		ToSymbol:   guard,
+		Confidence: facts.ConfidenceHigh,
+		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 10},
+	})
+	store.Routes = append(store.Routes,
+		facts.RouteRegistrationFact{
+			ID:           "route:guarded",
+			Method:       "GET",
+			ResolvedPath: "/guarded",
+			RouteFunc:    routeFunc,
+			Span:         facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 42},
+		},
+		facts.RouteRegistrationFact{
+			ID:           "route:plain",
+			Method:       "GET",
+			ResolvedPath: "/plain",
+			RouteFunc:    routeFunc,
+			Span:         facts.SourceSpan{File: "router/router.go", StartLine: 21, StartCol: 2, EndLine: 21, EndCol: 35},
+		},
+	)
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:guard",
+		Kind:       facts.ChangeKindSymbolChanged,
+		SymbolID:   guard,
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:guard")
+	if len(root.Endpoints) != 1 || root.Endpoints[0].Path != "/guarded" {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
 	}
 }
 
@@ -303,40 +279,4 @@ func containsCycle(node Node) bool {
 		}
 	}
 	return false
-}
-
-func findTreeNode(t *testing.T, root Node, id string) Node {
-	t.Helper()
-	if root.ID == id {
-		return root
-	}
-	for _, child := range root.Children {
-		if got, ok := findTreeNodeOptional(child, id); ok {
-			return got
-		}
-	}
-	t.Fatalf("node %q not found: %#v", id, root)
-	return Node{}
-}
-
-func findTreeNodeOptional(root Node, id string) (Node, bool) {
-	if root.ID == id {
-		return root, true
-	}
-	for _, child := range root.Children {
-		if got, ok := findTreeNodeOptional(child, id); ok {
-			return got, true
-		}
-	}
-	return Node{}, false
-}
-
-func assertTreeDiagnostic(t *testing.T, result TreeResult, code string) {
-	t.Helper()
-	for _, diagnostic := range result.Diagnostics {
-		if diagnostic.Code == code {
-			return
-		}
-	}
-	t.Fatalf("diagnostic %q not found: %#v", code, result.Diagnostics)
 }

@@ -79,6 +79,34 @@ replace example.com/replaced => example.com/replaced v1.0.2
 	assertModuleChange(t, changes, "example.com/replaced", facts.ModuleChangeReplaced)
 }
 
+func TestCompareVersionUsesSemanticPrereleaseOrdering(t *testing.T) {
+	cases := []struct {
+		name  string
+		left  string
+		right string
+		want  int
+	}{
+		{name: "release after prerelease", left: "v1.0.0", right: "v1.0.0-rc.2", want: 1},
+		{name: "prerelease before release", left: "v1.0.0-beta.1", right: "v1.0.0", want: -1},
+		{name: "numeric prerelease", left: "v1.0.0-rc.10", right: "v1.0.0-rc.2", want: 1},
+		{name: "build metadata ignored", left: "v1.0.0+incompatible", right: "v1.0.0", want: 0},
+		{name: "pseudo version timestamp", left: "v0.0.0-20250102030405-bbbbbbbbbbbb", right: "v0.0.0-20240102030405-aaaaaaaaaaaa", want: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compareVersion(tc.left, tc.right)
+			switch {
+			case tc.want < 0 && got >= 0:
+				t.Fatalf("compareVersion(%q, %q) = %d, want < 0", tc.left, tc.right, got)
+			case tc.want == 0 && got != 0:
+				t.Fatalf("compareVersion(%q, %q) = %d, want 0", tc.left, tc.right, got)
+			case tc.want > 0 && got <= 0:
+				t.Fatalf("compareVersion(%q, %q) = %d, want > 0", tc.left, tc.right, got)
+			}
+		})
+	}
+}
+
 func TestDiffModulesFromFileChangesDetectsBlockRequireWithoutBlockHeader(t *testing.T) {
 	fileChanges := []diff.FileChange{{
 		OldPath: "go.mod",

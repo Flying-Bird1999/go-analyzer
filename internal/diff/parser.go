@@ -72,6 +72,7 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(input))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "diff --git ") {
@@ -109,6 +110,10 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			flushDeletion(false)
 			if current.Status != StatusDeleted {
 				addLineRange(current, newLine, RangeKindAdded)
+				current.ExpectedLines = append(current.ExpectedLines, ExpectedLine{
+					Line: newLine,
+					Text: strings.TrimPrefix(line, "+"),
+				})
 			}
 			newLine++
 		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
@@ -122,6 +127,12 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			oldLine++
 		case strings.HasPrefix(line, " "):
 			flushDeletion(true)
+			if current.Status != StatusDeleted {
+				current.ExpectedLines = append(current.ExpectedLines, ExpectedLine{
+					Line: newLine,
+					Text: strings.TrimPrefix(line, " "),
+				})
+			}
 			oldLine++
 			newLine++
 		}
@@ -130,6 +141,9 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 		return nil, err
 	}
 	flushCurrent()
+	if len(changes) == 0 {
+		return nil, fmt.Errorf("unified diff contains no file changes")
+	}
 	return changes, nil
 }
 

@@ -90,6 +90,7 @@ go-analyzer schema --type impact
 ```
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
+`impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。
 
 impact 输出的顶层 `summary` 汇总影响接口数量和接口列表；`fileSources[].symbols` 承载普通文件逻辑变更的完整传播树和原始 diff，`moduleSources[].sourceFiles[].symbols` 承载 go.mod 模块升级从本仓使用入口开始的完整传播树。输出契约见 `docs/contracts/output-contract.md`。
 
@@ -112,7 +113,7 @@ broadcastGroup.GET(
 
 ## HTTP 接口出口
 
-MVP 优先使用 controller 函数注释作为 HTTP 接口出口：
+MVP 综合 controller 注释与 route 解析结果确定 HTTP 接口：
 
 ```go
 // @Get /admin/api/bff-web/mc/broadcast/record
@@ -121,13 +122,13 @@ func (api *adminBroadcastApi) QueryBroadcastRecord(...) (...) {}
 
 这样做是为了避免第一版强行通过 AST 拼接所有 route path。BFF 项目里 route 前缀可能来自常量、helper 参数、inline 字符串、guard wrapper、derived group，完整拼接容易出现“看似精确但实际错误”的结果。
 
-因此第一版策略是：
+因此当前策略是：
 
-- controller 注释提供最终 HTTP method/path。
+- 可完整解析前缀或明确属于兼容旧路径的 route 提供最终 method/path。
+- route 只有局部路径而 annotation 补足父前缀时使用 annotation。
 - route AST 负责证明 handler 被注册。
 - route AST 负责传播 route group、middleware、wrapper 变更造成的影响。
-- route path 拼接只作为辅助证据，不作为唯一出口。
-- 缺失或疑似过期的 controller 注释进入 diagnostics。
+- annotation 缺失时使用 route method/path fallback。
 
 ## 重要场景
 

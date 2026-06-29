@@ -3,7 +3,6 @@ package impact
 import (
 	"testing"
 
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
@@ -30,7 +29,7 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 		}},
 	}}
 
-	RecoverDeletedRoutes(changes, nil, store, config.Default(), "git_diff")
+	RecoverDeletedRoutes(changes, nil, store, "git_diff")
 
 	if len(store.Routes) != 1 {
 		t.Fatalf("routes = %#v", store.Routes)
@@ -50,7 +49,7 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 		t.Fatalf("change = %#v", change)
 	}
 
-	result := AnalyzeTrees(store, TreeOptions{})
+	result := AnalyzeTrees(store)
 	root := mustTreeRoot(t, result, change.ID)
 	if root.Root.Kind != "route" {
 		t.Fatalf("root = %#v", root.Root)
@@ -80,7 +79,7 @@ func TestRecoverDeletedRoutesIgnoresNonGoFiles(t *testing.T) {
 		}},
 	}}
 
-	RecoverDeletedRoutes(changes, nil, store, config.Default(), "git_diff")
+	RecoverDeletedRoutes(changes, nil, store, "git_diff")
 
 	if len(store.Routes) != 0 || len(store.Changes) != 0 {
 		t.Fatalf("non-Go deleted routes were recovered: routes=%#v changes=%#v", store.Routes, store.Changes)

@@ -11,7 +11,6 @@ import (
 )
 
 func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
-	project := facts.ProjectFact{Root: "/tmp/project", ModulePath: "example.com/project"}
 	fileChanges := []diff.FileChange{{
 		NewPath: "model/model.go",
 		Raw:     "diff --git a/model/model.go b/model/model.go\n+changed\n",
@@ -21,7 +20,7 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 		testRootImpact("change:request", "type:example.com/project/model::CreateOrderRequest", "model/model.go", "CreateOrderRequest", "POST", "/orders"),
 	}}
 
-	doc := BuildImpactDocument(project, fileChanges, result, ImpactDocumentOptions{})
+	doc := BuildImpactDocument(fileChanges, result, ImpactDocumentOptions{})
 	if len(doc.FileSources) != 1 {
 		t.Fatalf("fileSources = %d", len(doc.FileSources))
 	}
@@ -41,19 +40,16 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 }
 
 func TestRenderImpactTreeJSONIsDeterministic(t *testing.T) {
-	project := facts.ProjectFact{Root: "/tmp/project", ModulePath: "example.com/project"}
 	changeA := diff.FileChange{NewPath: "a.go", Raw: "diff --git a/a.go b/a.go\n"}
 	changeB := diff.FileChange{NewPath: "b.go", Raw: "diff --git a/b.go b/b.go\n"}
 	rootA := testRootImpact("change:a", "func:example.com/project::A", "a.go", "A", "GET", "/a")
 	rootB := testRootImpact("change:b", "func:example.com/project::B", "b.go", "B", "POST", "/b")
 
-	first := BuildImpactDocument(project, []diff.FileChange{changeB, changeA}, impact.TreeResult{
-		Roots:       []impact.RootImpact{rootB, rootA},
-		Diagnostics: []facts.DiagnosticFact{{ID: "diagnostic:b"}, {ID: "diagnostic:a"}},
+	first := BuildImpactDocument([]diff.FileChange{changeB, changeA}, impact.TreeResult{
+		Roots: []impact.RootImpact{rootB, rootA},
 	}, ImpactDocumentOptions{})
-	second := BuildImpactDocument(project, []diff.FileChange{changeA, changeB}, impact.TreeResult{
-		Roots:       []impact.RootImpact{rootA, rootB},
-		Diagnostics: []facts.DiagnosticFact{{ID: "diagnostic:a"}, {ID: "diagnostic:b"}},
+	second := BuildImpactDocument([]diff.FileChange{changeA, changeB}, impact.TreeResult{
+		Roots: []impact.RootImpact{rootA, rootB},
 	}, ImpactDocumentOptions{})
 
 	firstJSON, err := RenderImpactTreeJSON(first)
@@ -69,15 +65,12 @@ func TestRenderImpactTreeJSONIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestBuildImpactDocumentKeepsRootWithNoEndpointAndDedupesDiagnostics(t *testing.T) {
-	project := facts.ProjectFact{Root: "/tmp/project", ModulePath: "example.com/project"}
+func TestBuildImpactDocumentKeepsRootWithNoEndpoint(t *testing.T) {
 	root := testRootImpact("change:orphan", "func:example.com/project::Orphan", "orphan.go", "Orphan", "", "")
 	root.Endpoints = nil
-	diagnostic := facts.DiagnosticFact{ID: "diagnostic:unresolved", Code: "symbol_reference_unresolved"}
 
-	doc := BuildImpactDocument(project, nil, impact.TreeResult{
-		Roots:       []impact.RootImpact{root},
-		Diagnostics: []facts.DiagnosticFact{diagnostic, diagnostic},
+	doc := BuildImpactDocument(nil, impact.TreeResult{
+		Roots: []impact.RootImpact{root},
 	}, ImpactDocumentOptions{})
 	if len(doc.FileSources) != 1 {
 		t.Fatalf("fileSources = %#v", doc.FileSources)
@@ -85,16 +78,12 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpointAndDedupesDiagnostics(t *test
 	if len(doc.FileSources[0].Symbols) != 1 || len(doc.FileSources[0].ImpactedEndpoints) != 0 {
 		t.Fatalf("source = %#v", doc.FileSources[0])
 	}
-	if len(doc.Diagnostics) != 1 || doc.Diagnostics[0].Code != "symbol_reference_unresolved" {
-		t.Fatalf("diagnostics = %#v", doc.Diagnostics)
-	}
 	if doc.Summary.ImpactedEndpointCount != 0 || len(doc.Summary.ImpactedEndpoints) != 0 {
 		t.Fatalf("summary = %#v", doc.Summary)
 	}
 }
 
 func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
-	project := facts.ProjectFact{Root: "/tmp/project", ModulePath: "example.com/project"}
 	fileChanges := []diff.FileChange{
 		{NewPath: "controller/checkin.go", Raw: "diff --git a/controller/checkin.go b/controller/checkin.go\n"},
 		{NewPath: "go.mod", Raw: "diff --git a/go.mod b/go.mod\n"},
@@ -150,7 +139,7 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	fallbackRoot.Change.Source = "go_mod_diff"
 	fallbackRoot.Change.SourceFactID = "module_usage:decimal-fallback"
 
-	doc := BuildImpactDocument(project, fileChanges, impact.TreeResult{
+	doc := BuildImpactDocument(fileChanges, impact.TreeResult{
 		Roots: []impact.RootImpact{fileRoot, moduleRoot, fallbackRoot},
 	}, ImpactDocumentOptions{
 		ModuleChanges: []facts.ModuleChangeFact{{
@@ -222,30 +211,8 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	}
 }
 
-func TestRenderImpactTreeJSONOmitsDiagnostics(t *testing.T) {
-	doc := ImpactDocument{
-		Summary: ImpactSummary{ImpactedEndpoints: []EndpointSummary{}},
-		Diagnostics: []ImpactDiagnostic{{
-			Code:     "symbol_reference_unresolved",
-			Severity: "warning",
-			Message:  "reference could not be resolved",
-			File:     "controller/a.go",
-		}},
-		FileSources: []FileSourceImpact{},
-	}
-
-	payload, err := RenderImpactTreeJSON(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(payload, []byte(`"diagnostics"`)) {
-		t.Fatalf("diagnostics should be omitted from impact output: %s", payload)
-	}
-}
-
 func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 	doc := BuildImpactDocument(
-		facts.ProjectFact{Root: "/tmp/project"},
 		[]diff.FileChange{{NewPath: "go.mod"}},
 		impact.TreeResult{},
 		ImpactDocumentOptions{
@@ -274,7 +241,6 @@ func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 }
 
 func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
-	project := facts.ProjectFact{Root: "/tmp/project"}
 	shared := impact.Node{
 		ID:         "func:example.com/project/service::Shared",
 		Kind:       "func",
@@ -297,7 +263,7 @@ func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	rootA := rawTestRoot("change:a", "func:example.com/project/controller::A", "controller/a.go", "A", shared)
 	rootB := rawTestRoot("change:b", "func:example.com/project/controller::B", "controller/a.go", "B", shared)
 
-	doc := BuildImpactDocument(project, []diff.FileChange{{
+	doc := BuildImpactDocument([]diff.FileChange{{
 		NewPath: "controller/a.go",
 		Raw:     "diff --git a/controller/a.go b/controller/a.go\n+changed\n",
 	}}, impact.TreeResult{Roots: []impact.RootImpact{rootA, rootB}}, ImpactDocumentOptions{})
@@ -362,7 +328,6 @@ func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 		},
 	)
 	doc := BuildImpactDocument(
-		facts.ProjectFact{Root: "/absolute/project"},
 		[]diff.FileChange{{NewPath: "controller/a.go", Raw: "diff --git a/controller/a.go b/controller/a.go\n"}},
 		impact.TreeResult{Roots: []impact.RootImpact{root}},
 		ImpactDocumentOptions{},
@@ -416,7 +381,6 @@ func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
 	)
 	root.Change.Confidence = facts.ConfidenceLow
 	doc := BuildImpactDocument(
-		facts.ProjectFact{},
 		[]diff.FileChange{{NewPath: "controller/a.go"}},
 		impact.TreeResult{Roots: []impact.RootImpact{root}},
 		ImpactDocumentOptions{},
@@ -428,32 +392,6 @@ func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
 	}
 	if rootNode.Children[0].Confidence != facts.ConfidenceMedium {
 		t.Fatalf("child confidence = %#v", rootNode.Children[0])
-	}
-}
-
-func TestImpactDocumentKeepsInternalDiagnosticsButOmitsFromJSON(t *testing.T) {
-	doc := BuildImpactDocument(
-		facts.ProjectFact{},
-		nil,
-		impact.TreeResult{Diagnostics: []facts.DiagnosticFact{{
-			ID:       "diagnostic:unresolved",
-			Code:     "symbol_reference_unresolved",
-			Severity: "warning",
-			Message:  "reference could not be resolved",
-			Span:     facts.SourceSpan{File: "controller/a.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 8},
-		}}},
-		ImpactDocumentOptions{},
-	)
-
-	if len(doc.Diagnostics) != 1 || doc.Diagnostics[0].File != "controller/a.go" {
-		t.Fatalf("diagnostics = %#v", doc.Diagnostics)
-	}
-	payload, err := RenderImpactTreeJSON(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(payload, []byte(`"diagnostics"`)) {
-		t.Fatalf("diagnostics should be omitted from impact output: %s", payload)
 	}
 }
 

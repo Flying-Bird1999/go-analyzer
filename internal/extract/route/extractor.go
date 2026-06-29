@@ -8,17 +8,12 @@ import (
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
 func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
-	return ExtractWithConfig(p, nil, store, config.Default())
-}
-
-func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store, cfg config.Config) error {
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
 			for _, decl := range file.AST.Decls {
@@ -26,7 +21,7 @@ func ExtractWithConfig(p *project.Project, _ *astindex.Index, store *facts.Store
 				if !ok || fn.Body == nil {
 					continue
 				}
-				collectFunc(p, pkg, file, fn, store, cfg)
+				collectFunc(p, pkg, file, fn, store)
 			}
 		}
 	}
@@ -48,12 +43,12 @@ func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupCont
 	return out
 }
 
-func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, cfg config.Config) {
+func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store) {
 	routeFunc := routeFuncSymbolID(pkg.Path, fn)
 	groups := rootGroups(routeFunc, fn)
 	cursor := &routeEventCursor{}
 	for _, stmt := range fn.Body.List {
-		collectStmt(p, file, routeFunc, store, groups, stmt, cursor, cfg)
+		collectStmt(p, file, routeFunc, store, groups, stmt, cursor)
 	}
 }
 
@@ -66,7 +61,7 @@ func (c *routeEventCursor) Next() int {
 	return c.next
 }
 
-func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, stmt ast.Stmt, cursor *routeEventCursor, cfg config.Config) {
+func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, stmt ast.Stmt, cursor *routeEventCursor) {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
 		for i, lhs := range s.Lhs {
@@ -74,7 +69,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 			if !ok || i >= len(s.Rhs) {
 				continue
 			}
-			if parent, prefix, ok := groupCall(groups, s.Rhs[i], cfg); ok {
+			if parent, prefix, ok := groupCall(groups, s.Rhs[i]); ok {
 				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
 				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix}
@@ -108,33 +103,33 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 			return
 		}
 		nextIndex := cursor.next + 1
-		if binding, ok := middlewareCall(p, file, routeFunc, groups, call, nextIndex, cfg); ok {
+		if binding, ok := middlewareCall(p, file, routeFunc, groups, call, nextIndex); ok {
 			cursor.Next()
 			store.Middleware = append(store.Middleware, binding)
 			return
 		}
 		nextIndex = cursor.next + 1
-		if route, ok := routeCall(p, file, routeFunc, store, groups, call, nextIndex, cfg); ok {
+		if route, ok := routeCall(p, file, routeFunc, store, groups, call, nextIndex); ok {
 			cursor.Next()
 			store.Routes = append(store.Routes, route)
 		}
 	case *ast.BlockStmt:
 		for _, child := range s.List {
-			collectStmt(p, file, routeFunc, store, groups, child, cursor, cfg)
+			collectStmt(p, file, routeFunc, store, groups, child, cursor)
 		}
 	case *ast.IfStmt:
 		branchGroups := copyGroups(groups)
 		if s.Init != nil {
-			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, cursor, cfg)
+			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, cursor)
 		}
-		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, cursor, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, cursor)
 		if s.Else != nil {
-			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, cursor, cfg)
+			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, cursor)
 		}
 	case *ast.ForStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor)
 	case *ast.RangeStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, cfg)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor)
 	}
 }
 
@@ -182,7 +177,14 @@ func groupMiddlewareArgs(expr ast.Expr) []string {
 	return out
 }
 
-func groupCall(groups map[string]groupContext, expr ast.Expr, cfg config.Config) (parent groupContext, prefix string, ok bool) {
+func groupCall(groups map[string]groupContext, expr ast.Expr) (parent groupContext, prefix string, ok bool) {
+	if ident, ok := expr.(*ast.Ident); ok {
+		parent, ok := groups[ident.Name]
+		if !ok {
+			return groupContext{}, "", false
+		}
+		return parent, parent.prefix, true
+	}
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {
 		return groupContext{}, "", false
@@ -203,19 +205,19 @@ func groupCall(groups map[string]groupContext, expr ast.Expr, cfg config.Config)
 		}
 		return parent, joinPath(parent.prefix, local), true
 	}
-	if !cfg.IsRouteGroupWrapper(shortCallName(call)) {
+	if !isRouteGroupWrapper(shortCallName(call)) {
 		return groupContext{}, "", false
 	}
-	return groupCall(groups, call.Args[0], cfg)
+	return groupCall(groups, call.Args[0])
 }
 
-func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int, cfg config.Config) (facts.RouteRegistrationFact, bool) {
-	parsed, ok := ParseRouteCall(call, cfg)
+func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
+	parsed, ok := ParseRouteCall(call)
 	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
 	selector := call.Fun.(*ast.SelectorExpr)
-	group, groupWrappers, ok := groupForExpr(groups, selector.X, cfg)
+	group, groupWrappers, ok := groupForExpr(groups, selector.X)
 	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
@@ -236,7 +238,6 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		Wrappers:       wrappers,
 		RouteFunc:      routeFunc,
 		StatementIndex: statementIndex,
-		SourceFamily:   sourceFamily(file),
 		File:           filepath.ToSlash(mustRel(p.Root, file.Path)),
 		Span:           spanFor(p, file, call.Pos(), call.End()),
 	}
@@ -249,7 +250,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 			RelatedFactIDs: []string{route.ID},
 		})
 	}
-	if isUnresolvedHandlerExpression(call.Args[1], cfg) {
+	if isUnresolvedHandlerExpression(call.Args[1]) {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:           diagnostics.CodeRouteUnresolvedHandler,
 			Severity:       diagnostics.SeverityWarning,
@@ -261,32 +262,24 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 	return route, true
 }
 
-func isUnresolvedHandlerExpression(expr ast.Expr, cfg config.Config) bool {
+func isUnresolvedHandlerExpression(expr ast.Expr) bool {
 	switch x := expr.(type) {
 	case *ast.Ident, *ast.SelectorExpr:
 		return false
 	case *ast.CallExpr:
-		_, wrappers := unwrapHandler(x, cfg)
+		_, wrappers := unwrapHandler(x)
 		return len(wrappers) == 0
 	default:
 		return true
 	}
 }
 
-func sourceFamily(file *project.File) string {
-	path := filepath.ToSlash(file.Path)
-	if strings.Contains(path, "/generated/") || strings.Contains(path, "/gen/") {
-		return "generated"
-	}
-	return ""
-}
-
-func middlewareCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, groups map[string]groupContext, call *ast.CallExpr, statementIndex int, cfg config.Config) (facts.MiddlewareBindingFact, bool) {
+func middlewareCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.MiddlewareBindingFact, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || selector.Sel.Name != "Use" || len(call.Args) == 0 {
 		return facts.MiddlewareBindingFact{}, false
 	}
-	group, _, ok := groupForExpr(groups, selector.X, cfg)
+	group, _, ok := groupForExpr(groups, selector.X)
 	if !ok {
 		return facts.MiddlewareBindingFact{}, false
 	}

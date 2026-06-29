@@ -118,6 +118,36 @@ func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
+	guard := facts.SymbolID("func:example.com/project/router::Guard")
+	store.Routes = append(store.Routes,
+		facts.RouteRegistrationFact{
+			ID:        "route:guarded",
+			RouteFunc: routeFunc,
+			Span:      facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 42},
+		},
+		facts.RouteRegistrationFact{
+			ID:        "route:plain",
+			RouteFunc: routeFunc,
+			Span:      facts.SourceSpan{File: "router/router.go", StartLine: 21, StartCol: 2, EndLine: 21, EndCol: 35},
+		},
+	)
+	store.References = append(store.References, facts.ReferenceFact{
+		ID:         "ref:guard",
+		FromSymbol: routeFunc,
+		ToSymbol:   guard,
+		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 10},
+	})
+
+	graph := NewRouteGraph(store)
+	routes := graph.RoutesForDependency(guard)
+	if len(routes) != 1 || routes[0].ID != "route:guarded" {
+		t.Fatalf("dependency routes = %#v", routes)
+	}
+}
+
 func extractAndLinkFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "testdata", "fixtures", fixture)

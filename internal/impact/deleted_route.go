@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	annotationextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
@@ -21,7 +20,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/link"
 )
 
-func RecoverDeletedRoutes(fileChanges []diff.FileChange, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
+func RecoverDeletedRoutes(fileChanges []diff.FileChange, idx *astindex.Index, store *facts.Store, source string) {
 	if source == "" {
 		source = "git_diff"
 	}
@@ -34,16 +33,16 @@ func RecoverDeletedRoutes(fileChanges []diff.FileChange, idx *astindex.Index, st
 			continue
 		}
 		for _, block := range fileChange.DeletedBlocks {
-			recoverDeletedRoutesInBlock(file, block, idx, store, cfg, source)
-			recoverDeletedHandlersInBlock(file, block, idx, store, cfg, source)
+			recoverDeletedRoutesInBlock(file, block, idx, store, source)
+			recoverDeletedHandlersInBlock(file, block, idx, store, source)
 		}
 	}
 }
 
-func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
+func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, source string) {
 	for _, candidate := range parseDeletedRouteCalls(block.Lines) {
 		call := candidate.call
-		parsed, ok := routeextract.ParseRouteCall(call, cfg)
+		parsed, ok := routeextract.ParseRouteCall(call)
 		if !ok {
 			continue
 		}
@@ -60,19 +59,19 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *asti
 		wrappers := append([]facts.WrapperFact{}, parsed.GroupWrappers...)
 		wrappers = append(wrappers, parsed.HandlerWrappers...)
 		route := facts.RouteRegistrationFact{
-			ID:             deletedRouteID(file, parsed.Method, parsed.LocalPath, oldLine, candidate.offset),
-			Method:         parsed.Method,
-			LocalPath:      parsed.LocalPath,
-			PathRaw:        parsed.PathRaw,
-			ResolvedPath:   resolvedPath,
-			GroupID:        group.id,
-			GroupVar:       parsed.GroupRaw,
-			HandlerRaw:     parsed.HandlerRaw,
-			Wrappers:       wrappers,
-			RouteFunc:      group.routeFunc,
-			StatementIndex: oldLine,
-			SourceFamily:   "deleted_diff",
-			File:           file,
+			ID:                deletedRouteID(file, parsed.Method, parsed.LocalPath, oldLine, candidate.offset),
+			Method:            parsed.Method,
+			LocalPath:         parsed.LocalPath,
+			PathRaw:           parsed.PathRaw,
+			ResolvedPath:      resolvedPath,
+			GroupID:           group.id,
+			GroupVar:          parsed.GroupRaw,
+			HandlerRaw:        parsed.HandlerRaw,
+			Wrappers:          wrappers,
+			RouteFunc:         group.routeFunc,
+			StatementIndex:    oldLine,
+			RecoveredFromDiff: true,
+			File:              file,
 			Span: facts.SourceSpan{
 				File:      file,
 				StartLine: anchorLine,
@@ -151,7 +150,7 @@ type deletedHandlerDecl struct {
 	endOffset   int
 }
 
-func recoverDeletedHandlersInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, cfg config.Config, source string) {
+func recoverDeletedHandlersInBlock(file string, block diff.DeletedBlock, idx *astindex.Index, store *facts.Store, source string) {
 	packagePath := deletedFilePackagePath(file, idx, store)
 	if packagePath == "" {
 		return
@@ -188,7 +187,7 @@ func recoverDeletedHandlersInBlock(file string, block diff.DeletedBlock, idx *as
 			idx.Symbols[symbol.ID] = symbol
 		}
 		store.AddSymbol(symbol)
-		annotations := annotationextract.ParseAPIAnnotationsWithConfig(fn.Doc, cfg)
+		annotations := annotationextract.ParseAPIAnnotations(fn.Doc)
 		for index, annotation := range annotations {
 			store.Annotations = append(store.Annotations, facts.AnnotationFact{
 				ID:            deletedAnnotationID(symbol.ID, annotation.Method, annotation.Path, index),

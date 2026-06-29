@@ -33,20 +33,6 @@ func TestImpactRejectsRelativeDiffPath(t *testing.T) {
 	}
 }
 
-func TestFactsRejectsRelativeConfigPath(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "mini-bff"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = run([]string{"facts", "--project", root, "--config", "go-analyzer.json", "--format", "json"})
-	if err == nil {
-		t.Fatal("expected relative config path to fail")
-	}
-	if !strings.Contains(err.Error(), "absolute path") {
-		t.Fatalf("error = %q", err.Error())
-	}
-}
-
 func TestImpactAcceptsAbsolutePaths(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout"))
 	if err != nil {
@@ -57,10 +43,10 @@ func TestImpactAcceptsAbsolutePaths(t *testing.T) {
 index 1111111..2222222 100644
 --- a/service/common.go
 +++ b/service/common.go
-@@ -2,3 +2,4 @@ package service
+@@ -3,3 +3,3 @@ package service
  func CheckIn() string {
-+	_ = "changed"
-     return "ok"
+-	return "before"
++	return "ok"
  }
 `)
 	if err := os.WriteFile(diffPath, diff, 0o644); err != nil {

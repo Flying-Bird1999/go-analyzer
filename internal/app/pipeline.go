@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
@@ -31,11 +31,7 @@ func RunFacts(opts Options) ([]byte, error) {
 	if opts.Format != "json" {
 		return nil, fmt.Errorf("unsupported format %q", opts.Format)
 	}
-	cfg, err := loadConfig(opts.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	store, err := buildFactStore(opts.ProjectPath, cfg)
+	store, err := buildFactStore(opts.ProjectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -55,15 +51,6 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if opts.Format != "json" {
 		return nil, fmt.Errorf("unsupported format %q", opts.Format)
 	}
-	cfg, err := loadConfig(opts.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	built, err := buildFacts(opts.ProjectPath, cfg)
-	if err != nil {
-		return nil, err
-	}
-	store := built.store
 	diffBytes, err := os.ReadFile(opts.DiffPath)
 	if err != nil {
 		return nil, fmt.Errorf("read diff: %w", err)
@@ -72,8 +59,19 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := diff.ValidateApplied(opts.ProjectPath, fileChanges); err != nil {
+		return nil, err
+	}
+	built, err := buildFacts(opts.ProjectPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateChangedGoFiles(built.project, fileChanges); err != nil {
+		return nil, err
+	}
+	store := built.store
 	store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
-	impact.RecoverDeletedRoutes(fileChanges, built.index, store, cfg, "git_diff")
+	impact.RecoverDeletedRoutes(fileChanges, built.index, store, "git_diff")
 	moduleChanges, err := gomod.DiffModulesFromFileChanges(fileChanges)
 	if err != nil {
 		return nil, fmt.Errorf("diff go.mod modules: %w", err)
@@ -90,23 +88,12 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	moduleUsages := gomod.MapModuleUsage(built.project, built.index, store, moduleChanges)
 	store.ModuleUsages = append(store.ModuleUsages, moduleUsages...)
 	store.Changes = append(store.Changes, moduleUsageChanges(moduleUsages, store, "go_mod_diff")...)
-	result := impact.AnalyzeTrees(store, impact.TreeOptions{
-		MaxDepth:        cfg.Analysis.MaxDepth,
-		StopPropagation: cfg.Analysis.StopPropagation,
-	})
-	doc := output.BuildImpactDocument(store.Project, fileChanges, result, output.ImpactDocumentOptions{
+	result := impact.AnalyzeTrees(store)
+	doc := output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{
 		ModuleChanges: store.ModuleChanges,
 		ModuleUsages:  store.ModuleUsages,
 	})
 	return output.RenderImpactTreeJSON(doc)
-}
-
-func loadConfig(path string) (config.Config, error) {
-	cfg, err := config.Load(path)
-	if err != nil {
-		return config.Config{}, fmt.Errorf("load config: %w", err)
-	}
-	return cfg, nil
 }
 
 type builtFacts struct {
@@ -115,16 +102,16 @@ type builtFacts struct {
 	store   *facts.Store
 }
 
-func buildFactStore(projectPath string, cfg config.Config) (*facts.Store, error) {
-	built, err := buildFacts(projectPath, cfg)
+func buildFactStore(projectPath string) (*facts.Store, error) {
+	built, err := buildFacts(projectPath)
 	if err != nil {
 		return nil, err
 	}
 	return built.store, nil
 }
 
-func buildFacts(projectPath string, cfg config.Config) (builtFacts, error) {
-	p, err := project.Load(projectPath, project.Options{ExcludeDirs: config.DefaultSkipDirs()})
+func buildFacts(projectPath string) (builtFacts, error) {
+	p, err := project.Load(projectPath, project.Options{})
 	if err != nil {
 		return builtFacts{}, err
 	}
@@ -154,10 +141,10 @@ func buildFacts(projectPath string, cfg config.Config) (builtFacts, error) {
 	for _, symbol := range idx.Symbols {
 		store.AddSymbol(symbol)
 	}
-	if err := annotation.ExtractWithConfig(p, idx, store, cfg); err != nil {
+	if err := annotation.Extract(p, idx, store); err != nil {
 		return builtFacts{}, err
 	}
-	if err := route.ExtractWithConfig(p, idx, store, cfg); err != nil {
+	if err := route.Extract(p, idx, store); err != nil {
 		return builtFacts{}, err
 	}
 	if err := link.Run(idx, store); err != nil {
@@ -214,4 +201,20 @@ func hasGoModDiff(changes []diff.FileChange) bool {
 		}
 	}
 	return false
+}
+
+func validateChangedGoFiles(p *project.Project, changes []diff.FileChange) error {
+	changed := map[string]struct{}{}
+	for _, change := range changes {
+		if change.Status == diff.StatusDeleted || !strings.HasSuffix(change.NewPath, ".go") {
+			continue
+		}
+		changed[filepath.ToSlash(change.NewPath)] = struct{}{}
+	}
+	for _, diagnostic := range p.Diagnostics {
+		if _, ok := changed[filepath.ToSlash(diagnostic.File)]; ok {
+			return fmt.Errorf("changed Go source could not be parsed: %s", diagnostic.Message)
+		}
+	}
+	return nil
 }

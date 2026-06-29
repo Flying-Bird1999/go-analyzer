@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"strings"
 
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
@@ -18,12 +17,12 @@ type ParsedRouteCall struct {
 	HandlerWrappers []facts.WrapperFact
 }
 
-func ParseRouteCall(call *ast.CallExpr, cfg config.Config) (ParsedRouteCall, bool) {
+func ParseRouteCall(call *ast.CallExpr) (ParsedRouteCall, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || !cfg.IsHTTPMethod(selector.Sel.Name) || len(call.Args) < 2 {
+	if !ok || !isHTTPMethod(selector.Sel.Name) || len(call.Args) < 2 {
 		return ParsedRouteCall{}, false
 	}
-	groupRaw, groupWrappers, ok := parseRouteGroupExpr(selector.X, cfg)
+	groupRaw, groupWrappers, ok := parseRouteGroupExpr(selector.X)
 	if !ok {
 		return ParsedRouteCall{}, false
 	}
@@ -32,7 +31,7 @@ func ParseRouteCall(call *ast.CallExpr, cfg config.Config) (ParsedRouteCall, boo
 	if !ok {
 		pathRaw = exprString(call.Args[0])
 	}
-	handlerRaw, handlerWrappers := unwrapHandler(call.Args[1], cfg)
+	handlerRaw, handlerWrappers := unwrapHandler(call.Args[1])
 	return ParsedRouteCall{
 		GroupRaw:        groupRaw,
 		Method:          strings.ToUpper(selector.Sel.Name),
@@ -44,16 +43,16 @@ func ParseRouteCall(call *ast.CallExpr, cfg config.Config) (ParsedRouteCall, boo
 	}, true
 }
 
-func parseRouteGroupExpr(expr ast.Expr, cfg config.Config) (string, []facts.WrapperFact, bool) {
+func parseRouteGroupExpr(expr ast.Expr) (string, []facts.WrapperFact, bool) {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		return x.Name, nil, true
 	case *ast.CallExpr:
 		name := shortCallName(x)
-		if len(x.Args) == 0 || !cfg.IsRouteGroupWrapper(name) {
+		if len(x.Args) == 0 || !isRouteGroupWrapper(name) {
 			return "", nil, false
 		}
-		groupRaw, wrappers, ok := parseRouteGroupExpr(x.Args[0], cfg)
+		groupRaw, wrappers, ok := parseRouteGroupExpr(x.Args[0])
 		if !ok {
 			return "", nil, false
 		}

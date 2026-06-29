@@ -160,6 +160,29 @@ func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	}
 }
 
+func TestFactsSchemaOmitsDiffOnlyTransientFacts(t *testing.T) {
+	got, err := SchemaJSON("facts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	for _, field := range []string{"changes", "module_changes", "module_usages"} {
+		if _, ok := properties[field]; ok {
+			t.Fatalf("transient facts property %q remains: %#v", field, properties)
+		}
+	}
+	defs := doc["$defs"].(map[string]any)
+	for _, name := range []string{"change", "change_range", "module_change", "module_usage"} {
+		if _, ok := defs[name]; ok {
+			t.Fatalf("transient facts definition %q remains", name)
+		}
+	}
+}
+
 func TestImpactSchemaDoesNotExposeSchemaVersion(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {

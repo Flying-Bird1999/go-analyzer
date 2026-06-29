@@ -20,9 +20,11 @@ stable project contents and diff input.
 go-analyzer facts --project /absolute/path/to/project --format json
 ```
 
-It retains complete project metadata, symbols, annotations, routes,
-middleware, module facts, references, links, source spans, raw evidence and
-diagnostics.
+It retains project metadata, symbols, annotations, routes, middleware, current
+module dependencies, references, links, source spans, raw evidence and
+diagnostics. Diff-only transient facts (`changes`, `module_changes`, and
+`module_usages`) are internal to impact analysis and are not emitted by the
+`facts` command.
 
 ## Impact Output
 
@@ -53,8 +55,6 @@ Top-level shape:
 - `summary` is the globally deduplicated endpoint result.
 - `fileSources` contains ordinary source-file changes and their complete trees.
 - `moduleSources` contains semantic go.mod changes and their local usage trees.
-- `diagnostics` is optional and contains only recoverable issues relevant to
-  the current diff or propagation trees.
 
 ### `fileSources`
 
@@ -129,7 +129,7 @@ Every root and descendant may contain:
 - project-relative `file` and optional Go `package`;
 - incoming `relation` and source `raw`;
 - `confidence` and `level`;
-- optional `cycle` and `stopBoundary`;
+- optional `cycle`;
 - recursive `children`;
 - optional `method` and `path` for route, annotation and endpoint nodes.
 
@@ -148,15 +148,14 @@ control propagation:
 - `medium`: targeted inference or fallback.
 - `low`: weak file-level fallback.
 
-### Diagnostics
-
-Relevant recoverable failures appear in the optional top-level `diagnostics`
-array with `code`, `severity`, `message`, and optional project-relative `file`.
-Diagnostic spans, IDs and related fact IDs remain available only from `facts`.
-
 ## Single-snapshot Limitation
 
-Impact analysis indexes the post-change project. A deletion-only hunk is
+Impact analysis requires the unified diff to be applied to the project passed
+with `--project`. Added and context lines are checked before AST indexing;
+an empty diff, unsafe path, deleted file that still exists, or pre-change
+snapshot is rejected. Changed Go files that cannot be parsed are also rejected.
+
+A deletion-only hunk is
 anchored to a surviving declaration when possible. Deleted route registrations
 are additionally parsed from diff lines to recover their handler and endpoint.
 Other deleted declarations can degrade to a file fallback and

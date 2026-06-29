@@ -160,6 +160,45 @@ func TestParseUnifiedPreservesDeletedBlocks(t *testing.T) {
 	}
 }
 
+func TestParseUnifiedRetainsExpectedPostChangeLines(t *testing.T) {
+	input := []byte("diff --git a/service/a.go b/service/a.go\n" +
+		"--- a/service/a.go\n" +
+		"+++ b/service/a.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" package service\n" +
+		"-const Value = \"old\"\n" +
+		"+const Value = \"new\"\n" +
+		" \n")
+
+	changes, err := ParseUnified(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v", changes)
+	}
+	got := changes[0].ExpectedLines
+	want := []ExpectedLine{
+		{Line: 1, Text: "package service"},
+		{Line: 2, Text: `const Value = "new"`},
+		{Line: 3, Text: ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected lines = %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected line %d = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseUnifiedRejectsEmptyInput(t *testing.T) {
+	if _, err := ParseUnified(nil); err == nil {
+		t.Fatal("expected empty diff to be rejected")
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

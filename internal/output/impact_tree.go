@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -13,7 +12,6 @@ import (
 
 type ImpactDocument struct {
 	Summary       ImpactSummary        `json:"summary"`
-	Diagnostics   []ImpactDiagnostic   `json:"-"`
 	FileSources   []FileSourceImpact   `json:"fileSources"`
 	ModuleSources []ModuleSourceImpact `json:"moduleSources,omitempty"`
 }
@@ -26,27 +24,19 @@ type FileSourceImpact struct {
 }
 
 type ImpactNode struct {
-	ID           string           `json:"id"`
-	Kind         string           `json:"kind"`
-	Name         string           `json:"name,omitempty"`
-	File         string           `json:"file,omitempty"`
-	Package      string           `json:"package,omitempty"`
-	Relation     string           `json:"relation,omitempty"`
-	Raw          string           `json:"raw,omitempty"`
-	Confidence   facts.Confidence `json:"confidence,omitempty"`
-	Level        int              `json:"level"`
-	Cycle        bool             `json:"cycle,omitempty"`
-	StopBoundary bool             `json:"stopBoundary,omitempty"`
-	Children     []ImpactNode     `json:"children"`
-	Method       string           `json:"method,omitempty"`
-	Path         string           `json:"path,omitempty"`
-}
-
-type ImpactDiagnostic struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	File     string `json:"file,omitempty"`
+	ID         string           `json:"id"`
+	Kind       string           `json:"kind"`
+	Name       string           `json:"name,omitempty"`
+	File       string           `json:"file,omitempty"`
+	Package    string           `json:"package,omitempty"`
+	Relation   string           `json:"relation,omitempty"`
+	Raw        string           `json:"raw,omitempty"`
+	Confidence facts.Confidence `json:"confidence,omitempty"`
+	Level      int              `json:"level"`
+	Cycle      bool             `json:"cycle,omitempty"`
+	Children   []ImpactNode     `json:"children"`
+	Method     string           `json:"method,omitempty"`
+	Path       string           `json:"path,omitempty"`
 }
 
 type EndpointSummary struct {
@@ -90,7 +80,7 @@ type moduleSourceBuilder struct {
 	files  map[string]*fileSourceBuilder
 }
 
-func BuildImpactDocument(_ facts.ProjectFact, fileChanges []diff.FileChange, result impact.TreeResult, opts ImpactDocumentOptions) ImpactDocument {
+func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult, opts ImpactDocumentOptions) ImpactDocument {
 	files := map[string]*fileSourceBuilder{}
 	moduleSources := buildModuleSourceBuilders(opts.ModuleChanges)
 	moduleUsages := indexModuleUsages(opts.ModuleUsages)
@@ -134,7 +124,6 @@ func BuildImpactDocument(_ facts.ProjectFact, fileChanges []diff.FileChange, res
 
 	return normalizeImpactDocument(ImpactDocument{
 		Summary:       buildImpactSummary(globalEndpoints),
-		Diagnostics:   projectImpactDiagnostics(result.Diagnostics),
 		FileSources:   finalizeFileSources(files),
 		ModuleSources: finalizeModuleSources(moduleSources),
 	})
@@ -279,20 +268,19 @@ func strongerModuleBasis(left, right string) string {
 
 func projectImpactNode(node impact.Node) ImpactNode {
 	projected := ImpactNode{
-		ID:           node.ID,
-		Kind:         node.Kind,
-		Name:         node.Name,
-		File:         filepath.ToSlash(node.File),
-		Package:      node.Package,
-		Relation:     node.Relation,
-		Raw:          node.Raw,
-		Confidence:   node.Confidence,
-		Level:        node.Level,
-		Cycle:        node.Cycle,
-		StopBoundary: node.StopBoundary,
-		Method:       node.Method,
-		Path:         node.Path,
-		Children:     make([]ImpactNode, 0, len(node.Children)),
+		ID:         node.ID,
+		Kind:       node.Kind,
+		Name:       node.Name,
+		File:       filepath.ToSlash(node.File),
+		Package:    node.Package,
+		Relation:   node.Relation,
+		Raw:        node.Raw,
+		Confidence: node.Confidence,
+		Level:      node.Level,
+		Cycle:      node.Cycle,
+		Method:     node.Method,
+		Path:       node.Path,
+		Children:   make([]ImpactNode, 0, len(node.Children)),
 	}
 	for _, child := range node.Children {
 		projected.Children = append(projected.Children, projectImpactNode(child))
@@ -304,7 +292,6 @@ func mergeImpactNodes(left, right ImpactNode) ImpactNode {
 	left.Children = append(left.Children, right.Children...)
 	left.Children = mergeImpactNodeChildren(left.Children)
 	left.Cycle = left.Cycle || right.Cycle
-	left.StopBoundary = left.StopBoundary || right.StopBoundary
 	return left
 }
 
@@ -366,34 +353,6 @@ func buildImpactSummary(endpoints map[string]EndpointSummary) ImpactSummary {
 	}
 	sortEndpointSummaries(out.ImpactedEndpoints)
 	out.ImpactedEndpointCount = len(out.ImpactedEndpoints)
-	return out
-}
-
-func projectImpactDiagnostics(items []facts.DiagnosticFact) []ImpactDiagnostic {
-	byKey := map[string]ImpactDiagnostic{}
-	for _, item := range items {
-		projected := ImpactDiagnostic{
-			Code:     item.Code,
-			Severity: item.Severity,
-			Message:  item.Message,
-			File:     filepath.ToSlash(item.Span.File),
-		}
-		key := strings.Join([]string{projected.Code, projected.Severity, projected.Message, projected.File}, "\x00")
-		byKey[key] = projected
-	}
-	out := make([]ImpactDiagnostic, 0, len(byKey))
-	for _, item := range byKey {
-		out = append(out, item)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Code != out[j].Code {
-			return out[i].Code < out[j].Code
-		}
-		if out[i].File != out[j].File {
-			return out[i].File < out[j].File
-		}
-		return out[i].Message < out[j].Message
-	})
 	return out
 }
 

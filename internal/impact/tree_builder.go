@@ -2,21 +2,17 @@ package impact
 
 import (
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 
-	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/graph"
 )
 
 type treeBuilder struct {
 	*treeContext
-	endpoints   map[string]EndpointImpact
-	change      facts.ChangeFact
-	opts        TreeOptions
-	diagnostics []facts.DiagnosticFact
+	endpoints map[string]EndpointImpact
+	change    facts.ChangeFact
 }
 
 type treeContext struct {
@@ -27,10 +23,9 @@ type treeContext struct {
 	annotations map[string]facts.AnnotationFact
 }
 
-func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
+func AnalyzeTrees(store *facts.Store) TreeResult {
 	result := TreeResult{
-		Roots:       []RootImpact{},
-		Diagnostics: []facts.DiagnosticFact{},
+		Roots: []RootImpact{},
 	}
 	context := newTreeContext(store)
 	changes := append([]facts.ChangeFact(nil), store.Changes...)
@@ -38,9 +33,8 @@ func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 		return changes[i].ID < changes[j].ID
 	})
 	for _, change := range changes {
-		builder := newTreeBuilder(context, change, opts)
+		builder := newTreeBuilder(context, change)
 		root := builder.buildRoot()
-		result.Diagnostics = append(result.Diagnostics, builder.diagnostics...)
 		endpoints := make([]EndpointImpact, 0, len(builder.endpoints))
 		for _, endpoint := range builder.endpoints {
 			endpoints = append(endpoints, endpoint)
@@ -57,50 +51,7 @@ func AnalyzeTrees(store *facts.Store, opts TreeOptions) TreeResult {
 			Endpoints: endpoints,
 		})
 	}
-	result.Diagnostics = append(result.Diagnostics, relevantStoreDiagnostics(store.Diagnostics, result.Roots)...)
-	result.Diagnostics = dedupeTreeDiagnostics(result.Diagnostics)
 	return result
-}
-
-func relevantStoreDiagnostics(items []facts.DiagnosticFact, roots []RootImpact) []facts.DiagnosticFact {
-	relevantIDs := map[string]bool{}
-	relevantFiles := map[string]bool{}
-	for _, root := range roots {
-		addRelevantValue(relevantIDs, root.Change.ID)
-		addRelevantValue(relevantIDs, root.Change.TargetID)
-		addRelevantValue(relevantIDs, string(root.Change.SymbolID))
-		addRelevantValue(relevantIDs, root.Change.SourceFactID)
-		addRelevantValue(relevantFiles, root.Change.File)
-		collectRelevantNodeFacts(root.Root, relevantIDs, relevantFiles)
-	}
-	var out []facts.DiagnosticFact
-	for _, item := range items {
-		relevant := item.Span.File != "" && relevantFiles[item.Span.File]
-		for _, id := range item.RelatedFactIDs {
-			if relevantIDs[id] {
-				relevant = true
-				break
-			}
-		}
-		if relevant {
-			out = append(out, item)
-		}
-	}
-	return out
-}
-
-func collectRelevantNodeFacts(node Node, ids, files map[string]bool) {
-	addRelevantValue(ids, node.ID)
-	addRelevantValue(files, node.File)
-	for _, child := range node.Children {
-		collectRelevantNodeFacts(child, ids, files)
-	}
-}
-
-func addRelevantValue(set map[string]bool, value string) {
-	if value != "" {
-		set[value] = true
-	}
 }
 
 func newTreeContext(store *facts.Store) *treeContext {
@@ -120,13 +71,11 @@ func newTreeContext(store *facts.Store) *treeContext {
 	return context
 }
 
-func newTreeBuilder(context *treeContext, change facts.ChangeFact, opts TreeOptions) *treeBuilder {
+func newTreeBuilder(context *treeContext, change facts.ChangeFact) *treeBuilder {
 	return &treeBuilder{
 		treeContext: context,
 		endpoints:   map[string]EndpointImpact{},
 		change:      change,
-		opts:        opts,
-		diagnostics: []facts.DiagnosticFact{},
 	}
 }
 
@@ -182,13 +131,8 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	symbolID := facts.SymbolID(node.ID)
 	references := b.reverse.ReferencesTo(symbolID)
 	routes := b.routes.RoutesForHandler(symbolID)
+	dependencyRoutes := b.routes.RoutesForDependency(symbolID)
 	middlewareBindings := b.middlewareBindingsForSymbol(symbolID)
-	if b.applyStopBoundary(node) {
-		return
-	}
-	if b.depthReached(node, len(references) > 0 || len(routes) > 0 || len(middlewareBindings) > 0) {
-		return
-	}
 	for _, ref := range references {
 		child := b.symbolNode(ref.FromSymbol, node.Level+1)
 		child.Relation = referenceRelation(ref.Kind)
@@ -207,6 +151,9 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	}
 	for _, route := range routes {
 		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "registered_handler"))
+	}
+	for _, route := range dependencyRoutes {
+		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "route_dependency"))
 	}
 	for _, middleware := range middlewareBindings {
 		node.Children = append(node.Children, b.middlewareNode(middleware, node.Level+1, "middleware_symbol"))
@@ -286,16 +233,10 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 		Children:   []Node{},
 	}
 	annotations := b.routes.AnnotationsForHandler(route.HandlerSymbol)
-	if b.applyStopBoundary(&node) {
-		return node
-	}
-	if b.depthReached(&node, len(annotations) > 0 || (route.Method != "" && path != "")) {
-		return node
-	}
 	if len(annotations) == 0 {
 		if route.Method != "" && path != "" {
 			relation := "route_endpoint"
-			if route.SourceFamily == "deleted_diff" {
+			if route.RecoveredFromDiff {
 				relation = "deleted_route_endpoint"
 			}
 			node.Children = append(node.Children, b.endpointNode(
@@ -331,13 +272,7 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 		Level:      level,
 		Children:   []Node{},
 	}
-	if b.applyStopBoundary(&node) {
-		return node
-	}
 	routes := b.routes.RoutesAffectedByMiddleware(middleware.ID)
-	if b.depthReached(&node, len(routes) > 0) {
-		return node
-	}
 	for _, route := range routes {
 		node.Children = append(node.Children, b.routeNode(route, level+1, "middleware_applies_to"))
 	}
@@ -348,7 +283,7 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
 	routePath := route.ResolvedPath
 	routePathAuthoritative := routePath != "" && (routePath != route.LocalPath || isLegacyPathGroup(route.GroupVar))
-	if route.SourceFamily == "deleted_diff" && route.LocalPath != "" {
+	if route.RecoveredFromDiff && route.LocalPath != "" {
 		routePath = route.LocalPath
 		routePathAuthoritative = true
 	}
@@ -371,7 +306,7 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		}
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
-		if route.SourceFamily == "deleted_diff" {
+		if route.RecoveredFromDiff {
 			endpointRelation = "deleted_route_endpoint"
 		}
 	}
@@ -394,12 +329,6 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		Method:     method,
 		Path:       path,
 		Children:   []Node{},
-	}
-	if b.applyStopBoundary(&node) {
-		return node
-	}
-	if b.depthReached(&node, method != "" && path != "") {
-		return node
 	}
 	if method != "" && path != "" {
 		node.Children = append(node.Children, b.endpointNode(
@@ -538,68 +467,4 @@ func symbolNameFromID(id facts.SymbolID) string {
 		return raw[index+1:]
 	}
 	return raw
-}
-
-func (b *treeBuilder) applyStopBoundary(node *Node) bool {
-	if node.File == "" {
-		return false
-	}
-	for _, pattern := range b.opts.StopPropagation {
-		if matchesStopPattern(node.File, pattern) {
-			node.StopBoundary = true
-			return true
-		}
-	}
-	return false
-}
-
-func (b *treeBuilder) depthReached(node *Node, hasChildren bool) bool {
-	if !hasChildren || b.opts.MaxDepth <= 0 || node.Level < b.opts.MaxDepth {
-		return false
-	}
-	b.diagnostics = append(b.diagnostics, facts.DiagnosticFact{
-		ID:       fmt.Sprintf("diagnostic:%s:%s:%s", diagnostics.CodePropagationDepthTruncated, b.change.ID, node.ID),
-		Code:     string(diagnostics.CodePropagationDepthTruncated),
-		Severity: string(diagnostics.SeverityWarning),
-		Message:  fmt.Sprintf("impact propagation stopped at configured max depth %d", b.opts.MaxDepth),
-		Span:     node.Span,
-		RelatedFactIDs: []string{
-			b.change.ID,
-			node.ID,
-		},
-	})
-	return true
-}
-
-func matchesStopPattern(file, pattern string) bool {
-	file = strings.TrimPrefix(path.Clean(filepathSlash(file)), "./")
-	pattern = strings.TrimPrefix(path.Clean(filepathSlash(pattern)), "./")
-	if pattern == "." || pattern == "" {
-		return false
-	}
-	if strings.HasSuffix(pattern, "/**") {
-		prefix := strings.TrimSuffix(pattern, "/**")
-		return file == prefix || strings.HasPrefix(file, prefix+"/")
-	}
-	matched, err := path.Match(pattern, file)
-	return err == nil && matched
-}
-
-func filepathSlash(value string) string {
-	return strings.ReplaceAll(value, "\\", "/")
-}
-
-func dedupeTreeDiagnostics(items []facts.DiagnosticFact) []facts.DiagnosticFact {
-	byID := map[string]facts.DiagnosticFact{}
-	for _, item := range items {
-		byID[item.ID] = item
-	}
-	out := make([]facts.DiagnosticFact, 0, len(byID))
-	for _, item := range byID {
-		out = append(out, item)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].ID < out[j].ID
-	})
-	return out
 }

@@ -103,8 +103,8 @@ func TestTypeImpactTreeGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.Changes = diff.MapChanges(fileChanges, store, "git_diff")
-	result := impact.AnalyzeTrees(store, impact.TreeOptions{})
-	doc := output.BuildImpactDocument(store.Project, fileChanges, result, output.ImpactDocumentOptions{})
+	result := impact.AnalyzeTrees(store)
+	doc := output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{})
 	got, err := output.RenderImpactTreeJSON(doc)
 	if err != nil {
 		t.Fatal(err)

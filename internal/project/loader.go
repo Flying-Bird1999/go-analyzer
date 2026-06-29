@@ -35,7 +35,7 @@ func Load(root string, opts Options) (*Project, error) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if isGoIgnoredName(d.Name()) || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		return p.loadFile(path)
@@ -46,8 +46,11 @@ func Load(root string, opts Options) (*Project, error) {
 }
 
 func shouldSkipDir(name string, extra []string) bool {
+	if isGoIgnoredName(name) {
+		return true
+	}
 	switch name {
-	case ".git", ".cache", "vendor", "node_modules", "testdata":
+	case "vendor", "node_modules", "testdata":
 		return true
 	}
 	for _, item := range extra {
@@ -56,6 +59,10 @@ func shouldSkipDir(name string, extra []string) bool {
 		}
 	}
 	return false
+}
+
+func isGoIgnoredName(name string) bool {
+	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }
 
 func (p *Project) loadFile(path string) error {

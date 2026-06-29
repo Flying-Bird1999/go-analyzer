@@ -3,8 +3,31 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/.analyzer-smoke"
+ANALYZER_BIN="${OUT_DIR}/go-analyzer"
+ACTIVE_PROJECT=""
+ACTIVE_PATCH=""
 
 mkdir -p "${OUT_DIR}"
+
+restore_active_change() {
+  if [[ -z "${ACTIVE_PROJECT}" ]]; then
+    return
+  fi
+  git -C "${ACTIVE_PROJECT}" apply --reverse "${ACTIVE_PATCH}"
+  ACTIVE_PROJECT=""
+  ACTIVE_PATCH=""
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ! restore_active_change; then
+    status=1
+  fi
+  exit "${status}"
+}
+
+trap cleanup EXIT
 
 resolve_sibling() {
   local preferred="$1"
@@ -70,7 +93,7 @@ run_project() {
   local out="${OUT_DIR}/${name}.facts.json"
 
   echo "analyzing ${name} at ${path}"
-  (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer facts --project "${path}" --format json > "${out}")
+  "${ANALYZER_BIN}" facts --project "${path}" --format json > "${out}"
   python3 -m json.tool "${out}" > /dev/null
   python3 - "$out" <<'PY'
 import json
@@ -107,6 +130,10 @@ write_real_file_diff() {
   local new="$4"
   local out="$5"
 
+  if [[ -n "${ACTIVE_PROJECT}" ]]; then
+    echo "previous smoke change is still active: ${ACTIVE_PATCH}" >&2
+    return 1
+  fi
   python3 - "$project" "$rel_file" "$old" "$new" "$out" <<'PY'
 import pathlib
 import subprocess
@@ -131,14 +158,14 @@ try:
     path.write_text(original.replace(old, new, 1), encoding="utf-8")
     with out.open("wb") as f:
         git("diff", "--", rel_file, stdout=f)
-finally:
+    if not out.read_text(encoding="utf-8").strip():
+        raise RuntimeError(f"generated empty diff for {rel_file}")
+except BaseException:
     path.write_text(original, encoding="utf-8")
-
-if not out.read_text(encoding="utf-8").strip():
-    raise SystemExit(f"generated empty diff for {rel_file}")
-if git("diff", "--quiet", "--", rel_file, check=False).returncode != 0:
-    raise SystemExit(f"{rel_file} was not restored")
+    raise
 PY
+  ACTIVE_PROJECT="${project}"
+  ACTIVE_PATCH="${out}"
 }
 
 write_real_multi_file_diff() {
@@ -146,6 +173,10 @@ write_real_multi_file_diff() {
   local out="$2"
   shift 2
 
+  if [[ -n "${ACTIVE_PROJECT}" ]]; then
+    echo "previous smoke change is still active: ${ACTIVE_PATCH}" >&2
+    return 1
+  fi
   python3 - "$project" "$out" "$@" <<'PY'
 import pathlib
 import subprocess
@@ -188,16 +219,15 @@ try:
     rel_files = list(files)
     with out.open("wb") as f:
         git("diff", "--", *rel_files, stdout=f)
-finally:
+    if not out.read_text(encoding="utf-8").strip():
+        raise RuntimeError("generated empty diff")
+except BaseException:
     for item in files.values():
         item["path"].write_text(item["original"], encoding="utf-8")
-
-if not out.read_text(encoding="utf-8").strip():
-    raise SystemExit("generated empty diff")
-for rel_file in files:
-    if git("diff", "--quiet", "--", rel_file, check=False).returncode != 0:
-        raise SystemExit(f"{rel_file} was not restored")
+    raise
 PY
+  ACTIVE_PROJECT="${project}"
+  ACTIVE_PATCH="${out}"
 }
 
 run_real_impact_case() {
@@ -209,9 +239,17 @@ run_real_impact_case() {
   local module_path="${6:-}"
   local module_kind="${7:-}"
   local out="${OUT_DIR}/${name}.impact.json"
+  local repeated_out="${OUT_DIR}/${name}.repeat.impact.json"
 
   echo "analyzing ${name} real impact case"
-  (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
+  if [[ "${ACTIVE_PROJECT}" != "${project}" || "${ACTIVE_PATCH}" != "${patch}" ]]; then
+    echo "real impact case must run against its active post-change source: ${name}" >&2
+    return 1
+  fi
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${out}"
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${repeated_out}"
+  cmp "${out}" "${repeated_out}"
+  rm -f "${repeated_out}"
   python3 -m json.tool "${out}" > /dev/null
   validate_raw_impact "${out}"
   python3 - "$out" "$method" "$endpoint_path" "$name" "$module_path" "$module_kind" <<'PY'
@@ -239,6 +277,7 @@ print(
     )
 )
 PY
+  restore_active_change
 }
 
 validate_decimal_module_case() {
@@ -441,6 +480,68 @@ print(
 PY
 }
 
+validate_known_real_endpoint_sets() {
+  python3 - "${OUT_DIR}" <<'PY'
+import json
+import pathlib
+import sys
+
+out_dir = pathlib.Path(sys.argv[1])
+expected = {
+    "real-admin-customer-empty-path": {
+        ("GET", "/admin/api/bff-web/mc/customer/:customerId"),
+        ("GET", "/uc/customers/:customerId"),
+    },
+    "real-admin-customer-wrapper": {
+        ("PUT", "/admin/api/bff-web/mc/customer/:customerId"),
+        ("PUT", "/uc/customers/:customerId"),
+    },
+    "real-admin-product-set-list": {
+        ("GET", "/admin/api/bff-web/trade/product/product_set/list"),
+    },
+    "real-admin-user-info": {
+        ("GET", "/admin/api/bff-web/user/info"),
+    },
+    "real-admin-app-live-statistics": {
+        ("GET", "/admin/api/bff-app/live/sale/:salesId/statistics"),
+        ("GET", "/api/posts/post/sales/statistics/:salesId"),
+    },
+    "real-admin-route-helper": {
+        ("DELETE", "/admin/api/bff-web/live/activity/:activityId"),
+        ("PATCH", "/admin/api/bff-web/live/activity/voucher/:activityId"),
+        ("POST", "/admin/api/bff-web/live/activity/:id"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/comment/post"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/end"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/reward/again"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/reward/manual"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/rewards/invalid"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/start"),
+        ("POST", "/admin/api/bff-web/live/activity/bidding/:activityId/publish-maximum-bid"),
+        ("POST", "/admin/api/bff-web/live/activity/end/manual"),
+        ("PUT", "/admin/api/bff-web/live/activity/:activityId"),
+    },
+    "real-client-common-checkin": {
+        ("POST", "/api/bff-web/common/checkIn"),
+    },
+    "real-client-live-view": {
+        ("GET", "/api/bff-web/live/view/:salesId/redirect"),
+    },
+}
+
+for name, want in expected.items():
+    with (out_dir / f"{name}.impact.json").open(encoding="utf-8") as f:
+        data = json.load(f)
+    got = {
+        (item.get("method"), item.get("path"))
+        for item in (data.get("summary") or {}).get("impactedEndpoints") or []
+    }
+    if got != want:
+        raise SystemExit(
+            f"{name} endpoint mismatch: missing={want - got}, unexpected={got - want}"
+        )
+PY
+}
+
 run_impact_fixture() {
   local project="${ROOT_DIR}/testdata/fixtures/type-impact"
   local patch="${ROOT_DIR}/testdata/diffs/type-impact.diff"
@@ -448,7 +549,7 @@ run_impact_fixture() {
   local started="${SECONDS}"
 
   echo "analyzing type-impact fixture"
-  (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${out}"
   python3 -m json.tool "${out}" > /dev/null
   validate_raw_impact "${out}"
   python3 - "$out" "$((SECONDS - started))" <<'PY'
@@ -503,7 +604,7 @@ run_impact_case() {
   local out="${OUT_DIR}/${name}.impact.json"
 
   echo "analyzing ${name} impact fixture"
-  (cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go run ./cmd/go-analyzer impact --project "${project}" --diff "${patch}" --format json > "${out}")
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${out}"
   python3 -m json.tool "${out}" > /dev/null
   validate_raw_impact "${out}"
   python3 - "$out" "$method" "$endpoint_path" "$name" <<'PY'
@@ -533,10 +634,12 @@ PY
 SC1_BFF="$(resolve_sibling "sl-sc1-bff-service" "sc1-bff-service")"
 SC1_ADMIN_BFF="$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
 
+(cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go build -o "${ANALYZER_BIN}" ./cmd/go-analyzer)
+
 run_project "sl-sc1-bff-service" "${SC1_BFF}"
 run_project "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
 run_impact_fixture
-run_impact_case "deleted-route" "POST" "/public/orders"
+run_impact_case "deleted-route" "POST" "/internal/orders"
 run_impact_case "gomod-impact" "GET" "/api/checkIn"
 run_impact_case "middleware-selector" "GET" "/orders"
 
@@ -579,6 +682,14 @@ write_real_file_diff \
   "res, err := live.SalesStatisticsServiceClientGetStatistics(ctx, &salesStatistics.SalesStatisticsGetReq{ // smoke app live" \
   "${OUT_DIR}/real-admin-app-live-statistics.diff"
 run_real_impact_case "real-admin-app-live-statistics" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-app-live-statistics.diff" "GET" "/admin/api/bff-app/live/sale/:salesId/statistics"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "router/live/activity.go" \
+  "	liveWritePermissionMid := middleware.Permission(middleware.Live, middleware.ShoplineStudio, middleware.CreateUpdate, false)" \
+  "	liveWritePermissionMid := middleware.Permission(middleware.Live, middleware.ShoplineStudio, middleware.CreateUpdate, false) // smoke route helper" \
+  "${OUT_DIR}/real-admin-route-helper.diff"
+run_real_impact_case "real-admin-route-helper" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-route-helper.diff" "POST" "/admin/api/bff-web/live/activity/:id"
 
 write_real_file_diff \
   "${SC1_BFF}" \
@@ -631,5 +742,7 @@ write_real_file_diff \
   "	resp, err := live.LiveViewClient.GetMerchantIdBySalesId(c, &live_viewer_client.GetMerchantIdReq{ // smoke route" \
   "${OUT_DIR}/real-client-live-view.diff"
 run_real_impact_case "real-client-live-view" "${SC1_BFF}" "${OUT_DIR}/real-client-live-view.diff" "GET" "/api/bff-web/live/view/:salesId/redirect"
+
+validate_known_real_endpoint_sets
 
 echo "smoke outputs written to ${OUT_DIR}"

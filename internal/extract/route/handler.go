@@ -4,15 +4,14 @@ import (
 	"go/ast"
 	"strings"
 
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
-func unwrapHandler(expr ast.Expr, cfg config.Config) (string, []facts.WrapperFact) {
-	return unwrapHandlerDepth(expr, cfg, 0)
+func unwrapHandler(expr ast.Expr) (string, []facts.WrapperFact) {
+	return unwrapHandlerDepth(expr, 0)
 }
 
-func unwrapHandlerDepth(expr ast.Expr, cfg config.Config, depth int) (string, []facts.WrapperFact) {
+func unwrapHandlerDepth(expr ast.Expr, depth int) (string, []facts.WrapperFact) {
 	if depth > 16 {
 		return exprString(expr), nil
 	}
@@ -24,19 +23,19 @@ func unwrapHandlerDepth(expr ast.Expr, cfg config.Config, depth int) (string, []
 	if name == "" || len(call.Args) == 0 {
 		return exprString(expr), nil
 	}
-	handlerArg, ok := handlerArgument(call, cfg)
+	handlerArg, ok := handlerArgument(call)
 	if !ok {
 		return exprString(expr), nil
 	}
-	handlerRaw, wrappers := unwrapHandlerDepth(handlerArg, cfg, depth+1)
+	handlerRaw, wrappers := unwrapHandlerDepth(handlerArg, depth+1)
 	return handlerRaw, append([]facts.WrapperFact{{Name: name, Raw: exprString(call)}}, wrappers...)
 }
 
-func handlerArgument(call *ast.CallExpr, cfg config.Config) (ast.Expr, bool) {
+func handlerArgument(call *ast.CallExpr) (ast.Expr, bool) {
 	if len(call.Args) == 0 {
 		return nil, false
 	}
-	if cfg.IsHandlerWrapper(shortCallName(call)) {
+	if isHandlerWrapper(shortCallName(call)) {
 		return call.Args[len(call.Args)-1], true
 	}
 	for i := len(call.Args) - 1; i >= 0; i-- {

@@ -119,7 +119,7 @@ func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
 	t.Fatalf("replaced gin module not found: %#v", doc.Modules)
 }
 
-func TestRunImpactIgnoresRetiredOutputConfig(t *testing.T) {
+func TestRunImpactKeepsReviewEvidenceAndOmitsSpans(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "type-impact"))
 	if err != nil {
 		t.Fatal(err)
@@ -128,18 +128,7 @@ func TestRunImpactIgnoresRetiredOutputConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configPath := filepath.Join(t.TempDir(), "go-analyzer.json")
-	configBody := []byte(`{
-  "analysis": {
-    "includeDiff": false,
-    "includeRawEvidence": false
-  }
-}`)
-	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, ConfigPath: configPath, Format: "json"})
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,14 +140,14 @@ func TestRunImpactIgnoresRetiredOutputConfig(t *testing.T) {
 		t.Fatalf("fileSources = %#v", doc.FileSources)
 	}
 	if doc.FileSources[0].Diff == "" {
-		t.Fatal("diff should remain after retired includeDiff=false")
+		t.Fatal("diff should remain in review output")
 	}
 	payload := string(got)
 	if strings.Contains(payload, `"span"`) {
 		t.Fatalf("impact should omit span evidence: %s", payload)
 	}
 	if !strings.Contains(payload, `"raw"`) || !strings.Contains(payload, `"symbols"`) {
-		t.Fatalf("raw review tree should remain after retired output config: %s", payload)
+		t.Fatalf("raw review tree should remain in impact output: %s", payload)
 	}
 }
 
@@ -172,10 +161,10 @@ func TestRunImpactMapsDiffToEndpoint(t *testing.T) {
 index 1111111..2222222 100644
 --- a/service/common.go
 +++ b/service/common.go
-@@ -2,3 +2,4 @@ package service
+@@ -3,3 +3,3 @@ package service
  func CheckIn() string {
-+	_ = "changed"
-     return "ok"
+-	return "before"
++	return "ok"
  }
 `)
 	if err := os.WriteFile(diffPath, diff, 0o644); err != nil {
@@ -345,7 +334,7 @@ func NewAuth() *Auth {
 }
 
 func (a *Auth) Middleware() {
-	_ = "old"
+	_ = "new"
 }
 `)
 	writeTestFile(t, root, "router/router.go", `package router
@@ -369,7 +358,7 @@ func InitRouter(g *RouterGroup) {
 		"index 1111111..2222222 100644\n" +
 		"--- a/auth/auth.go\n" +
 		"+++ b/auth/auth.go\n" +
-		"@@ -8,5 +8,5 @@ func NewAuth() *Auth {\n" +
+		"@@ -9,5 +9,5 @@ func NewAuth() *Auth {\n" +
 		" }\n" +
 		" \n" +
 		" func (a *Auth) Middleware() {\n" +
@@ -419,7 +408,7 @@ func Init(g *RouterGroup) {
 	patch := []byte("diff --git a/router/router.go b/router/router.go\n" +
 		"--- a/router/router.go\n" +
 		"+++ b/router/router.go\n" +
-		"@@ -12,8 +12,4 @@ func Init(g *RouterGroup) {\n" +
+		"@@ -13,7 +13,3 @@ func Init(g *RouterGroup) {\n" +
 		"-\tg.POST(\n" +
 		"-\t\t\"/internal/orders\",\n" +
 		"-\t\tcontroller.Create,\n" +
@@ -514,7 +503,7 @@ func (g *RouterGroup) POST(path string, handler any) {}
 
 func Init(g *RouterGroup) {
 	api := g.Group("/internal")
-	api.POST("/orders", controller.Create)
+	api.POST("/orders", controller.Create) // touched
 }
 `)
 	diffPath := filepath.Join(t.TempDir(), "route.diff")
@@ -567,14 +556,14 @@ func (g *RouterGroup) PUT(path string, handler any) {}
 
 func Init(adminWebGroup *RouterGroup) {
 	socialUserGroup := adminWebGroup.Group("/mc/social-user")
-	socialUserGroup.PUT("/:psid/tag", controller.CreateThirdUserTag)
+	socialUserGroup.PUT("/:psid/tag", controller.CreateThirdUserTag) // touched
 }
 `)
 	diffPath := filepath.Join(t.TempDir(), "prefix.diff")
 	patch := []byte("diff --git a/router/socialuser.go b/router/socialuser.go\n" +
 		"--- a/router/socialuser.go\n" +
 		"+++ b/router/socialuser.go\n" +
-		"@@ -10,6 +10,6 @@ func (g *RouterGroup) PUT(path string, handler any) {}\n" +
+		"@@ -9,4 +9,4 @@ func (g *RouterGroup) PUT(path string, handler any) {}\n" +
 		" \n" +
 		" func Init(adminWebGroup *RouterGroup) {\n" +
 		" \tsocialUserGroup := adminWebGroup.Group(\"/mc/social-user\")\n" +
@@ -618,7 +607,7 @@ type RouterGroup struct{}
 func (g *RouterGroup) PUT(path string, handler any) {}
 
 func Init(oldPathGroup *RouterGroup) {
-	oldPathGroup.PUT("/uc/tags/v2/user/createTag/:psid", controller.CreateThirdUserTag)
+	oldPathGroup.PUT("/uc/tags/v2/user/createTag/:psid", controller.CreateThirdUserTag) // touched
 }
 `)
 	diffPath := filepath.Join(t.TempDir(), "oldpath.diff")
@@ -686,6 +675,52 @@ func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
 	}
 	if bytes.Contains(got, []byte(`"diagnostics"`)) {
 		t.Fatalf("impact output should omit diagnostics: %s", got)
+	}
+}
+
+func TestRunImpactRejectsDiffThatIsNotApplied(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/mismatch\n\ngo 1.24\n")
+	writeTestFile(t, root, "service.go", "package mismatch\n\nconst Value = \"old\"\n")
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/service.go b/service.go\n" +
+		"--- a/service.go\n" +
+		"+++ b/service.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" package mismatch\n" +
+		" \n" +
+		"-const Value = \"old\"\n" +
+		"+const Value = \"new\"\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err == nil || !strings.Contains(err.Error(), "does not match the post-change source") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunImpactRejectsParseErrorInChangedFile(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/broken\n\ngo 1.24\n")
+	writeTestFile(t, root, "service.go", "package broken\n\nfunc Changed( {\n")
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/service.go b/service.go\n" +
+		"--- a/service.go\n" +
+		"+++ b/service.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" package broken\n" +
+		" \n" +
+		"-func Changed() {}\n" +
+		"+func Changed( {\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err == nil || !strings.Contains(err.Error(), "changed Go source could not be parsed") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

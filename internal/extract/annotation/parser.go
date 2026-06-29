@@ -3,8 +3,6 @@ package annotation
 import (
 	"go/ast"
 	"strings"
-
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 )
 
 type ParsedAnnotation struct {
@@ -14,17 +12,13 @@ type ParsedAnnotation struct {
 }
 
 func ParseAPIAnnotations(doc *ast.CommentGroup) []ParsedAnnotation {
-	return ParseAPIAnnotationsWithConfig(doc, config.Default())
-}
-
-func ParseAPIAnnotationsWithConfig(doc *ast.CommentGroup, cfg config.Config) []ParsedAnnotation {
 	if doc == nil {
 		return nil
 	}
 	var out []ParsedAnnotation
 	for _, comment := range doc.List {
 		line := cleanComment(comment.Text)
-		annotation, ok := parseLine(line, cfg)
+		annotation, ok := parseLine(line)
 		if ok {
 			out = append(out, annotation)
 		}
@@ -32,7 +26,7 @@ func ParseAPIAnnotationsWithConfig(doc *ast.CommentGroup, cfg config.Config) []P
 	return out
 }
 
-func parseLine(line string, cfg config.Config) (ParsedAnnotation, bool) {
+func parseLine(line string) (ParsedAnnotation, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, "@") {
 		return ParsedAnnotation{}, false
@@ -42,7 +36,7 @@ func parseLine(line string, cfg config.Config) (ParsedAnnotation, bool) {
 		return ParsedAnnotation{}, false
 	}
 	method := strings.ToUpper(strings.TrimPrefix(fields[0], "@"))
-	if !cfg.IsAnnotationMethod(method) {
+	if !isAnnotationMethod(method) {
 		return ParsedAnnotation{}, false
 	}
 	path := fields[1]
@@ -50,6 +44,15 @@ func parseLine(line string, cfg config.Config) (ParsedAnnotation, bool) {
 		path = "/" + path
 	}
 	return ParsedAnnotation{Method: method, Path: path, Raw: line}, true
+}
+
+func isAnnotationMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS":
+		return true
+	default:
+		return false
+	}
 }
 
 func cleanComment(text string) string {

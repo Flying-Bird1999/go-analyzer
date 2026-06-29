@@ -48,7 +48,6 @@ func runFacts(args []string) error {
 	fs := flag.NewFlagSet("facts", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "project path")
-	configPath := fs.String("config", "", "absolute analysis/debug config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -56,12 +55,8 @@ func runFacts(args []string) error {
 	if err := validateAbsPath("project path", *projectPath); err != nil {
 		return err
 	}
-	if err := validateOptionalAbsPath("config path", *configPath); err != nil {
-		return err
-	}
 	out, err := app.RunFacts(app.Options{
 		ProjectPath: *projectPath,
-		ConfigPath:  *configPath,
 		Format:      *format,
 	})
 	if err != nil {
@@ -76,7 +71,6 @@ func runImpact(args []string) error {
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "absolute project path")
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
-	configPath := fs.String("config", "", "absolute analysis/debug config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -87,13 +81,9 @@ func runImpact(args []string) error {
 	if err := validateAbsPath("diff path", *diffPath); err != nil {
 		return err
 	}
-	if err := validateOptionalAbsPath("config path", *configPath); err != nil {
-		return err
-	}
 	out, err := app.RunImpact(app.ImpactOptions{
 		ProjectPath: *projectPath,
 		DiffPath:    *diffPath,
-		ConfigPath:  *configPath,
 		Format:      *format,
 	})
 	if err != nil {
@@ -128,26 +118,19 @@ func validateAbsPath(name string, path string) error {
 	return nil
 }
 
-func validateOptionalAbsPath(name string, path string) error {
-	if path == "" {
-		return nil
-	}
-	return validateAbsPath(name, path)
-}
-
 func usage(command string) string {
 	switch command {
 	case "facts":
 		return `Usage:
-  go-analyzer facts --project /absolute/path/to/project [--config /absolute/path/to/go-analyzer.json] [--format json]
+  go-analyzer facts --project /absolute/path/to/project [--format json]
 
-Extract project facts as JSON. Optional config is reserved for analysis/debug fields.
+Extract project facts as JSON.
 `
 	case "impact":
 		return `Usage:
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--config /absolute/path/to/go-analyzer.json] [--format json]
+  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--format json]
 
-Analyze impacted endpoints from a unified diff. Optional config is reserved for analysis/debug fields.
+Analyze impacted endpoints from a unified diff.
 `
 	case "schema":
 		return `Usage:
@@ -159,8 +142,8 @@ Print the JSON schema for a stable output contract.
 	default:
 		return `Usage:
   go-analyzer help [facts|impact|schema]
-  go-analyzer facts --project /absolute/path/to/project [--config /absolute/path/to/go-analyzer.json] [--format json]
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--config /absolute/path/to/go-analyzer.json] [--format json]
+  go-analyzer facts --project /absolute/path/to/project [--format json]
+  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--format json]
   go-analyzer schema --type facts|impact
 
 Commands:

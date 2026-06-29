@@ -1,6 +1,6 @@
 # go-analyzer 架构与开发指南
 
-> 文档状态：当前实现基线，更新于 2026-06-27。
+> 文档状态：当前实现基线，更新于 2026-06-29。
 > 适用读者：项目维护者、代码评审者、首次接手的开发者，以及需要继续迭代本项目的 agent。
 > 当前输出：facts JSON 与 impact JSON。
 
@@ -72,7 +72,7 @@ Address.City json tag changed
 3. route 是否存在、handler 是否解析为正确 symbol。
 4. handler 是否存在 annotation。
 5. diff 是否映射到预期 change root。
-6. impact tree 在哪个节点终止，diagnostics 给出了什么原因。
+6. impact tree 在哪个节点终止；解析不确定性到 facts 的 `diagnostics` 中检查。
 
 ## 3. 系统上下文与边界
 
@@ -80,7 +80,6 @@ Address.City json tag changed
 flowchart LR
     MR["MR unified diff"] --> Analyzer["go-analyzer"]
     Head["变更后 Go BFF 源码"] --> Analyzer
-    Config["可选 JSON 配置"] --> Analyzer
     Analyzer --> Facts["facts JSON<br/>提取与调试"]
     Analyzer --> Impact["impact JSON<br/>原始传播树"]
     Impact --> Human["开发 / QA 人工 review"]
@@ -91,7 +90,6 @@ flowchart LR
 
 - 变更后的单份 Go module 源码。
 - 一份标准 unified diff。
-- 可选 analyzer JSON 配置。
 
 当前输出：
 
@@ -113,7 +111,6 @@ flowchart LR
 flowchart TB
     CLI["cmd/go-analyzer<br/>CLI 参数与绝对路径校验"]
     APP["internal/app<br/>pipeline 编排"]
-    CONFIG["internal/config<br/>默认规则 + JSON override"]
     PROJECT["internal/project<br/>module/file/AST 加载"]
     INDEX["internal/astindex<br/>symbol + lightweight value type index"]
     FACTS["internal/facts<br/>统一事实模型与 Store"]
@@ -129,7 +126,6 @@ flowchart TB
     DIAG["internal/diagnostics<br/>非致命诊断"]
 
     CLI --> APP
-    CONFIG --> APP
     APP --> PROJECT
     PROJECT --> INDEX
     INDEX --> FACTS
@@ -156,7 +152,6 @@ flowchart TB
 ```text
 CLI
   -> app
-     -> config
      -> project loader
      -> AST symbol/type index
      -> annotation/route/reference/gomod extractors
@@ -248,7 +243,6 @@ go-analyzer/
 ├── internal/
 │   ├── app/                      facts/impact 主流程编排
 │   ├── astindex/                 declaration symbol 与轻量 value type 索引
-│   ├── config/                   默认分析规则和 JSON 配置合并
 │   ├── diagnostics/              可恢复问题的标准诊断模型
 │   ├── diff/                     unified diff 解析、删除块保存、语义映射
 │   ├── extract/
@@ -269,7 +263,6 @@ go-analyzer/
 ├── docs/
 │   ├── contracts/                输出契约
 │   ├── design/                   历史设计与专项技术方案
-│   ├── examples/                 配置示例
 │   ├── superpowers/plans/        历史实施计划
 │   └── validation/               真实项目验证记录
 └── scripts/                      smoke/验收脚本
@@ -288,7 +281,7 @@ go-analyzer/
 | `internal/diff`               | 把 unified diff 映射到语义 root                                    | 改`service/merchant.go` 的函数体 -> `symbol_changed` root                                                        |
 | `internal/graph`              | 构造传播查询视图                                                   | `GetMerchantInfo` <- `LiveViewRedirect`；handler -> route/annotation                                             |
 | `internal/impact`             | 从 change root 扩散并产出 endpoint                                 | `GetMerchantInfo` 变更最终落到 `GET /api/bff-web/live/view/:salesId/redirect`                                    |
-| `internal/output`             | 输出稳定 JSON/schema                                               | 输出 impact roots/endpoints/diagnostics                                                                            |
+| `internal/output`             | 输出稳定 JSON/schema                                               | 输出原始传播树、module sources 和 endpoint 摘要                                                                    |
 
 ### 5.1 `cmd/go-analyzer`
 
@@ -297,7 +290,7 @@ go-analyzer/
 职责：
 
 - 注册 `facts`、`impact`、`schema`、`help` 命令。
-- 校验 CLI 的 project/diff/config 路径必须为绝对路径。
+- 校验 CLI 的 project/diff 路径必须为绝对路径。
 - 将参数转换为 `internal/app` options。
 - 只负责进程输入输出，不承载分析逻辑。
 
@@ -337,9 +330,10 @@ RunImpact
 
 - 读取根目录 `go.mod` 的 module path。
 - 递归扫描 `.go` 文件。
-- 跳过 `_test.go` 和配置的目录。
+- 跳过 `_test.go`、Go 工具链忽略的 `_`/`.` 前缀文件和目录，以及 vendor/testdata 等目录。
 - 使用 `go/parser` + `parser.ParseComments` 生成 AST。
-- 单个源码解析失败时保留 `package_load_failed` diagnostic，继续分析其他文件。
+- 单个非变更源码解析失败时保留 `package_load_failed` diagnostic，继续分析其他文件。
+- impact 所涉及的变更后 Go 文件若无法解析则直接失败，避免静默输出不完整范围。
 
 所有 `project.File.Path` 在内存中是绝对路径；进入 facts/output 后统一转换为项目相对路径。
 
@@ -692,6 +686,9 @@ RouteGraph: HTTP 路由域传播
   middleware binding
     -> same group 且 statement order 更靠后的 routes
 
+  route-scoped dependency
+    -> reference span 所在的具体 route registration
+
   route group
     -> descendant routes
 ```
@@ -724,10 +721,10 @@ ChangeFact(route/middleware/group/annotation)
 - 从 diff 删除块恢复已删除 route registration。
 - 为每个 ChangeFact 构造独立 impact tree。
 - 从 symbol 传播到引用者。
-- 从 handler、route group、middleware 进入 route graph。
+- 从 handler、route group、middleware、route 注册表达式内的 helper 进入 route graph。
 - 以 annotation 为首选 endpoint。
 - 在缺少 annotation 时保留 route method/path fallback。
-- 处理 cycle、maxDepth、stopPropagation。
+- 处理 cycle。
 
 ### 5.14 `internal/output`
 
@@ -741,14 +738,15 @@ ChangeFact(route/middleware/group/annotation)
 
 - 把内部 tree 投影为稳定 JSON。
 - 按 source file 聚合 change roots。
-- 去重 endpoint 与 diagnostics。
+- 去重 endpoint。
 - 稳定排序，降低 golden/consumer 抖动。
-- 根据配置裁剪 raw evidence 和 raw diff。
+- 保留人工 review 所需的 raw evidence 和原始 diff。
 - 暴露 facts/impact JSON Schema。
 
 ### 5.15 `internal/diagnostics`
 
-diagnostic 是可恢复的不确定性，不等同于程序失败。
+diagnostic 是 facts 提取阶段可恢复的不确定性，不等同于程序失败。impact JSON
+不输出 diagnostics；需要排查解析覆盖率时运行 `facts`。
 
 典型情况：
 
@@ -757,8 +755,6 @@ diagnostic 是可恢复的不确定性，不等同于程序失败。
 - 删除声明只能降级。
 - go.mod diff 无法识别 module。
 - module usage 只能 file fallback。
-- 传播被 maxDepth 截断。
-
 诊断码定义以 `internal/diagnostics/codes.go` 为准。
 
 ## 6. Facts 构建流程
@@ -774,7 +770,7 @@ sequenceDiagram
     participant Store
     participant Output
 
-    CLI->>App: facts(project, config)
+    CLI->>App: facts(project)
     App->>Project: Load Go module
     Project-->>App: packages/files/AST/diagnostics
     App->>Index: Build declaration + value type index
@@ -814,10 +810,11 @@ sequenceDiagram
     participant Impact
     participant Output
 
-    CLI->>App: impact(project, diff, config)
-    App->>Facts: build post-change fact store
+    CLI->>App: impact(project, diff)
     App->>Diff: ParseUnified
     Diff-->>App: FileChanges + DeletedBlocks
+    App->>Diff: ValidateApplied(post-change source)
+    App->>Facts: build post-change fact store
     App->>Diff: MapChanges
     Diff-->>Facts: normal ChangeFacts
     App->>DeletedRoute: RecoverDeletedRoutes
@@ -828,7 +825,7 @@ sequenceDiagram
     GoMod-->>Facts: ModuleUsageFacts
     App->>Facts: usage -> symbol/file ChangeFacts
     App->>Impact: AnalyzeTrees
-    Impact-->>App: roots + endpoints + diagnostics
+    Impact-->>App: roots + endpoints
     App->>Output: BuildImpactDocument
     Output-->>CLI: impact JSON
 ```
@@ -836,6 +833,11 @@ sequenceDiagram
 `RunImpact` 的源码入口是 `internal/app/pipeline.go:45`。
 
 ## 8. Diff 到语义根
+
+`RunImpact` 要求 diff 已应用到 `--project` 指向的源码快照。parser 会保留 hunk
+中的新版本 context/added lines，`ValidateApplied` 在构建 AST 前逐行核对；删除文件
+必须已不存在，路径越界、空 diff、旧快照或不匹配快照都会直接失败。相同项目快照和
+相同 diff 因而具有确定的分析输入。
 
 ### 8.1 普通新增/修改
 
@@ -899,22 +901,24 @@ changed module
   -> normal impact propagation
 ```
 
+升级/降级方向按 semantic version 规则判断，覆盖 prerelease、pseudo version 和
+`+incompatible` build metadata，不能用原始字符串排序。
+
 公开 impact 输出将两类来源分开：
 
 - 普通文件逻辑变更进入 `fileSources`。
 - go.mod 语义模块变更进入 `moduleSources`，其中 `sourceFiles` 是实际命中的本仓 usage 入口。
 
-成功解析出 module change 后，`go.mod` 不再作为低置信度 `__non_symbol__` root 出现在 `fileSources`。内部 facts 仍分别保留 `module_changes` / `module_usages`，公开 impact projection 将它们合并成面向消费方的 `moduleSources`。
+成功解析出 module change 后，`go.mod` 不再作为低置信度 `__non_symbol__` root 出现在 `fileSources`。内部 Store 仍分别保留 `ModuleChanges` / `ModuleUsages` 供传播使用，公开 facts JSON 不输出这些在 facts 命令中恒为空的数组，impact projection 将模块语义合并成面向消费方的 `moduleSources`。
 
 ## 9. Route 与 endpoint 语义
 
-当前以 controller annotation 作为 endpoint method/path 的首选真值。
+当前综合 route 和 controller annotation 决定 endpoint method/path：
 
-原因：
-
-- BFF route prefix 可能来自常量、wrapper、generated helper。
-- 静态拼接 route path 容易产生“看似精确、实际错误”的路径。
-- annotation 更接近外部 HTTP contract。
+- 能完整解析前缀或属于明确旧路径 group 的 route，以 route 为准。
+- route 只包含局部路径、annotation 补充了父级前缀时，以 annotation 为准。
+- route 无法提供 endpoint 时，以 annotation 为准。
+- annotation 缺失时使用 route method/path fallback。
 
 route facts 的作用：
 
@@ -952,8 +956,9 @@ symbol 展开规则：
 
 1. 通过 ReverseGraph 找引用当前 symbol 的 symbols。
 2. 通过 RouteGraph 找以当前 symbol 为 handler 的 routes。
-3. 查找引用当前 symbol 的 middleware bindings。
-4. 递归展开。
+3. 查找 route 注册表达式 span 内引用当前 symbol 的 routes，例如 `AddLiveWriteGuard(g).POST(...)`。
+4. 查找引用当前 symbol 的 middleware bindings。
+5. 递归展开。
 
 领域 root：
 
@@ -966,8 +971,7 @@ symbol 展开规则：
 终止策略：
 
 - 当前 DFS path 已存在 symbol -> child 标记 `cycle`。
-- node 文件命中 `stopPropagation` -> 标记 `stopBoundary`。
-- 达到 `maxDepth` -> 截断并输出 `propagation_depth_truncated`。
+- 不提供深度或目录裁剪配置，传播始终完整展开到可解析边界。
 
 ## 11. 输出契约
 
@@ -1024,9 +1028,9 @@ go run ./cmd/go-analyzer impact \
 - `basis`：模块传播入口的依据。
 - `sourceFiles`：实际引用该 module 的本仓文件、递归传播树和接口摘要，不重复 go.mod diff。
 
-每个 source 的 `symbols` 都保留从 changed root 到 endpoint 的完整 `children` 递归链路，消费者不需要再与顶层图做 join。节点保留 relation、raw、confidence、level、cycle 和 stopBoundary 等 review 证据，但不输出 span。
+每个 source 的 `symbols` 都保留从 changed root 到 endpoint 的完整 `children` 递归链路，消费者不需要再与顶层图做 join。节点保留 relation、raw、confidence、level 和 cycle 等 review 证据，但不输出 span。
 
-顶层 `diagnostics` 只保留与当前变更或传播树相关的可恢复问题，并去除 span、内部 ID 等调试字段；没有相关诊断时省略。完整项目 diagnostics 仍可通过 facts 输出检查。
+impact 顶层不输出 diagnostics，避免把 extractor 调试信息混入接口影响报告。完整项目 diagnostics 通过 facts 输出检查；变更文件语法错误和 diff/源码快照不一致属于致命输入错误，命令直接失败。
 
 `confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
 
@@ -1052,22 +1056,12 @@ go run ./cmd/go-analyzer schema --type impact
 3. `docs/contracts/output-contract.md`。
 4. output tests/golden。
 
-## 12. 配置
+## 12. 零配置接入
 
-示例：`docs/examples/go-analyzer.config.json`。
-
-正式接入目标是一键分析 lego BFF，业务方不需要配置 route、annotation、handler
-wrapper 或 route group wrapper。BFF 语法规则由 analyzer 内置并通过真实项目 smoke
-持续校准。
-
-当前 JSON 配置只保留 analysis 类调试/保护开关：
-
-| 配置                         | 用途                   |
-| ---------------------------- | ---------------------- |
-| `analysis.maxDepth`          | 最大传播深度；0 为不限 |
-| `analysis.stopPropagation`   | 文件 glob 截断边界     |
-
-这些字段只用于传播保护，不是业务仓接入前置条件。impact 始终保留普通文件 diff，不输出 raw/span 调试证据。
+正式接入目标是一键分析 lego BFF。CLI 不接受项目语法配置或传播裁剪配置；route、
+annotation、handler wrapper、route group wrapper 规则由对应 extractor 包内置，并
+通过最小 fixture 与真实项目 smoke 持续校准。新增语法只有在 lego 项目族中形成稳定
+约定后才进入内置规则，不能要求业务仓维护 analyzer 配置。
 
 ## 13. 构建、运行和测试
 
@@ -1202,7 +1196,8 @@ bash scripts/smoke-real-projects.sh
 3. 输出 symbol/annotation/route/route_link/diagnostic 数量，并校验每条 route 都有 handler 和 resolved path。
 4. 运行 type-impact、deleted-route、gomod-impact、middleware-selector。
 5. 验证每个专项 fixture 的 endpoint。
-6. 临时真实改动两个 BFF 的多个业务文件，通过目标项目 `git diff` 生成 patch，恢复文件后验证 impact endpoint。
+6. 临时真实改动两个 BFF 的多个业务文件，通过目标项目 `git diff` 生成 patch。
+7. 保持业务源码处于 post-change 状态连续分析两次，字节级比较 JSON，并精确校验 endpoint 集合后恢复源码。
 
 输出写入 `.analyzer-smoke/`，该目录被 git ignore。
 
@@ -1220,7 +1215,7 @@ for item in data["symbols"]:
 PY
 ```
 
-检查 endpoint 和 diagnostics：
+检查 endpoint；解析 diagnostics 请改看 facts JSON：
 
 ```bash
 python3 - <<'PY'
@@ -1229,8 +1224,6 @@ data = json.load(open("/tmp/go-analyzer-impact.json"))
 print(data["summary"]["impactedEndpointCount"])
 for endpoint in data["summary"]["impactedEndpoints"]:
     print(endpoint["method"], endpoint["path"])
-for diagnostic in data.get("diagnostics", []):
-    print(diagnostic["code"], diagnostic["message"])
 PY
 ```
 
@@ -1238,10 +1231,10 @@ PY
 
 | 层级            | 位置                                     | 验证内容                           |
 | --------------- | ---------------------------------------- | ---------------------------------- |
-| parser/index    | 各 package`_test.go`                   | AST、diff、配置、module            |
+| parser/index    | 各 package`_test.go`                   | AST、diff、快照校验、module        |
 | extractor       | `internal/extract/*`                   | annotation/route/reference/gomod   |
 | linker/graph    | `internal/link`, `internal/graph`    | handler/middleware/route 关联      |
-| impact          | `internal/impact`                      | tree、cycle、depth、deleted route  |
+| impact          | `internal/impact`                      | tree、cycle、route helper、deleted route |
 | pipeline E2E    | `internal/app/pipeline_test.go`        | diff -> endpoint 完整闭环          |
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
 | real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 真实文件 diff |
@@ -1251,13 +1244,13 @@ PY
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
 | `sl-sc1-bff-service`  | symbols=781, annotations=32, routes=32, diagnostics=20     |
-| `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=490, diagnostics=213 |
+| `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=535, diagnostics=213 |
 | `type-impact`         | 1 endpoint (`POST /orders`)                              |
-| `deleted-route`       | 1 endpoint (`POST /public/orders`)                       |
+| `deleted-route`       | 2 endpoints（删除 route `POST /internal/orders` + deletion anchor 命中的 `GET /health`） |
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 9 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 10 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1266,9 +1259,10 @@ PY
 | `real-admin-product-set-list` | `GET /admin/api/bff-web/trade/product/product_set/list` |
 | `real-admin-user-info` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
+| `real-admin-route-helper` | `AddLiveWriteGuard` 变更精确命中 12 个写路由 |
 | `real-client-common-checkin` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `POST /api/bff-web/common/checkIn` + `github.com/shopspring/decimal` upgraded |
-| `real-client-multi-module-and-multi-source` | 3 个业务文件 root + `decimal` / `uuid` / `otel/trace` 3 个模块升级，共 22 个 endpoint |
+| `real-client-multi-module-and-multi-source` | 3 个业务文件 root + `decimal` / `uuid` / `otel/trace` 3 个模块升级，共 31 个 endpoint |
 | `real-client-live-view` | `GET /api/bff-web/live/view/:salesId/redirect` |
 
 ## 16. 当前能力边界
@@ -1286,7 +1280,7 @@ PY
 - 当前方法 receiver、显式类型局部变量、constructor 返回值局部变量的方法调用解析。
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace diff 到本仓 usage 和 endpoint。
-- cycle/maxDepth/stopPropagation。
+- cycle 检测与完整传播。
 - 按来源组织的可追踪 impact tree 和 endpoint 摘要。
 
 ### 16.2 有降级但不会静默丢失
@@ -1324,7 +1318,7 @@ post-change diff -> project-local semantic propagation -> affected BFF endpoints
 
 1. 添加最小 fixture。
 2. 写失败测试。
-3. 扩展 config 或可复用 parser。
+3. 扩展对应 extractor 的内置规则或可复用 parser。
 4. 输出明确 fact。
 5. 无法精确时添加 diagnostic。
 6. 增加 E2E impact 测试。
@@ -1397,7 +1391,6 @@ bash scripts/smoke-real-projects.sh
 
 - `README.md`：项目定位和快速使用。
 - `docs/contracts/output-contract.md`：JSON 输出契约。
-- `docs/examples/go-analyzer.config.json`：配置示例。
 - `docs/validation/real-project-validation.md`：真实项目验收记录。
 - `docs/design/`：历史设计与专项方案。
 - `docs/superpowers/plans/`：历史实施计划，不作为当前状态真值。

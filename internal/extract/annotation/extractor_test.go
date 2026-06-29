@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -40,7 +39,7 @@ func CheckIn() {}
 	}
 }
 
-func TestParseAPIAnnotationsIgnoresConfiguredBusinessMethods(t *testing.T) {
+func TestParseAPIAnnotationsIgnoresNonHTTPMethods(t *testing.T) {
 	src := `package p
 // @Search /ready
 // @Post /ignored
@@ -51,9 +50,8 @@ func CheckIn() {}
 		t.Fatal(err)
 	}
 	decl := file.Decls[0].(*ast.FuncDecl)
-	cfg := config.Config{}
 
-	got := ParseAPIAnnotationsWithConfig(decl.Doc, cfg)
+	got := ParseAPIAnnotations(decl.Doc)
 
 	if len(got) != 1 {
 		t.Fatalf("annotation count = %d: %#v", len(got), got)

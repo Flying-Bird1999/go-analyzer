@@ -63,3 +63,28 @@ func TestLoadSkipsInvalidGoFileAndRecordsDiagnostic(t *testing.T) {
 		t.Fatalf("loaded package = %#v", pkg)
 	}
 }
+
+func TestLoadSkipsGoIgnoredFilesAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ignored\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"valid.go", "_ignored.go", ".ignored.go", "_fixtures/ignored.go", ".cache/ignored.go"} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package ignored\n\nfunc Value() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p, err := Load(root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := p.Packages["example.com/ignored"]
+	if pkg == nil || len(pkg.Files) != 1 || !strings.HasSuffix(pkg.Files[0].Path, "valid.go") {
+		t.Fatalf("loaded package = %#v", pkg)
+	}
+}

@@ -15,9 +15,10 @@ The CLI accepts absolute paths at the command boundary. The smoke script
 resolves the sibling demo projects to absolute paths, writes JSON outputs to
 `.analyzer-smoke/`, and validates that each output is parseable JSON. Real
 impact cases temporarily edit business files, collect `git diff` from the BFF
-project, and restore the files before running impact analysis.
-Optional `--config` files are reserved for analysis/debug options and must also
-be passed as absolute paths; lego BFF syntax is recognized by built-in rules.
+project, keep the files in their post-change state while running impact twice,
+compare the JSON byte-for-byte, validate exact endpoint sets, and then restore
+the files. Lego BFF syntax is recognized by built-in rules; no analyzer config
+is required.
 
 ## Current Expectations
 
@@ -30,18 +31,18 @@ The MVP validation target is stability rather than perfect precision:
   smoke run.
 - Impact smoke should record changed source count, changed root count,
   recursive tree node count and endpoint count.
-- Real BFF impact smoke should assert exact impacted endpoint method/path.
+- Real BFF impact smoke should assert exact impacted endpoint sets and deterministic output.
 - Unsupported patterns should appear as diagnostics instead of being silently
   lost where the analyzer can identify them.
 
 ## Latest Facts Smoke Snapshot
 
-Local smoke run on 2026-06-27:
+Local smoke run on 2026-06-29:
 
 | Project | Symbols | Annotations | Routes | Diagnostics |
 | --- | ---: | ---: | ---: | ---: |
 | `sl-sc1-bff-service` | 781 | 32 | 32 | 20 |
-| `sl-sc1-admin-bff` | 5137 | 463 | 490 | 213 |
+| `sl-sc1-admin-bff` | 5137 | 463 | 535 | 213 |
 
 All current diagnostics are `symbol_reference_unresolved`. The inspected
 examples are project-local generated clients, package-level service clients and
@@ -83,16 +84,16 @@ The smoke script also validates the three post-MVP propagation paths:
 
 | Fixture | Scenario | Expected endpoint |
 | --- | --- | --- |
-| `deleted-route` | multiline route registration removed from post-change source | `POST /public/orders` |
+| `deleted-route` | multiline route registration removed from post-change source | `POST /internal/orders` plus deletion-anchor `GET /health` |
 | `gomod-impact` | require-block dependency upgrade to local import usage | `GET /api/checkIn` |
 | `middleware-selector` | package var + struct field middleware method change | `GET /orders` |
 
-All three fixtures currently complete with one impacted endpoint and no
-diagnostics.
+The module and middleware fixtures complete with one endpoint. The deleted-route
+fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates nine real-file diff cases across the two target BFF
+The smoke script validates ten real-file diff cases across the two target BFF
 projects:
 
 | Case | Project file | Expected endpoint |
@@ -102,12 +103,16 @@ projects:
 | `real-admin-product-set-list` | `sl-sc1-admin-bff/controller/trade/product/product.go` | `GET /admin/api/bff-web/trade/product/product_set/list` |
 | `real-admin-user-info` | `sl-sc1-admin-bff/controller/user/user.go` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
+| `real-admin-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 12 routes using `AddLiveWriteGuard` |
 | `real-client-common-checkin` | `sl-sc1-bff-service/controller/common/common.go` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `sl-sc1-bff-service/go.mod` + `sl-sc1-bff-service/controller/common/common.go` | 1 `fileSources` endpoint plus 10 Nexus endpoints from upgraded `github.com/shopspring/decimal` |
-| `real-client-multi-module-and-multi-source` | `go.mod` + `controller/common/common.go` + `model/form_product.go` + `service/merchant.go` | 3 file roots, 3 upgraded module sources and 22 deduplicated endpoints |
+| `real-client-multi-module-and-multi-source` | `go.mod` + `controller/common/common.go` + `model/form_product.go` + `service/merchant.go` | 3 file roots, 3 upgraded module sources and 31 deduplicated endpoints |
 | `real-client-live-view` | `sl-sc1-bff-service/controller/live/view/redirect.go` | `GET /api/bff-web/live/view/:salesId/redirect` |
 
-The seven single-file cases complete with one impacted endpoint. The combined
+Controller handlers registered under both current and compatibility routes
+produce both endpoints; the exact sets are checked. The route-helper case
+proves that changing `AddLiveWriteGuard` reaches only the 12 route expressions
+that reference it. The combined
 go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
 `moduleSources`. The module source tree explicitly contains

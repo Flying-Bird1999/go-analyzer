@@ -104,6 +104,37 @@ func Init(oldPathGroup *Group) {
 	}
 }
 
+func TestExtractRouteGroupAssignedThroughWrapperOfExistingGroup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/wrapped-existing-group\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) Group(path string) *Group { return g }
+func (g *Group) GET(path string, handler any) {}
+
+func AddReadGuard(g *Group) *Group { return g }
+func GetStatistics() {}
+
+func Init(root *Group) {
+	saleGroup := root.Group("/live/sale/:salesId")
+	guarded := AddReadGuard(saleGroup)
+	guarded.GET("/statistics", GetStatistics)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/live/sale/:salesId/statistics")
+	if route.HandlerRaw != "GetStatistics" {
+		t.Fatalf("handler raw = %q", route.HandlerRaw)
+	}
+}
+
 func TestExtractMiddlewareBindingStatementOrder(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "middleware-order")
 	store := extractFixture(t, root)
@@ -139,9 +170,6 @@ func TestExtractGeneratedNestedRoute(t *testing.T) {
 	}
 	if route.HandlerRaw != "common.CheckIn" {
 		t.Fatalf("handler raw = %q", route.HandlerRaw)
-	}
-	if route.SourceFamily != "generated" {
-		t.Fatalf("source family = %q", route.SourceFamily)
 	}
 }
 

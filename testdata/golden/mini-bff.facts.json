@@ -1,11 +1,8 @@
 {
   "annotations": [],
-  "changes": [],
   "diagnostics": [],
   "links": [],
   "middleware": [],
-  "module_changes": [],
-  "module_usages": [],
   "modules": [],
   "project": {
     "module_path": "example.com/mini-bff",

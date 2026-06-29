@@ -13,10 +13,12 @@ type RouteGraph struct {
 	RoutesByGroupID      map[string][]facts.RouteRegistrationFact
 	ChildGroupsByID      map[string][]string
 	RoutesByHandler      map[facts.SymbolID][]facts.RouteRegistrationFact
+	RoutesByDependency   map[facts.SymbolID][]facts.RouteRegistrationFact
 	AnnotationsByHandler map[facts.SymbolID][]facts.AnnotationFact
 }
 
 func NewRouteGraph(store *facts.Store) *RouteGraph {
+	routesByFunc := map[facts.SymbolID][]facts.RouteRegistrationFact{}
 	g := &RouteGraph{
 		RoutesByID:           map[string]facts.RouteRegistrationFact{},
 		GroupsByID:           map[string]facts.RouteGroupFact{},
@@ -24,6 +26,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		RoutesByGroupID:      map[string][]facts.RouteRegistrationFact{},
 		ChildGroupsByID:      map[string][]string{},
 		RoutesByHandler:      map[facts.SymbolID][]facts.RouteRegistrationFact{},
+		RoutesByDependency:   map[facts.SymbolID][]facts.RouteRegistrationFact{},
 		AnnotationsByHandler: map[facts.SymbolID][]facts.AnnotationFact{},
 	}
 	for _, group := range store.RouteGroups {
@@ -34,10 +37,22 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	}
 	for _, route := range store.Routes {
 		g.RoutesByID[route.ID] = route
+		routesByFunc[route.RouteFunc] = append(routesByFunc[route.RouteFunc], route)
 		groupID := effectiveGroupID(route.GroupID, route.RouteFunc, route.GroupVar)
 		g.RoutesByGroupID[groupID] = append(g.RoutesByGroupID[groupID], route)
 		if route.HandlerSymbol != "" {
 			g.RoutesByHandler[route.HandlerSymbol] = append(g.RoutesByHandler[route.HandlerSymbol], route)
+		}
+	}
+	for _, ref := range store.References {
+		if ref.ToSymbol == "" {
+			continue
+		}
+		for _, route := range routesByFunc[ref.FromSymbol] {
+			if ref.ToSymbol == route.HandlerSymbol || !spanContains(route.Span, ref.Span) {
+				continue
+			}
+			g.RoutesByDependency[ref.ToSymbol] = appendRouteOnce(g.RoutesByDependency[ref.ToSymbol], route)
 		}
 	}
 	for _, binding := range store.Middleware {
@@ -60,6 +75,9 @@ func (g *RouteGraph) sort() {
 	for handler := range g.RoutesByHandler {
 		sortRoutes(g.RoutesByHandler[handler])
 	}
+	for dependency := range g.RoutesByDependency {
+		sortRoutes(g.RoutesByDependency[dependency])
+	}
 	for handler := range g.AnnotationsByHandler {
 		sort.Slice(g.AnnotationsByHandler[handler], func(i, j int) bool {
 			return g.AnnotationsByHandler[handler][i].ID < g.AnnotationsByHandler[handler][j].ID
@@ -69,6 +87,10 @@ func (g *RouteGraph) sort() {
 
 func (g *RouteGraph) RoutesForHandler(handler facts.SymbolID) []facts.RouteRegistrationFact {
 	return append([]facts.RouteRegistrationFact(nil), g.RoutesByHandler[handler]...)
+}
+
+func (g *RouteGraph) RoutesForDependency(dependency facts.SymbolID) []facts.RouteRegistrationFact {
+	return append([]facts.RouteRegistrationFact(nil), g.RoutesByDependency[dependency]...)
 }
 
 func (g *RouteGraph) AnnotationsForHandler(handler facts.SymbolID) []facts.AnnotationFact {
@@ -133,4 +155,28 @@ func sortRoutes(routes []facts.RouteRegistrationFact) {
 		}
 		return routes[i].ID < routes[j].ID
 	})
+}
+
+func appendRouteOnce(routes []facts.RouteRegistrationFact, candidate facts.RouteRegistrationFact) []facts.RouteRegistrationFact {
+	for _, route := range routes {
+		if route.ID == candidate.ID {
+			return routes
+		}
+	}
+	return append(routes, candidate)
+}
+
+func spanContains(outer, inner facts.SourceSpan) bool {
+	if outer.File == "" || outer.File != inner.File {
+		return false
+	}
+	return positionLessOrEqual(outer.StartLine, outer.StartCol, inner.StartLine, inner.StartCol) &&
+		positionLessOrEqual(inner.EndLine, inner.EndCol, outer.EndLine, outer.EndCol)
+}
+
+func positionLessOrEqual(leftLine, leftCol, rightLine, rightCol int) bool {
+	if leftLine != rightLine {
+		return leftLine < rightLine
+	}
+	return leftCol <= rightCol
 }

@@ -27,11 +27,17 @@ type DeletedBlock struct {
 	Lines         []string `json:"lines"`
 }
 
+type ExpectedLine struct {
+	Line int
+	Text string
+}
+
 type FileChange struct {
 	OldPath       string         `json:"old_path"`
 	NewPath       string         `json:"new_path"`
 	Status        Status         `json:"status"`
 	Ranges        []LineRange    `json:"ranges"`
 	DeletedBlocks []DeletedBlock `json:"deleted_blocks,omitempty"`
+	ExpectedLines []ExpectedLine `json:"-"`
 	Raw           string         `json:"raw"`
 }

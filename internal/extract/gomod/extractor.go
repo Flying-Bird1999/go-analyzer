@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -135,43 +134,110 @@ func moduleChange(path string, kind facts.ModuleChangeKind, oldDep, newDep facts
 }
 
 func compareVersion(a, b string) int {
-	ap := versionParts(a)
-	bp := versionParts(b)
-	maxLen := len(ap)
-	if len(bp) > maxLen {
-		maxLen = len(bp)
+	left, leftOK := parseSemanticVersion(a)
+	right, rightOK := parseSemanticVersion(b)
+	if !leftOK || !rightOK {
+		return strings.Compare(a, b)
 	}
-	for i := 0; i < maxLen; i++ {
-		var av, bv int
-		if i < len(ap) {
-			av = ap[i]
-		}
-		if i < len(bp) {
-			bv = bp[i]
-		}
-		if av > bv {
-			return 1
-		}
-		if av < bv {
-			return -1
+	for i := range left.core {
+		if comparison := compareNumericIdentifier(left.core[i], right.core[i]); comparison != 0 {
+			return comparison
 		}
 	}
-	return strings.Compare(a, b)
+	switch {
+	case left.prerelease == "" && right.prerelease == "":
+		return 0
+	case left.prerelease == "":
+		return 1
+	case right.prerelease == "":
+		return -1
+	default:
+		return comparePrerelease(left.prerelease, right.prerelease)
+	}
 }
 
-func versionParts(version string) []int {
+type semanticVersion struct {
+	core       [3]string
+	prerelease string
+}
+
+func parseSemanticVersion(version string) (semanticVersion, bool) {
 	version = strings.TrimPrefix(version, "v")
-	version = strings.Split(version, "-")[0]
-	fields := strings.Split(version, ".")
-	out := make([]int, 0, len(fields))
-	for _, field := range fields {
-		n, err := strconv.Atoi(field)
-		if err != nil {
-			break
-		}
-		out = append(out, n)
+	if index := strings.IndexByte(version, '+'); index >= 0 {
+		version = version[:index]
 	}
-	return out
+	prerelease := ""
+	if index := strings.IndexByte(version, '-'); index >= 0 {
+		prerelease = version[index+1:]
+		version = version[:index]
+	}
+	fields := strings.Split(version, ".")
+	if len(fields) == 0 || len(fields) > 3 {
+		return semanticVersion{}, false
+	}
+	var parsed semanticVersion
+	parsed.prerelease = prerelease
+	for i := range parsed.core {
+		parsed.core[i] = "0"
+	}
+	for i, field := range fields {
+		if !isNumericIdentifier(field) {
+			return semanticVersion{}, false
+		}
+		parsed.core[i] = field
+	}
+	return parsed, true
+}
+
+func comparePrerelease(left, right string) int {
+	leftParts := strings.Split(left, ".")
+	rightParts := strings.Split(right, ".")
+	for i := 0; i < len(leftParts) && i < len(rightParts); i++ {
+		leftNumeric := isNumericIdentifier(leftParts[i])
+		rightNumeric := isNumericIdentifier(rightParts[i])
+		switch {
+		case leftNumeric && rightNumeric:
+			if comparison := compareNumericIdentifier(leftParts[i], rightParts[i]); comparison != 0 {
+				return comparison
+			}
+		case leftNumeric:
+			return -1
+		case rightNumeric:
+			return 1
+		default:
+			if comparison := strings.Compare(leftParts[i], rightParts[i]); comparison != 0 {
+				return comparison
+			}
+		}
+	}
+	return len(leftParts) - len(rightParts)
+}
+
+func compareNumericIdentifier(left, right string) int {
+	left = strings.TrimLeft(left, "0")
+	right = strings.TrimLeft(right, "0")
+	if left == "" {
+		left = "0"
+	}
+	if right == "" {
+		right = "0"
+	}
+	if len(left) != len(right) {
+		return len(left) - len(right)
+	}
+	return strings.Compare(left, right)
+}
+
+func isNumericIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseRequireLine(line string) (facts.ModuleDependencyFact, bool) {
