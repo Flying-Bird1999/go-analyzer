@@ -90,24 +90,57 @@ func extractGenDeclTypeReferences(p *project.Project, file *project.File, idx *a
 				from := astindex.ValueSymbolID(kind, pkgPath, name.Name)
 				addTypeReferences(p, file, idx, store, from, s.Type)
 				for _, value := range s.Values {
-					ast.Inspect(value, func(node ast.Node) bool {
-						composite, ok := node.(*ast.CompositeLit)
-						if ok {
-							addTypeReferences(p, file, idx, store, from, composite.Type)
-						}
-						return true
-					})
+					extractInitializerReferences(p, file, idx, store, from, value)
 				}
 			}
 		}
 	}
 }
 
+func extractInitializerReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, expr ast.Expr) {
+	ignored := ignoredValuePositions(expr)
+	callFuns := callFunPositions(expr)
+	ast.Inspect(expr, func(node ast.Node) bool {
+		switch x := node.(type) {
+		case *ast.CallExpr:
+			for _, typeArgument := range genericTypeArguments(x.Fun) {
+				addTypeReferences(p, file, idx, store, from, typeArgument)
+			}
+			callee := unwrapGenericCallee(x.Fun)
+			if len(collectTypeIDs(file, idx, callee)) > 0 {
+				addTypeReferences(p, file, idx, store, from, callee)
+			} else {
+				addCallReference(p, file, idx, store, from, scopedValueTypes{}, x)
+			}
+		case *ast.CompositeLit:
+			addTypeReferences(p, file, idx, store, from, x.Type)
+		case *ast.SelectorExpr:
+			if ignored[x.Pos()] {
+				return false
+			}
+			var targets []facts.SymbolID
+			if callFuns[x.Pos()] {
+				targets = resolveReceiverValueIDs(file, idx, x)
+			} else {
+				targets = resolveValueIDs(file, idx, x, localScope{}, x.Pos())
+			}
+			addValueReferenceFacts(p, file, store, from, x, targets)
+			return false
+		case *ast.Ident:
+			if ignored[x.Pos()] || callFuns[x.Pos()] {
+				return true
+			}
+			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x, localScope{}, x.Pos()))
+		}
+		return true
+	})
+}
+
 func addCallReference(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, scopedTypes scopedValueTypes, call *ast.CallExpr) {
-	to, raw, confidence, ok := resolveCall(file, idx, scopedTypes, call)
-	if !ok || to == "" || to == from {
+	resolved, raw, ok := resolveCallCandidates(file, idx, scopedTypes, call)
+	if !ok || len(resolved) == 0 {
 		callee := unwrapGenericCallee(call.Fun)
-		if !ok && isProjectSelector(file, idx.Project.ModulePath, callee) {
+		if !ok && isUnresolvedProjectCall(file, idx, scopedTypes, callee) {
 			span := spanFor(p, file, callee.Pos(), callee.End())
 			diagnostics.AddFact(store, diagnostics.Diagnostic{
 				Code:           diagnostics.CodeSymbolReferenceUnresolved,
@@ -120,18 +153,23 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 		return
 	}
 	span := spanFor(p, file, call.Pos(), call.End())
-	store.References = append(store.References, facts.ReferenceFact{
-		ID:         referenceID(from, to, facts.ReferenceKindCall, span),
-		Kind:       facts.ReferenceKindCall,
-		FromSymbol: from,
-		ToSymbol:   to,
-		ToRaw:      raw,
-		Confidence: confidence,
-		Span:       span,
-	})
+	for _, candidate := range resolved {
+		if candidate.ID == "" || candidate.ID == from {
+			continue
+		}
+		store.References = append(store.References, facts.ReferenceFact{
+			ID:         referenceID(from, candidate.ID, facts.ReferenceKindCall, span),
+			Kind:       facts.ReferenceKindCall,
+			FromSymbol: from,
+			ToSymbol:   candidate.ID,
+			ToRaw:      raw,
+			Confidence: candidate.Confidence,
+			Span:       span,
+		})
+	}
 }
 
-func isProjectSelector(file *project.File, modulePath string, expr ast.Expr) bool {
+func isUnresolvedProjectCall(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, expr ast.Expr) bool {
 	selector, ok := expr.(*ast.SelectorExpr)
 	if !ok {
 		return false
@@ -141,7 +179,20 @@ func isProjectSelector(file *project.File, modulePath string, expr ast.Expr) boo
 		return false
 	}
 	importPath := file.Imports[parts[0]]
-	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
+	if !isProjectPackage(idx.Project.ModulePath, importPath) {
+		return false
+	}
+	if receiverType, ok := scopedTypes.resolve(parts[0], selector.Pos()); ok {
+		return isProjectPackage(idx.Project.ModulePath, receiverType.PackagePath)
+	}
+	if receiverType, ok := idx.ResolveSelectorReceiverType(file, parts); ok {
+		return isProjectPackage(idx.Project.ModulePath, receiverType.PackagePath)
+	}
+	return true
+}
+
+func isProjectPackage(modulePath, packagePath string) bool {
+	return packagePath == modulePath || strings.HasPrefix(packagePath, modulePath+"/")
 }
 
 func valueDeclarationKind(tok token.Token) string {

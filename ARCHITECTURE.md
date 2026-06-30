@@ -1,6 +1,6 @@
 # go-analyzer 架构与开发指南
 
-> 文档状态：当前实现基线，更新于 2026-06-29。
+> 文档状态：当前实现基线，更新于 2026-06-30。
 > 适用读者：项目维护者、代码评审者、首次接手的开发者，以及需要继续迭代本项目的 agent。
 > 当前输出：facts JSON 与 impact JSON。
 
@@ -72,7 +72,8 @@ Address.City json tag changed
 3. route 是否存在、handler 是否解析为正确 symbol。
 4. handler 是否存在 annotation。
 5. diff 是否映射到预期 change root。
-6. impact tree 在哪个节点终止；解析不确定性到 facts 的 `diagnostics` 中检查。
+6. impact tree 在哪个节点终止；项目抽取不确定性到 facts 的 `diagnostics` 中检查，
+   diff/module 降级则结合 impact root、`basis` 和 `confidence` 检查。
 
 ## 3. 系统上下文与边界
 
@@ -167,10 +168,10 @@ CLI
 
 下面用 `sl-sc1-bff-service` 的真实代码说明“diff 到 endpoint”的完整链路。假设 MR 改到了 `service.GetMerchantInfo`：
 
-- service 声明：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/service/merchant.go:18`
-- controller 调用：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/controller/live/view/redirect.go:38`
-- route 注册：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/router/live/view.go:13`
-- endpoint 注释：`/Users/zxc/Desktop/go-analyzer-factory/sl-sc1-bff-service/controller/live/view/redirect.go:28`
+- service 声明：`../sl-sc1-bff-service/service/merchant.go` 中的 `GetMerchantInfo`
+- controller 调用：`../sl-sc1-bff-service/controller/live/view/redirect.go` 中的 `LiveViewRedirect`
+- route 注册：`../sl-sc1-bff-service/router/live/view.go` 中的 `InitLiveViewRouter`
+- endpoint 注释：`../sl-sc1-bff-service/controller/live/view/redirect.go` 中 `LiveViewRedirect` 的 `@Get`
 
 真实代码关系：
 
@@ -263,6 +264,7 @@ go-analyzer/
 ├── docs/
 │   ├── contracts/                输出契约
 │   ├── design/                   历史设计与专项技术方案
+│   ├── superpowers/specs/        历史设计规格
 │   ├── superpowers/plans/        历史实施计划
 │   └── validation/               真实项目验证记录
 └── scripts/                      smoke/验收脚本
@@ -296,11 +298,11 @@ go-analyzer/
 
 ### 5.2 `internal/app`
 
-主编排位于：
+主编排位于 `internal/app/pipeline.go`：
 
-- `internal/app/pipeline.go:24`：`RunFacts`。
-- `internal/app/pipeline.go:45`：`RunImpact`。
-- `internal/app/pipeline.go:128`：共享事实构建。
+- `RunFacts`：facts 入口。
+- `RunImpact`：impact 入口。
+- `buildFacts`：共享事实构建。
 
 它是唯一应了解完整 pipeline 顺序的模块。extractor 之间不应互相调用，特殊 diff 逻辑也不应下沉到 CLI。
 
@@ -324,7 +326,7 @@ RunImpact
 
 ### 5.3 `internal/project`
 
-入口：`internal/project/loader.go:13`。
+入口：`internal/project/loader.go` 的 `Load`。
 
 职责：
 
@@ -339,7 +341,7 @@ RunImpact
 
 ### 5.4 `internal/astindex`
 
-入口：`internal/astindex/index.go:26`。
+入口：`internal/astindex/index.go` 的 `Build`。
 
 索引以下 declaration：
 
@@ -363,7 +365,9 @@ const:<package>::<name>
 - `var X T`
 - `var X = T{}`
 - `var X = &T{}`
+- `var X = new(T)`
 - `var X = NewT()`
+- `const X NamedType = ...`
 - imported type，如 `var X auth.Auth`
 - struct field type，如 `type Dependencies struct { Auth auth.Auth }`
 
@@ -392,16 +396,21 @@ g.Use(provider.Default.Auth.Middleware)
 如果只保存 declaration symbol，`provider.Default.Auth.Middleware` 只能看到一串 selector，无法知道最终是 `method:<auth package>:Auth:Middleware`。因此索引里额外保存：
 
 - package-level var 的静态类型。
+- 显式 typed const 的静态类型。
 - struct field 的静态类型。
 - callable 的首个返回值类型。
 
-解析 selector 时既支持从 package-level var 开始，也支持当前方法 receiver、显式类型参数/局部变量，以及由项目内 constructor 返回值推断出的局部变量；随后按 field 链一路走到最终 receiver type，再拼出 method symbol。它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；接口动态派发、复杂控制流赋值、运行时注入不在当前精度目标内。
+解析 selector 时既支持从 package-level var/显式 typed const 开始，也支持当前方法 receiver、显式类型参数/局部变量、`new(T)`，以及由项目内 constructor 返回值推断出的局部变量；随后按 field 链一路走到最终 receiver type，再拼出 method symbol。
 
-以当前“diff 发生在哪个符号，然后扩散到 endpoint”的目标来看，这组 declaration symbol 是足够的；后续如果要做更精细的动态绑定或接口实现分析，才需要引入 `go/types` / SSA。
+包级接口变量采用严格赋值证据：索引 loader 实际加载的非测试源码中的直接赋值，只有至少存在一个具体候选、已发现赋值都能高置信度解析且最终只有一个具体类型时，才把接口调用连接到具体方法。多实现或未知 RHS 一律不猜测，后续接口调用保留 unresolved diagnostic。`_test.go` 不参与绑定；普通 `.go` 中的 mock 赋值仍视为真实候选。反射或项目源码之外的运行时注入不在这个闭世界模型内。
+
+它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；接口参数/字段、复杂控制流和运行时注入不在当前精度目标内。
+
+以当前“diff 发生在哪个符号，然后扩散到 endpoint”的目标来看，这组 declaration symbol 是足够的；后续如果要做多实现动态绑定或 flow-sensitive 接口分析，才需要引入 `go/types` / SSA。
 
 ### 5.5 `internal/facts`
 
-`internal/facts/store.go:17` 定义统一 Store。主要事实如下：
+`internal/facts/store.go` 定义统一 Store。主要事实如下：
 
 | Fact                      | 含义                              | 主要生产者                               |
 | ------------------------- | --------------------------------- | ---------------------------------------- |
@@ -421,9 +430,11 @@ g.Use(provider.Default.Auth.Middleware)
 
 ### 5.6 `internal/extract/annotation`
 
-入口：`internal/extract/annotation/extractor.go:19`。
+入口：`internal/extract/annotation/extractor.go` 的 `Extract`。
 
-支持配置的 `@Get`、`@Post` 等注释，输出 method/path/handler symbol。
+内置支持 `GET`、`POST`、`PUT`、`DELETE`、`PATCH`、`HEAD`、`OPTIONS`
+对应的 `@Get`、`@Post` 等注释，输出 method/path/handler symbol；业务方不提供
+annotation 语法配置。
 
 annotation span 精确到注释行，而不是整个函数体：
 
@@ -434,7 +445,7 @@ annotation span 精确到注释行，而不是整个函数体：
 
 ### 5.7 `internal/extract/route`
 
-入口：`internal/extract/route/extractor.go:21`。
+入口：`internal/extract/route/extractor.go` 的 `Extract`。
 
 提取：
 
@@ -444,13 +455,14 @@ annotation span 精确到注释行，而不是整个函数体：
 - Group 调用中的 middleware 参数。
 - handler wrapper stack。
 - route group wrapper。
+- route 子函数调用上下文中的唯一 group 前缀。
 - statement order。
 
 `internal/extract/route/call.go` 是正常 AST 提取和 deleted-route recovery 共用的 route call parser，避免两套语法漂移。
 
 ### 5.8 `internal/extract/reference`
 
-入口：`internal/extract/reference/extractor.go:16`。
+入口：`internal/extract/reference/extractor.go` 的 `Extract`。
 
 输入是当前项目的完整 AST、`astindex.Index` 和共享 `facts.Store`：
 
@@ -477,7 +489,8 @@ FromSymbol depends on ToSymbol
 
 - 函数/方法签名或函数体内的引用，`FromSymbol` 是该 function/method。
 - type declaration 内的字段、嵌入、组合等引用，`FromSymbol` 是该 type。
-- package-level var/const 的类型或初始化表达式引用，`FromSymbol` 是该 var/const。
+- package-level var/const 的显式类型、初始化表达式中的组合字面量类型引用、
+  call 引用和 value 引用，`FromSymbol` 是该 var/const。
 
 `ToSymbol` 是通过 `astindex` 能解析到的项目内目标 symbol。举例：
 
@@ -508,8 +521,8 @@ ToSymbol -> all FromSymbol
 职责分三层：
 
 1. `extractor.go`：读取当前 `go.mod` dependency/replace。
-2. `diff.go:12`：从 go.mod diff 的新增/删除行恢复 module changes。
-3. `usage.go:16`：把 changed module 映射到本仓 import usage。
+2. `diff.go` 的 `DiffModulesFromFileChanges`：从 go.mod diff 的新增/删除行恢复 module changes。
+3. `usage.go` 的 `MapModuleUsage`：把 changed module 映射到本仓 import usage。
 
 支持：
 
@@ -526,7 +539,7 @@ ToSymbol -> all FromSymbol
 
 ### 5.10 `internal/link`
 
-入口：`internal/link/linker.go:10`。
+入口：`internal/link/linker.go` 的 `Run`。
 
 职责：
 
@@ -637,8 +650,8 @@ import live_view "sc1-client-bff-service/controller/live/view"
 
 入口：
 
-- `internal/diff/parser.go:14`
-- `internal/diff/mapper.go:11`
+- `internal/diff/parser.go` 的 `ParseUnified`
+- `internal/diff/mapper.go` 的 `MapChanges`
 
 parser 保存：
 
@@ -713,8 +726,8 @@ ChangeFact(route/middleware/group/annotation)
 
 入口：
 
-- `internal/impact/deleted_route.go:22`
-- `internal/impact/tree_builder.go:26`
+- `internal/impact/deleted_route.go` 的 `RecoverDeletedRoutes`
+- `internal/impact/tree_builder.go` 的 `AnalyzeTrees`
 
 职责：
 
@@ -730,9 +743,9 @@ ChangeFact(route/middleware/group/annotation)
 
 入口：
 
-- `internal/output/impact_tree.go:68`
-- `internal/output/impact_tree.go:152`
-- `internal/output/contract.go`
+- `internal/output/impact_tree.go` 的 `BuildImpactDocument`
+- `internal/output/impact_tree.go` 的 `RenderImpactTreeJSON`
+- `internal/output/contract.go` 的 `SchemaJSON`
 
 职责：
 
@@ -745,16 +758,21 @@ ChangeFact(route/middleware/group/annotation)
 
 ### 5.15 `internal/diagnostics`
 
-diagnostic 是 facts 提取阶段可恢复的不确定性，不等同于程序失败。impact JSON
-不输出 diagnostics；需要排查解析覆盖率时运行 `facts`。
+diagnostic 是可恢复的不确定性，不等同于程序失败。impact JSON 不输出
+diagnostics。运行 `facts` 可以检查 project/index/extractor/link 阶段的项目事实
+diagnostics；diff、删除恢复和 go.mod usage 阶段只在 `impact` 内执行，其 diagnostics
+当前不属于公开 JSON 契约。
 
-典型情况：
+facts 中可观察的典型情况：
 
 - route 动态 path。
 - handler/symbol/type 无法精确解析。
-- 删除声明只能降级。
-- go.mod diff 无法识别 module。
-- module usage 只能 file fallback。
+- 单个非变更 Go 文件解析失败。
+
+impact 内部还会记录删除声明降级、go.mod diff 无法识别 module、module usage
+file fallback 等信息；最终报告通过 root、`basis` 和 `confidence` 表达可见的降级
+结果，而不是输出 diagnostics。
+
 诊断码定义以 `internal/diagnostics/codes.go` 为准。
 
 ## 6. Facts 构建流程
@@ -785,7 +803,7 @@ sequenceDiagram
     Output-->>CLI: facts JSON
 ```
 
-实际调用顺序见 `internal/app/pipeline.go:128`：
+实际调用顺序见 `internal/app/pipeline.go` 的 `buildFacts`：
 
 1. `project.Load`。
 2. `astindex.Build`。
@@ -830,7 +848,7 @@ sequenceDiagram
     Output-->>CLI: impact JSON
 ```
 
-`RunImpact` 的源码入口是 `internal/app/pipeline.go:45`。
+`RunImpact` 的源码入口是 `internal/app/pipeline.go` 的同名函数。
 
 ## 8. Diff 到语义根
 
@@ -1006,10 +1024,11 @@ go run ./cmd/go-analyzer impact \
     "impactedEndpointCount": 0,
     "impactedEndpoints": []
   },
-  "fileSources": [],
-  "moduleSources": []
+  "fileSources": []
 }
 ```
+
+`moduleSources` 是可选字段；只有 go.mod diff 成功形成 module change 时才输出。
 
 每个 `fileSources[]` 保留：
 
@@ -1032,7 +1051,7 @@ go run ./cmd/go-analyzer impact \
 
 impact 顶层不输出 diagnostics，避免把 extractor 调试信息混入接口影响报告。完整项目 diagnostics 通过 facts 输出检查；变更文件语法错误和 diff/源码快照不一致属于致命输入错误，命令直接失败。
 
-`confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数，也不会自动控制传播是否继续：
+`confidence` 表示 analyzer 对某个 fact、change root 或传播节点的静态证据强度，不是概率分数；impact 阶段不会按 confidence 自动截断已经建立的传播边：
 
 - `high`：来自明确 AST/fact 证据，例如 diff 命中现存 symbol/route/annotation、reference/link 精确解析。
 - `medium`：来自定向 fallback 或推断，例如 deletion anchor 命中 surviving declaration、deleted route 用 method/path fallback endpoint、go.mod usage 降级到 importing file declarations。
@@ -1145,12 +1164,12 @@ dlv debug ./cmd/go-analyzer -- \
   --format json
 ```
 
-推荐断点：
+推荐按函数设置断点，避免源码行号漂移：
 
-- `internal/app/pipeline.go:45`
-- `internal/diff/mapper.go:11`
-- `internal/impact/tree_builder.go:26`
-- `internal/impact/deleted_route.go:22`
+- `app.RunImpact`
+- `diff.MapChanges`
+- `impact.AnalyzeTrees`
+- `impact.RecoverDeletedRoutes`
 
 ### 14.4 基于真实项目生成 diff
 
@@ -1239,18 +1258,18 @@ PY
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
 | real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 真实文件 diff |
 
-2026-06-28 验证快照：
+2026-06-30 验证快照：
 
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
-| `sl-sc1-bff-service`  | symbols=781, annotations=32, routes=32, diagnostics=20     |
-| `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=535, diagnostics=213 |
+| `sl-sc1-bff-service`  | symbols=781, annotations=32, routes=32, diagnostics=0      |
+| `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=559, diagnostics=5   |
 | `type-impact`         | 1 endpoint (`POST /orders`)                              |
 | `deleted-route`       | 2 endpoints（删除 route `POST /internal/orders` + deletion anchor 命中的 `GET /health`） |
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 10 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 16 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1260,10 +1279,16 @@ PY
 | `real-admin-user-info` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
 | `real-admin-route-helper` | `AddLiveWriteGuard` 变更精确命中 12 个写路由 |
+| `real-admin-route-param-group` | `AuthRedis.RemoveToken` -> 第二个 route group 参数注册的 `POST /admin/api/bff-web/auth/revokeToken/:clientId` |
+| `real-admin-path-param-flow-control` | `createPathParamsFlowControlMid` 包级初始化依赖 -> 4 个限流中间件 route |
+| `real-admin-conversation-action-map` | `conversationAction` 静态 map interface dispatch -> app/web 两个会话上报 endpoint |
 | `real-client-common-checkin` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `POST /api/bff-web/common/checkIn` + `github.com/shopspring/decimal` upgraded |
 | `real-client-multi-module-and-multi-source` | 3 个业务文件 root + `decimal` / `uuid` / `otel/trace` 3 个模块升级，共 31 个 endpoint |
 | `real-client-live-view` | `GET /api/bff-web/live/view/:salesId/redirect` |
+| `real-client-interface-dispatch` | `oaClient.GetMerchant` 精确命中 3 个 GET endpoint |
+| `real-admin-new-builtin` | `AuthRedis.GetRedirectData` -> `GET /admin/api/bff-web/auth/oauth/callback` |
+| `real-admin-typed-const` | `MerchantSettingCode.String` -> `POST /admin/api/bff-web/uc/merchant/setting/get` |
 
 ## 16. 当前能力边界
 
@@ -1277,7 +1302,11 @@ PY
 - route/group/middleware/wrapper。
 - route handler 与 common package-var method。
 - package var、constructor、imported explicit type、struct field 的轻量 receiver 推断。
-- 当前方法 receiver、显式类型局部变量、constructor 返回值局部变量的方法调用解析。
+- `new(T)`、显式 typed const、当前方法 receiver、显式类型局部变量、constructor 返回值局部变量的方法调用解析。
+- loader 已加载源码中赋值集合唯一且全部可解析、且声明类型为项目内 interface 的 package-level dispatch。
+- 声明值类型为项目内 interface、且所有 value 都可解析为具体项目类型的 package-level static map dispatch。
+- 包级 var/const 初始化表达式中的 call/value/type 依赖。
+- 多 route-group 参数和唯一调用上下文下的 route 子函数前缀传播。
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace diff 到本仓 usage 和 endpoint。
 - cycle 检测与完整传播。
@@ -1285,7 +1314,7 @@ PY
 
 ### 16.2 有降级但不会静默丢失
 
-- 单个 Go 文件语法错误 -> `package_load_failed`。
+- facts 或 impact 的非变更 Go 文件语法错误 -> `package_load_failed`。
 - 动态 route path -> raw + diagnostic。
 - 无法解析 handler/symbol/type -> diagnostic。
 - 删除普通 declaration -> anchor 或 file fallback。
@@ -1297,9 +1326,10 @@ PY
 - 删除整个普通 function/type/service/controller 的旧 AST 精确恢复。
 - 外部 module 两个版本之间的 API/source diff。
 - 二方包跨仓传播。
-- `go/types`、SSA、interface 动态分发和完整 call graph。
+- `go/types`、SSA、多实现/未知赋值的 interface 动态分发和完整 call graph。
 - 反射、运行时 DI、运行时 route 构造。
 - 任意控制流赋值下的完整 flow-sensitive local variable receiver type inference。
+- 配置驱动的 middleware exclude 分支和其他 path-sensitive 控制流。
 - build tags、不同 GOOS/GOARCH 的条件编译模型。
 - `_test.go` 分析。
 - 任意控制流中的完整 route table 还原；当前 route 提取重点覆盖 route function 的顺序式注册。
@@ -1393,6 +1423,7 @@ bash scripts/smoke-real-projects.sh
 - `docs/contracts/output-contract.md`：JSON 输出契约。
 - `docs/validation/real-project-validation.md`：真实项目验收记录。
 - `docs/design/`：历史设计与专项方案。
+- `docs/superpowers/specs/`：历史设计规格，不作为当前状态真值。
 - `docs/superpowers/plans/`：历史实施计划，不作为当前状态真值。
 
 当前实现状态、模块边界和接手说明以本文件为准。

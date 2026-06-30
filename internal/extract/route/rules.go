@@ -30,3 +30,11 @@ func isRouteGroupWrapper(name string) bool {
 		strings.Contains(name, "guard") ||
 		strings.Contains(name, "validator")
 }
+
+func isRouteGroupFactory(name string) bool {
+	name = strings.ToLower(name)
+	return strings.Contains(name, "group") &&
+		(strings.HasPrefix(name, "create") ||
+			strings.HasPrefix(name, "new") ||
+			strings.HasPrefix(name, "build"))
+}

@@ -4,18 +4,26 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// parserObject is used only for lexical shadowing on assignment targets.
+type parserObject = ast.Object //nolint:staticcheck // go/parser still populates this relation without type checking.
+
 type Index struct {
 	Project             *project.Project
 	Symbols             map[facts.SymbolID]facts.SymbolFact
-	VarReceiverTypes    map[string]ValueType
+	ValueReceiverTypes  map[string]ValueType
 	CallableReturnTypes map[facts.SymbolID]ValueType
 	StructFieldTypes    map[facts.SymbolID]map[string]ValueType
+	InterfaceTypes      map[facts.SymbolID]struct{}
+	InterfaceBindings   map[facts.SymbolID]*InterfaceBinding
+	MapValueTypes       map[facts.SymbolID][]ValueType
+	packageValueObjects map[*parserObject]facts.SymbolID
 }
 
 type ValueType struct {
@@ -33,9 +41,13 @@ func Build(p *project.Project) (*Index, error) {
 	idx := &Index{
 		Project:             p,
 		Symbols:             map[facts.SymbolID]facts.SymbolFact{},
-		VarReceiverTypes:    map[string]ValueType{},
+		ValueReceiverTypes:  map[string]ValueType{},
 		CallableReturnTypes: map[facts.SymbolID]ValueType{},
 		StructFieldTypes:    map[facts.SymbolID]map[string]ValueType{},
+		InterfaceTypes:      map[facts.SymbolID]struct{}{},
+		InterfaceBindings:   map[facts.SymbolID]*InterfaceBinding{},
+		MapValueTypes:       map[facts.SymbolID][]ValueType{},
+		packageValueObjects: map[*parserObject]facts.SymbolID{},
 	}
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
@@ -49,6 +61,9 @@ func Build(p *project.Project) (*Index, error) {
 			}
 		}
 	}
+	idx.indexValueReceiverTypes()
+	idx.indexMapValueTypes()
+	idx.indexInterfaceBindings()
 	return idx, nil
 }
 
@@ -58,23 +73,132 @@ func (idx *Index) indexGenDecl(p *project.Project, pkg *project.Package, file *p
 		case *ast.TypeSpec:
 			id := TypeSymbolID(pkg.Path, s.Name.Name)
 			idx.Symbols[id] = symbolFact(p, file, id, "type", pkg.Path, "", s.Name.Name, s.Pos(), s.End())
+			if _, ok := s.Type.(*ast.InterfaceType); ok {
+				idx.InterfaceTypes[id] = struct{}{}
+			}
 			idx.indexStructFields(file, id, s)
 		case *ast.ValueSpec:
 			kind := valueKind(decl.Tok)
 			if kind == "" {
 				continue
 			}
-			for i, name := range s.Names {
+			for _, name := range s.Names {
 				id := ValueSymbolID(kind, pkg.Path, name.Name)
 				idx.Symbols[id] = symbolFact(p, file, id, kind, pkg.Path, "", name.Name, s.Pos(), s.End())
-				if kind == "var" {
-					if valueType := valueTypeFromValueSpec(file, s, i); valueType.TypeName != "" {
-						idx.VarReceiverTypes[string(id)] = valueType
+				if name.Obj != nil {
+					idx.packageValueObjects[name.Obj] = id
+				}
+			}
+		}
+	}
+}
+
+func (idx *Index) indexValueReceiverTypes() {
+	for _, pkg := range idx.Project.Packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.AST.Decls {
+				genDecl, ok := decl.(*ast.GenDecl)
+				if !ok {
+					continue
+				}
+				kind := valueKind(genDecl.Tok)
+				if kind == "" {
+					continue
+				}
+				for _, rawSpec := range genDecl.Specs {
+					spec, ok := rawSpec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, name := range spec.Names {
+						id := ValueSymbolID(kind, pkg.Path, name.Name)
+						if valueType := idx.valueTypeFromValueSpec(file, spec, i); valueType.TypeName != "" {
+							idx.ValueReceiverTypes[string(id)] = valueType
+						}
 					}
 				}
 			}
 		}
 	}
+}
+
+func (idx *Index) indexMapValueTypes() {
+	for _, pkg := range idx.Project.Packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.AST.Decls {
+				genDecl, ok := decl.(*ast.GenDecl)
+				if !ok || genDecl.Tok != token.VAR {
+					continue
+				}
+				for _, rawSpec := range genDecl.Specs {
+					spec, ok := rawSpec.(*ast.ValueSpec)
+					if !ok || len(spec.Values) == 0 {
+						continue
+					}
+					for i, name := range spec.Names {
+						valueIndex := i
+						if valueIndex >= len(spec.Values) {
+							valueIndex = len(spec.Values) - 1
+						}
+						valueTypes, ok := idx.staticMapConcreteValueTypes(file, spec.Values[valueIndex])
+						if !ok {
+							continue
+						}
+						idx.MapValueTypes[ValueSymbolID("var", pkg.Path, name.Name)] = valueTypes
+					}
+				}
+			}
+		}
+	}
+}
+
+func (idx *Index) staticMapConcreteValueTypes(file *project.File, expr ast.Expr) ([]ValueType, bool) {
+	lit, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		return nil, false
+	}
+	mapType, ok := lit.Type.(*ast.MapType)
+	if !ok {
+		return nil, false
+	}
+	declaredValueType := valueTypeFromTypeExpr(file, mapType.Value)
+	if declaredValueType.TypeName == "" || !idx.isInterfaceType(declaredValueType) {
+		return nil, false
+	}
+	byKey := map[string]ValueType{}
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			return nil, false
+		}
+		valueType := idx.concreteValueTypeFromExpr(file, kv.Value)
+		if valueType.TypeName == "" || valueType.Confidence != facts.ConfidenceHigh || idx.isInterfaceType(valueType) {
+			return nil, false
+		}
+		byKey[valueTypeKey(valueType)] = valueType
+	}
+	if len(byKey) == 0 {
+		return nil, false
+	}
+	keys := make([]string, 0, len(byKey))
+	for key := range byKey {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]ValueType, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byKey[key])
+	}
+	return out, true
+}
+
+func (idx *Index) concreteValueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
+	if call, ok := expr.(*ast.CallExpr); ok {
+		if valueType, ok := idx.ResolveBuiltinNewType(file, call); ok {
+			return valueType
+		}
+	}
+	return valueTypeFromExpr(file, expr)
 }
 
 func (idx *Index) indexStructFields(file *project.File, id facts.SymbolID, spec *ast.TypeSpec) {
@@ -152,7 +276,7 @@ func receiverTypeName(expr ast.Expr) string {
 	}
 }
 
-func valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
+func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
 	if spec.Type != nil {
 		return valueTypeFromTypeExpr(file, spec.Type)
 	}
@@ -162,6 +286,11 @@ func valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) 
 	valueIndex := index
 	if valueIndex >= len(spec.Values) {
 		valueIndex = 0
+	}
+	if call, ok := spec.Values[valueIndex].(*ast.CallExpr); ok {
+		if valueType, ok := idx.ResolveBuiltinNewType(file, call); ok {
+			return valueType
+		}
 	}
 	return valueTypeFromExpr(file, spec.Values[valueIndex])
 }
@@ -183,6 +312,30 @@ func valueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
 	default:
 		return ValueType{}
 	}
+}
+
+// ResolveBuiltinNewType resolves new(T) only when new is not shadowed.
+func (idx *Index) ResolveBuiltinNewType(file *project.File, call *ast.CallExpr) (ValueType, bool) {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok || ident.Name != "new" || ident.Obj != nil || len(call.Args) != 1 {
+		return ValueType{}, false
+	}
+	for _, kind := range []string{"func", "var", "const", "type"} {
+		var id facts.SymbolID
+		switch kind {
+		case "func":
+			id = FunctionSymbolID(file.Package.Path, ident.Name)
+		case "type":
+			id = TypeSymbolID(file.Package.Path, ident.Name)
+		default:
+			id = ValueSymbolID(kind, file.Package.Path, ident.Name)
+		}
+		if _, exists := idx.Symbols[id]; exists {
+			return ValueType{}, false
+		}
+	}
+	valueType := valueTypeFromTypeExpr(file, call.Args[0])
+	return valueType, valueType.TypeName != ""
 }
 
 func valueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
@@ -218,14 +371,25 @@ func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (fac
 }
 
 func (idx *Index) ResolveSelectorMethodWithConfidence(file *project.File, parts []string) (ResolvedSymbol, bool) {
-	if file == nil || len(parts) < 2 {
+	valueType, ok := idx.ResolveSelectorReceiverType(file, parts)
+	if !ok {
 		return ResolvedSymbol{}, false
+	}
+	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, parts[len(parts)-1])
+	_, ok = idx.Symbols[methodID]
+	return ResolvedSymbol{ID: methodID, Confidence: valueType.Confidence}, ok
+}
+
+// ResolveSelectorReceiverType returns the type that owns the final method in a selector chain.
+func (idx *Index) ResolveSelectorReceiverType(file *project.File, parts []string) (ValueType, bool) {
+	if file == nil || len(parts) < 2 {
+		return ValueType{}, false
 	}
 	var packagePath, varName string
 	var selectors []string
 	if importPath := file.Imports[parts[0]]; importPath != "" {
 		if len(parts) < 3 {
-			return ResolvedSymbol{}, false
+			return ValueType{}, false
 		}
 		packagePath = importPath
 		varName = parts[1]
@@ -235,12 +399,36 @@ func (idx *Index) ResolveSelectorMethodWithConfidence(file *project.File, parts 
 		varName = parts[0]
 		selectors = parts[1:]
 	}
-	varID := ValueSymbolID("var", packagePath, varName)
-	valueType, ok := idx.VarReceiverTypes[string(varID)]
-	if !ok || valueType.TypeName == "" || len(selectors) == 0 {
-		return ResolvedSymbol{}, false
+	if len(selectors) == 0 {
+		return ValueType{}, false
 	}
-	return idx.ResolveValueTypeMethod(valueType, selectors)
+	var valueType ValueType
+	for _, kind := range []string{"var", "const"} {
+		valueID := ValueSymbolID(kind, packagePath, varName)
+		if candidate, ok := idx.ValueReceiverTypes[string(valueID)]; ok {
+			if kind == "var" {
+				if concrete, ok := idx.resolveUniqueInterfaceBinding(valueID); ok {
+					candidate = concrete
+				}
+			}
+			valueType = candidate
+			break
+		}
+	}
+	if valueType.TypeName == "" {
+		return ValueType{}, false
+	}
+	for _, fieldName := range selectors[:len(selectors)-1] {
+		typeID := TypeSymbolID(valueType.PackagePath, valueType.TypeName)
+		fields := idx.StructFieldTypes[typeID]
+		nextType, ok := fields[fieldName]
+		if !ok {
+			return ValueType{}, false
+		}
+		nextType.Confidence = combineConfidence(valueType.Confidence, nextType.Confidence)
+		valueType = nextType
+	}
+	return valueType, true
 }
 
 func (idx *Index) ResolveValueTypeMethod(valueType ValueType, selectors []string) (ResolvedSymbol, bool) {
@@ -261,6 +449,44 @@ func (idx *Index) ResolveValueTypeMethod(valueType ValueType, selectors []string
 	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, selectors[len(selectors)-1])
 	_, ok := idx.Symbols[methodID]
 	return ResolvedSymbol{ID: methodID, Confidence: confidence}, ok
+}
+
+func (idx *Index) ResolveMapIndexValueTypes(file *project.File, expr *ast.IndexExpr) ([]ValueType, bool) {
+	if file == nil || expr == nil {
+		return nil, false
+	}
+	parts := selectorParts(expr.X)
+	if len(parts) == 0 {
+		return nil, false
+	}
+	var id facts.SymbolID
+	if len(parts) == 1 {
+		id = ValueSymbolID("var", file.Package.Path, parts[0])
+	} else if len(parts) == 2 {
+		importPath := file.Imports[parts[0]]
+		if importPath == "" {
+			return nil, false
+		}
+		id = ValueSymbolID("var", importPath, parts[1])
+	} else {
+		return nil, false
+	}
+	valueTypes := idx.MapValueTypes[id]
+	if len(valueTypes) == 0 {
+		return nil, false
+	}
+	return append([]ValueType(nil), valueTypes...), true
+}
+
+func selectorParts(expr ast.Expr) []string {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		return []string{x.Name}
+	case *ast.SelectorExpr:
+		return append(selectorParts(x.X), x.Sel.Name)
+	default:
+		return nil
+	}
 }
 
 func combineConfidence(left, right facts.Confidence) facts.Confidence {

@@ -10,22 +10,33 @@ import (
 )
 
 type scopedValueType struct {
-	declPos   token.Pos
-	valueType astindex.ValueType
+	declPos    token.Pos
+	valueTypes []astindex.ValueType
 }
 
 type scopedValueTypes map[string][]scopedValueType
 
-func (s scopedValueTypes) add(name string, declPos token.Pos, valueType astindex.ValueType) {
-	if name == "" || name == "_" || valueType.TypeName == "" {
+func (s scopedValueTypes) addAll(name string, declPos token.Pos, valueTypes []astindex.ValueType) {
+	if name == "" || name == "_" {
 		return
 	}
-	s[name] = append(s[name], scopedValueType{declPos: declPos, valueType: valueType})
+	s[name] = append(s[name], scopedValueType{declPos: declPos, valueTypes: valueTypes})
 }
 
 func (s scopedValueTypes) resolve(name string, pos token.Pos) (astindex.ValueType, bool) {
+	valueTypes, ok := s.resolveAll(name, pos)
+	if !ok {
+		return astindex.ValueType{}, false
+	}
+	if len(valueTypes) != 1 {
+		return astindex.ValueType{}, true
+	}
+	return valueTypes[0], true
+}
+
+func (s scopedValueTypes) resolveAll(name string, pos token.Pos) ([]astindex.ValueType, bool) {
 	var (
-		best    astindex.ValueType
+		best    []astindex.ValueType
 		bestPos token.Pos
 		found   bool
 	)
@@ -36,7 +47,7 @@ func (s scopedValueTypes) resolve(name string, pos token.Pos) (astindex.ValueTyp
 		if found && bestPos != token.NoPos && candidate.declPos <= bestPos {
 			continue
 		}
-		best = candidate.valueType
+		best = candidate.valueTypes
 		bestPos = candidate.declPos
 		found = true
 	}
@@ -50,9 +61,9 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 			return
 		}
 		for _, field := range fields.List {
-			valueType := scopedTypeFromTypeExpr(file, field.Type)
+			valueTypes := scopedTypesFromTypeExpr(file, field.Type)
 			for _, name := range field.Names {
-				out.add(name.Name, token.NoPos, valueType)
+				out.addAll(name.Name, token.NoPos, valueTypes)
 			}
 		}
 	}
@@ -80,7 +91,7 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 				if valueIndex >= len(x.Rhs) {
 					valueIndex = len(x.Rhs) - 1
 				}
-				out.add(name.Name, name.Pos(), scopedTypeFromValueExpr(file, idx, x.Rhs[valueIndex]))
+				out.addAll(name.Name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
 			}
 		case *ast.DeclStmt:
 			decl, ok := x.Decl.(*ast.GenDecl)
@@ -93,8 +104,8 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 					continue
 				}
 				for i, name := range value.Names {
-					valueType := scopedTypeFromTypeExpr(file, value.Type)
-					if valueType.TypeName == "" && len(value.Values) > 0 {
+					valueTypes := scopedTypesFromTypeExpr(file, value.Type)
+					if len(valueTypes) == 0 && len(value.Values) > 0 {
 						if len(value.Values) == 1 && len(value.Names) > 1 && i > 0 {
 							continue
 						}
@@ -102,9 +113,9 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 						if valueIndex >= len(value.Values) {
 							valueIndex = len(value.Values) - 1
 						}
-						valueType = scopedTypeFromValueExpr(file, idx, value.Values[valueIndex])
+						valueTypes = scopedTypesFromValueExpr(file, idx, value.Values[valueIndex])
 					}
-					out.add(name.Name, name.Pos(), valueType)
+					out.addAll(name.Name, name.Pos(), valueTypes)
 				}
 			}
 		}
@@ -113,58 +124,66 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 	return out
 }
 
-func scopedTypeFromTypeExpr(file *project.File, expr ast.Expr) astindex.ValueType {
+func scopedTypesFromTypeExpr(file *project.File, expr ast.Expr) []astindex.ValueType {
 	switch x := expr.(type) {
 	case *ast.Ident:
-		return astindex.ValueType{
+		return []astindex.ValueType{{
 			PackagePath: file.Package.Path,
 			TypeName:    x.Name,
 			Confidence:  facts.ConfidenceHigh,
-		}
+		}}
 	case *ast.SelectorExpr:
 		pkg, ok := x.X.(*ast.Ident)
 		if !ok {
-			return astindex.ValueType{}
+			return nil
 		}
 		importPath := file.Imports[pkg.Name]
 		if importPath == "" {
-			return astindex.ValueType{}
+			return nil
 		}
-		return astindex.ValueType{
+		return []astindex.ValueType{{
 			PackagePath: importPath,
 			TypeName:    x.Sel.Name,
 			Confidence:  facts.ConfidenceHigh,
-		}
+		}}
 	case *ast.StarExpr:
-		return scopedTypeFromTypeExpr(file, x.X)
+		return scopedTypesFromTypeExpr(file, x.X)
 	case *ast.ParenExpr:
-		return scopedTypeFromTypeExpr(file, x.X)
+		return scopedTypesFromTypeExpr(file, x.X)
 	case *ast.IndexExpr:
-		return scopedTypeFromTypeExpr(file, x.X)
+		return scopedTypesFromTypeExpr(file, x.X)
 	case *ast.IndexListExpr:
-		return scopedTypeFromTypeExpr(file, x.X)
+		return scopedTypesFromTypeExpr(file, x.X)
 	default:
-		return astindex.ValueType{}
+		return nil
 	}
 }
 
-func scopedTypeFromValueExpr(file *project.File, idx *astindex.Index, expr ast.Expr) astindex.ValueType {
+func scopedTypesFromValueExpr(file *project.File, idx *astindex.Index, expr ast.Expr) []astindex.ValueType {
 	switch x := expr.(type) {
 	case *ast.UnaryExpr:
-		return scopedTypeFromValueExpr(file, idx, x.X)
+		return scopedTypesFromValueExpr(file, idx, x.X)
 	case *ast.CompositeLit:
-		return scopedTypeFromTypeExpr(file, x.Type)
+		return scopedTypesFromTypeExpr(file, x.Type)
 	case *ast.CallExpr:
+		if valueType, ok := idx.ResolveBuiltinNewType(file, x); ok {
+			return []astindex.ValueType{valueType}
+		}
 		callableID := scopedCallableID(file, x.Fun)
 		valueType, ok := idx.CallableReturnTypes[callableID]
 		if !ok {
-			return astindex.ValueType{}
+			return nil
 		}
 		valueType.Confidence = facts.ConfidenceMedium
-		return valueType
+		return []astindex.ValueType{valueType}
+	case *ast.IndexExpr:
+		if valueTypes, ok := idx.ResolveMapIndexValueTypes(file, x); ok {
+			return valueTypes
+		}
 	default:
-		return astindex.ValueType{}
+		return nil
 	}
+	return nil
 }
 
 func scopedCallableID(file *project.File, expr ast.Expr) facts.SymbolID {

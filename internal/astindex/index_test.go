@@ -1,6 +1,7 @@
 package astindex
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -59,6 +60,70 @@ func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 	if valueSymbol.Span.EndLine <= valueSymbol.Span.StartLine {
 		t.Fatalf("value span does not cover declaration: %#v", valueSymbol.Span)
 	}
+}
+
+func TestBuildIndexesNewBuiltinReceiverType(t *testing.T) {
+	idx, file := buildValueTypeFixture(t)
+
+	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"DefaultCache", "Read"})
+	if !ok {
+		t.Fatal("DefaultCache.Read was not resolved")
+	}
+	want := facts.SymbolID("method:example.com/value-types:Cache:Read")
+	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("DefaultCache.Read = %#v, want %s with high confidence", resolved, want)
+	}
+}
+
+func TestBuildIndexesTypedConstReceiverType(t *testing.T) {
+	idx, file := buildValueTypeFixture(t)
+
+	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"DefaultCode", "String"})
+	if !ok {
+		t.Fatal("DefaultCode.String was not resolved")
+	}
+	want := facts.SymbolID("method:example.com/value-types:Code:String")
+	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("DefaultCode.String = %#v, want %s with high confidence", resolved, want)
+	}
+}
+
+func buildValueTypeFixture(t *testing.T) (*Index, *project.File) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/value-types\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package valuetypes
+
+type Cache struct{}
+
+func (*Cache) Read() {}
+
+type Code string
+
+func (Code) String() string { return "" }
+
+var DefaultCache = new(Cache)
+
+const DefaultCode Code = "default"
+`
+	if err := os.WriteFile(filepath.Join(root, "values.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := project.Load(root, project.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := p.Packages[p.ModulePath]
+	if pkg == nil || len(pkg.Files) != 1 {
+		t.Fatalf("fixture files = %#v", pkg)
+	}
+	return idx, pkg.Files[0]
 }
 
 func mustSymbol(t *testing.T, idx *Index, id facts.SymbolID) facts.SymbolFact {

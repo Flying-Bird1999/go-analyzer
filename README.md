@@ -36,6 +36,7 @@ MVP 覆盖范围：
 - struct 字段和 tag 变更映射到所属 type，并沿类型依赖传播。
 - controller 函数注释中的 HTTP 接口识别。
 - route 注册关系、route group、中间件、guard/wrapper 的影响传播。
+- 当前 Nexus/codegen 标准模板生成的 Lego route 注册链路。
 - 删除 route registration 的单行/多行恢复。
 - go.mod require/replace 变更到本仓使用点再到 endpoint 的传播。
 - 常见 package var / struct field middleware selector 的轻量类型推断。
@@ -47,14 +48,17 @@ MVP 暂不覆盖：
 - 底层 gRPC 项目的跨仓传播。
 - 运行时 route table 抽取。
 - AI 报告生成。
-- 所有动态分发、反射和复杂 DI 场景的精确分析。
+- 多实现接口分发、反射和复杂 DI 场景的精确分析；包级接口变量仅在生产源码可证明唯一具体实现时解析。
+- 配置驱动的 middleware exclude 等 path-sensitive 控制流精确分析。
 
 ## 目标项目
 
 第一批分析对象是前端团队维护的两个 Go BFF：
 
-- `sc1-admin-bff`
-- `sc1-bff-service`
+- `sl-sc1-admin-bff`
+- `sl-sc1-bff-service`
+
+smoke 脚本同时兼容历史目录名 `sc1-admin-bff` / `sc1-bff-service`。
 
 两个项目都大致遵循：
 
@@ -83,8 +87,8 @@ diff
 CLI 边界要求输入路径使用绝对路径：
 
 ```bash
-go-analyzer facts --project /absolute/path/to/sc1-bff-service --format json
-go-analyzer impact --project /absolute/path/to/sc1-bff-service --diff /absolute/path/to/change.diff --format json
+go-analyzer facts --project /absolute/path/to/sl-sc1-bff-service --format json
+go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
 go-analyzer schema --type facts
 go-analyzer schema --type impact
 ```
@@ -92,7 +96,7 @@ go-analyzer schema --type impact
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 `impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。
 
-impact 输出的顶层 `summary` 汇总影响接口数量和接口列表；`fileSources[].symbols` 承载普通文件逻辑变更的完整传播树和原始 diff，`moduleSources[].sourceFiles[].symbols` 承载 go.mod 模块升级从本仓使用入口开始的完整传播树。输出契约见 `docs/contracts/output-contract.md`。
+impact 输出的顶层 `summary` 汇总影响接口数量和接口列表；每个 `fileSources[]` 分别保留普通文件变更的原始 `diff`，其 `symbols` 承载完整传播树；可选的 `moduleSources[].sourceFiles[].symbols` 承载 go.mod 模块语义变化从本仓使用入口开始的完整传播树。输出契约见 `docs/contracts/output-contract.md`。
 
 关键设计点是：Go BFF 不能只做调用图分析。route 注册里 controller 通常不是被调用，而是作为函数值被传给注册函数：
 
@@ -188,7 +192,7 @@ changed middleware symbol
 
 [docs/contracts/output-contract.md](docs/contracts/output-contract.md)
 
-`docs/design/` 和 `docs/superpowers/plans/` 保存历史设计与实施过程，不作为当前实现状态真值。
+`docs/design/`、`docs/superpowers/specs/` 和 `docs/superpowers/plans/` 保存历史设计与实施过程，不作为当前实现状态真值。
 
 ## 后续路线
 
@@ -196,7 +200,7 @@ changed middleware symbol
 
 - 外部 Go module 两个版本之间的 API/source diff 分析。
 - Base/Head 双快照与被删除声明的精确恢复。
-- 生成代码和 `nexus/codegen` 路由的专项支持。
+- Nexus/codegen 模板变体的持续回归覆盖。
 - 底层 gRPC 项目到 BFF HTTP 接口的跨仓传播。
 - 与前端 analyzer 的 API 输入自动桥接。
 - 面向 QA 的自然语言回归报告。

@@ -31,6 +31,276 @@ func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	)
 }
 
+func TestExtractStrictInterfaceCallReference(t *testing.T) {
+	root := writeStrictInterfaceFixture(t, `func Init() {
+	Client = new(client)
+}
+`)
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"func:example.com/strict-interface/controller::Handle",
+		"method:example.com/strict-interface/remote:client:Fetch",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractStrictInterfaceRejectsUnknownBinding(t *testing.T) {
+	root := writeStrictInterfaceFixture(t, `func buildClient() Client {
+	return new(client)
+}
+
+func Init() {
+	Client = new(client)
+	Client = buildClient()
+}
+`)
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/strict-interface/controller::Handle")
+	to := facts.SymbolID("method:example.com/strict-interface/remote:client:Fetch")
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == facts.ReferenceKindCall {
+			t.Fatalf("unknown interface binding emitted concrete call edge: %#v", ref)
+		}
+	}
+	assertReferenceDiagnostic(t, store, "symbol_reference_unresolved")
+}
+
+func TestExtractStrictInterfaceRejectsCrossPackageConcreteAssignment(t *testing.T) {
+	root := writeStrictInterfaceFixture(t, `func Init() {
+	Client = new(client)
+}
+`)
+	configDir := filepath.Join(root, "config")
+	if err := os.Mkdir(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configSource := `package config
+
+import "example.com/strict-interface/remote"
+
+type otherClient struct{}
+
+func (*otherClient) Fetch() {}
+
+func Configure() {
+	remote.ClientValue = new(otherClient)
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.go"), []byte(configSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/strict-interface/controller::Handle")
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.Kind == facts.ReferenceKindCall {
+			t.Fatalf("cross-package ambiguous interface binding emitted call edge: %#v", ref)
+		}
+	}
+	assertReferenceDiagnostic(t, store, "symbol_reference_unresolved")
+}
+
+func writeStrictInterfaceFixture(t *testing.T, assignmentSource string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/strict-interface\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	remoteDir := filepath.Join(root, "remote")
+	if err := os.Mkdir(remoteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	remoteSource := `package remote
+
+type Client interface {
+	Fetch()
+}
+
+type client struct{}
+
+func (*client) Fetch() {}
+
+var ClientValue Client
+` + strings.ReplaceAll(assignmentSource, "Client =", "ClientValue =")
+	if err := os.WriteFile(filepath.Join(remoteDir, "remote.go"), []byte(remoteSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	controllerDir := filepath.Join(root, "controller")
+	if err := os.Mkdir(controllerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	controllerSource := `package controller
+
+import "example.com/strict-interface/remote"
+
+func Handle() {
+	remote.ClientValue.Fetch()
+}
+`
+	if err := os.WriteFile(filepath.Join(controllerDir, "controller.go"), []byte(controllerSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestExternalMethodOnProjectPackageVarDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/external-client\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "remote"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "remote", "client.go"), []byte(`package remote
+
+import "example.com/sdk"
+
+var Client sdk.Client
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller", "controller.go"), []byte(`package controller
+
+import "example.com/external-client/remote"
+
+func Handle() {
+	remote.Client.Fetch()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	assertReference(t, store,
+		"func:example.com/external-client/controller::Handle",
+		"var:example.com/external-client/remote::Client",
+		facts.ReferenceKindValue,
+	)
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "symbol_reference_unresolved" && strings.Contains(diagnostic.Message, "remote.Client.Fetch") {
+			t.Fatalf("external method reported as unresolved project symbol: %#v", diagnostic)
+		}
+	}
+}
+
+func TestExternalMethodOnLocalShadowingProjectImportDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/import-shadow\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "consumer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "consumer", "consumer.go"), []byte("package consumer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+import (
+	"example.com/import-shadow/consumer"
+	"example.com/sdk"
+)
+
+var _ = consumer.Register
+
+func Handle(consumer sdk.Consumer) {
+	consumer.Ack()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "symbol_reference_unresolved" && strings.Contains(diagnostic.Message, "consumer.Ack") {
+			t.Fatalf("external method on shadowing local reported as unresolved project symbol: %#v", diagnostic)
+		}
+	}
+}
+
+func TestUnknownLocalShadowingProjectImportDoesNotResolvePackageMethod(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/unknown-import-shadow\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	remoteDir := filepath.Join(root, "remote")
+	if err := os.Mkdir(remoteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteDir, "remote.go"), []byte(`package remote
+
+type client struct{}
+
+func (*client) Fetch() {}
+
+var Client = new(client)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	controllerDir := filepath.Join(root, "controller")
+	if err := os.Mkdir(controllerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controllerDir, "controller.go"), []byte(`package controller
+
+import "example.com/unknown-import-shadow/remote"
+
+type localClient struct{}
+
+func (*localClient) Fetch() {}
+
+func build() struct{ Client *localClient } {
+	return struct{ Client *localClient }{Client: new(localClient)}
+}
+
+func Handle() {
+	remote := build()
+	remote.Client.Fetch()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/unknown-import-shadow/controller::Handle")
+	to := facts.SymbolID("method:example.com/unknown-import-shadow/remote:client:Fetch")
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == facts.ReferenceKindCall {
+			t.Fatalf("unknown local shadow resolved as imported package method: %#v", ref)
+		}
+	}
+}
+
+func TestMethodOnLocalWithoutProjectImportDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-method\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+func Handle(err error) string {
+	return err.Error()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "symbol_reference_unresolved" {
+			t.Fatalf("local method reported as unresolved project symbol: %#v", diagnostic)
+		}
+	}
+}
+
 func TestExtractTypeReferences(t *testing.T) {
 	store := extractFixture(t, "type-impact")
 
@@ -254,6 +524,162 @@ func (c *controllerHandler) executeFlow() {}
 	)
 	if ref.Confidence != facts.ConfidenceMedium {
 		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractNewBuiltinLocalMethodCallUsesHighConfidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-new\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type controllerHandler struct{}
+
+func controller() {
+	c := new(controllerHandler)
+	c.executeFlow()
+}
+
+func (c *controllerHandler) executeFlow() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"func:example.com/local-new::controller",
+		"method:example.com/local-new:controllerHandler:executeFlow",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractTypedConstMethodCall(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/typed-const\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type Code string
+
+func (Code) String() string { return "" }
+
+const Current Code = "current"
+
+func Handle() string {
+	return Current.String()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	ref := findReference(t, store,
+		"func:example.com/typed-const::Handle",
+		"method:example.com/typed-const:Code:String",
+		facts.ReferenceKindCall,
+	)
+	if ref.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractStaticMapInterfaceDispatchReferencesAllConcreteMethods(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/static-map-dispatch\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(`package service
+
+type Kind int
+
+const (
+	First Kind = iota
+	Second
+)
+
+type Action interface {
+	Run()
+}
+
+type firstAction struct{}
+func (*firstAction) Run() {}
+
+type secondAction struct{}
+func (*secondAction) Run() {}
+
+var actions = map[Kind]Action{
+	First:  &firstAction{},
+	Second: &secondAction{},
+}
+
+func Handle(kind Kind) {
+	if action, ok := actions[kind]; ok {
+		action.Run()
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/static-map-dispatch::Handle")
+	assertReference(t, store, from, "method:example.com/static-map-dispatch:firstAction:Run", facts.ReferenceKindCall)
+	assertReference(t, store, from, "method:example.com/static-map-dispatch:secondAction:Run", facts.ReferenceKindCall)
+}
+
+func TestExtractStaticMapInterfaceDispatchRejectsUnknownMapValue(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/static-map-unknown\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(`package service
+
+type Kind int
+
+const (
+	First Kind = iota
+	Second
+)
+
+type Action interface {
+	Run()
+}
+
+type firstAction struct{}
+func (*firstAction) Run() {}
+
+type secondAction struct{}
+func (*secondAction) Run() {}
+
+func buildAction() Action {
+	return &secondAction{}
+}
+
+var actions = map[Kind]Action{
+	First:  &firstAction{},
+	Second: buildAction(),
+}
+
+func Handle(kind Kind) {
+	if action, ok := actions[kind]; ok {
+		action.Run()
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/static-map-unknown::Handle")
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.Kind == facts.ReferenceKindCall {
+			t.Fatalf("unknown static map value emitted partial dispatch edge: %#v", ref)
+		}
 	}
 }
 

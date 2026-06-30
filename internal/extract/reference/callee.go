@@ -9,38 +9,72 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-func resolveCall(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, call *ast.CallExpr) (facts.SymbolID, string, facts.Confidence, bool) {
+func resolveCallCandidates(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, call *ast.CallExpr) ([]astindex.ResolvedSymbol, string, bool) {
 	switch fun := unwrapGenericCallee(call.Fun).(type) {
 	case *ast.Ident:
 		id := astindex.FunctionSymbolID(file.Package.Path, fun.Name)
 		_, ok := idx.Symbols[id]
-		return id, fun.Name, facts.ConfidenceHigh, ok
+		if !ok {
+			return nil, fun.Name, false
+		}
+		return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
 	case *ast.SelectorExpr:
-		return resolveSelector(file, idx, scopedTypes, fun)
+		return resolveSelectorCandidates(file, idx, scopedTypes, fun)
 	default:
-		return "", "", "", false
+		return nil, "", false
 	}
 }
 
-func resolveSelector(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, selector *ast.SelectorExpr) (facts.SymbolID, string, facts.Confidence, bool) {
+func resolveSelectorCandidates(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, selector *ast.SelectorExpr) ([]astindex.ResolvedSymbol, string, bool) {
 	parts := selectorParts(selector)
 	raw := strings.Join(parts, ".")
 	if len(parts) == 2 {
 		if importPath := file.Imports[parts[0]]; importPath != "" {
 			id := astindex.FunctionSymbolID(importPath, parts[1])
 			_, ok := idx.Symbols[id]
-			return id, raw, facts.ConfidenceHigh, ok
+			if !ok {
+				return nil, raw, false
+			}
+			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, raw, true
 		}
 	}
 	if len(parts) >= 2 {
-		if valueType, ok := scopedTypes.resolve(parts[0], selector.Pos()); ok {
-			if resolved, ok := idx.ResolveValueTypeMethod(valueType, parts[1:]); ok {
-				return resolved.ID, raw, resolved.Confidence, true
+		if valueTypes, ok := scopedTypes.resolveAll(parts[0], selector.Pos()); ok {
+			if len(valueTypes) != 1 {
+				return resolveValueTypeMethodCandidates(idx, valueTypes, parts[1:], raw)
 			}
+			valueType := valueTypes[0]
+			if resolved, ok := idx.ResolveValueTypeMethod(valueType, parts[1:]); ok {
+				return []astindex.ResolvedSymbol{resolved}, raw, true
+			}
+			return nil, raw, false
 		}
 	}
 	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts); ok {
-		return resolved.ID, raw, resolved.Confidence, true
+		return []astindex.ResolvedSymbol{resolved}, raw, true
 	}
-	return "", raw, "", false
+	return nil, raw, false
+}
+
+func resolveValueTypeMethodCandidates(idx *astindex.Index, valueTypes []astindex.ValueType, selectors []string, raw string) ([]astindex.ResolvedSymbol, string, bool) {
+	if len(valueTypes) == 0 {
+		return nil, raw, false
+	}
+	seen := map[facts.SymbolID]bool{}
+	out := make([]astindex.ResolvedSymbol, 0, len(valueTypes))
+	for _, valueType := range valueTypes {
+		if valueType.TypeName == "" {
+			return nil, raw, false
+		}
+		resolved, ok := idx.ResolveValueTypeMethod(valueType, selectors)
+		if !ok {
+			return nil, raw, false
+		}
+		if seen[resolved.ID] {
+			continue
+		}
+		seen[resolved.ID] = true
+		out = append(out, resolved)
+	}
+	return out, raw, len(out) > 0
 }

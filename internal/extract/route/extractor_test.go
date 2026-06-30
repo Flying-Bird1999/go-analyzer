@@ -305,6 +305,37 @@ func Init(g *Group) {
 	}
 }
 
+func TestUniqueRouteCallPrefixesDoesNotSeedIntermediateRouteFunctions(t *testing.T) {
+	contexts := []routeCallContext{
+		{
+			caller: facts.SymbolID("func:example.com/router/app::InitAppAllRouter"),
+			callee: facts.SymbolID("func:example.com/router/app/common::InitAppCommonRouter"),
+			params: map[string]routeParamContext{
+				"adminAppGroup": {
+					prefix:        "",
+					callerRootVar: "adminAppGroup",
+				},
+			},
+		},
+		{
+			caller: facts.SymbolID("func:example.com/router::InitRouter"),
+			callee: facts.SymbolID("func:example.com/router/app::InitAppAllRouter"),
+			params: map[string]routeParamContext{
+				"adminAppGroup": {
+					prefix:        "/admin/api/bff-app",
+					callerRootVar: "g",
+				},
+			},
+		},
+	}
+
+	prefixes := uniqueRouteCallPrefixes(contexts)
+	got := prefixes[facts.SymbolID("func:example.com/router/app/common::InitAppCommonRouter")]["adminAppGroup"]
+	if got != "/admin/api/bff-app" {
+		t.Fatalf("prefix = %q", got)
+	}
+}
+
 func TestExtractNestedRouteOrderBeforeFollowingTopLevelRoute(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/route-order\n\ngo 1.24\n"), 0o644); err != nil {

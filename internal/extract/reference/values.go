@@ -218,9 +218,9 @@ func localDeclarations(fn *ast.FuncDecl) localScope {
 	return out
 }
 
-func ignoredValuePositions(body *ast.BlockStmt) map[token.Pos]bool {
+func ignoredValuePositions(root ast.Node) map[token.Pos]bool {
 	out := map[token.Pos]bool{}
-	ast.Inspect(body, func(node ast.Node) bool {
+	ast.Inspect(root, func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.CompositeLit:
 			markExprPositions(out, x.Type)
@@ -246,9 +246,9 @@ func markExprPositions(out map[token.Pos]bool, expr ast.Expr) {
 	})
 }
 
-func callFunPositions(body *ast.BlockStmt) map[token.Pos]bool {
+func callFunPositions(root ast.Node) map[token.Pos]bool {
 	out := map[token.Pos]bool{}
-	ast.Inspect(body, func(node ast.Node) bool {
+	ast.Inspect(root, func(node ast.Node) bool {
 		if call, ok := node.(*ast.CallExpr); ok {
 			out[call.Fun.Pos()] = true
 		}

@@ -37,17 +37,21 @@ The MVP validation target is stability rather than perfect precision:
 
 ## Latest Facts Smoke Snapshot
 
-Local smoke run on 2026-06-29:
+Local smoke run on 2026-06-30:
 
 | Project | Symbols | Annotations | Routes | Diagnostics |
 | --- | ---: | ---: | ---: | ---: |
-| `sl-sc1-bff-service` | 781 | 32 | 32 | 20 |
-| `sl-sc1-admin-bff` | 5137 | 463 | 535 | 213 |
+| `sl-sc1-bff-service` | 781 | 32 | 32 | 0 |
+| `sl-sc1-admin-bff` | 5137 | 463 | 559 | 5 |
 
-All current diagnostics are `symbol_reference_unresolved`. The inspected
-examples are project-local generated clients, package-level service clients and
-structured error values whose concrete receiver type cannot yet be inferred by
-the AST-only resolver. The analyzer keeps the resolved portions of each file.
+All five remaining diagnostics are `symbol_reference_unresolved` for
+`sc_redisx.SentinelClient.Eval/Scan`. Production `.go` files assign both
+`RedisClusterClient` and `RedisClientMock`, so strict interface dispatch rejects
+the ambiguous binding instead of guessing. Unique package-level interface
+bindings, static map interface dispatch where every map value is known,
+`new(T)` package/local values, and methods on typed constants now resolve.
+External SDK methods reached through project package variables or locals that
+shadow project imports are not reported as unresolved project symbols.
 
 ## Impact Fixture Snapshot
 
@@ -93,7 +97,7 @@ fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates ten real-file diff cases across the two target BFF
+The smoke script validates sixteen real-file diff cases across the two target BFF
 projects:
 
 | Case | Project file | Expected endpoint |
@@ -104,15 +108,26 @@ projects:
 | `real-admin-user-info` | `sl-sc1-admin-bff/controller/user/user.go` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
 | `real-admin-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 12 routes using `AddLiveWriteGuard` |
+| `real-admin-route-param-group` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `POST /admin/api/bff-web/auth/revokeToken/:clientId` through the second route-group parameter |
+| `real-admin-path-param-flow-control` | `sl-sc1-admin-bff/router/live/activity.go` | 4 routes using package-level `createPathParamsFlowControlMid(...)` initializers |
+| `real-admin-conversation-action-map` | `sl-sc1-admin-bff/service/mc/conversation_service.go` | app + web conversation routes through static map interface dispatch |
 | `real-client-common-checkin` | `sl-sc1-bff-service/controller/common/common.go` | `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `sl-sc1-bff-service/go.mod` + `sl-sc1-bff-service/controller/common/common.go` | 1 `fileSources` endpoint plus 10 Nexus endpoints from upgraded `github.com/shopspring/decimal` |
 | `real-client-multi-module-and-multi-source` | `go.mod` + `controller/common/common.go` + `model/form_product.go` + `service/merchant.go` | 3 file roots, 3 upgraded module sources and 31 deduplicated endpoints |
 | `real-client-live-view` | `sl-sc1-bff-service/controller/live/view/redirect.go` | `GET /api/bff-web/live/view/:salesId/redirect` |
+| `real-client-interface-dispatch` | `sl-sc1-bff-service/remote/oa/oa.go` | 3 exact endpoints through both direct and service callers of `oaClient.GetMerchant` |
+| `real-admin-new-builtin` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `GET /admin/api/bff-web/auth/oauth/callback` |
+| `real-admin-typed-const` | `sl-sc1-admin-bff/service/uc/merchant_setting_code.go` | `POST /admin/api/bff-web/uc/merchant/setting/get` |
 
 Controller handlers registered under both current and compatibility routes
 produce both endpoints; the exact sets are checked. The route-helper case
 proves that changing `AddLiveWriteGuard` reaches only the 12 route expressions
-that reference it. The combined
+that reference it. The route-param case proves that a non-first
+`*lego.RouterGroup` parameter can register endpoints. The path-param case proves
+package-level initializer dependencies propagate from middleware factory helpers
+to the routes that consume the initialized middleware values. The conversation
+case proves strict static map interface dispatch and route-prefix propagation
+through app router child functions. The combined
 go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
 `moduleSources`. The module source tree explicitly contains
@@ -122,6 +137,32 @@ The multi-module case generates six real diff hunks in four files. It verifies
 independent module trees for `github.com/shopspring/decimal`,
 `github.com/google/uuid`, and `go.opentelemetry.io/otel/trace`, plus ordinary
 file roots for `CheckIn`, `ConvertPrice`, and `GetMerchantInfo`.
+
+Nexus/codegen standard templates are covered by these real cases. The generated
+`RegisterRouters -> RegisterRouter -> g.GET/POST/...` chain is extracted as
+ordinary Lego routes, and decimal-related module changes reach generated Nexus
+endpoints through `ParseStringToFloat64 -> ConvertPrice`.
+
+The strict receiver cases validate these complete chains:
+
+```text
+oaClient.GetMerchant
+  -> direct controller helper and service.GetMerchantInfo
+  -> 3 exact GET endpoints
+
+AuthRedis.GetRedirectData
+  -> auth web callback
+  -> auth controller callback
+  -> GET /admin/api/bff-web/auth/oauth/callback
+
+MerchantSettingCode.String
+  -> merchantSettingController.Get
+  -> POST /admin/api/bff-web/uc/merchant/setting/get
+```
+
+`AuthRedis.GetSessionData` was also inspected manually. It reaches
+`CtxTokenMiddleWare`, but that middleware has configuration-driven early exits;
+therefore it is not used as the exact endpoint fixture for receiver inference.
 
 ## Known Unsupported Patterns
 
@@ -133,5 +174,9 @@ file roots for `CheckIn`, `ConvertPrice`, and `GetMerchantInfo`.
   local import usages; external module API/source differences are not analyzed.
 - Declarations absent from the post-change snapshot can degrade to
   `deleted_symbol_unresolved`.
-- Interface dispatch, reflection, arbitrary control-flow receiver reassignment
-  and full runtime route reconstruction remain outside the AST-only scope.
+- Ambiguous or unknown interface dispatch, reflection, arbitrary control-flow
+  receiver reassignment and full runtime route reconstruction remain outside the
+  AST-only scope. Static map literals are resolved only when every value can be
+  mapped to a project concrete type implementing the declared project interface.
+- Configuration-driven middleware exclusions are not path-sensitive; a method
+  below such a branch can conservatively reach every statically bound route.

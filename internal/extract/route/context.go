@@ -4,4 +4,5 @@ type groupContext struct {
 	id      string
 	varName string
 	prefix  string
+	rootVar string
 }

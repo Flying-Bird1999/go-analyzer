@@ -520,11 +520,35 @@ expected = {
         ("POST", "/admin/api/bff-web/live/activity/end/manual"),
         ("PUT", "/admin/api/bff-web/live/activity/:activityId"),
     },
+    "real-admin-route-param-group": {
+        ("POST", "/admin/api/bff-web/auth/revokeToken/:clientId"),
+    },
+    "real-admin-path-param-flow-control": {
+        ("POST", "/admin/api/bff-web/live/activity/:id/end"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/reward/manual"),
+        ("POST", "/admin/api/bff-web/live/activity/:id/start"),
+        ("POST", "/admin/api/bff-web/live/activity/bidding/:activityId/publish-maximum-bid"),
+    },
+    "real-admin-conversation-action-map": {
+        ("POST", "/admin/api/bff-app/mc/conversation/status/report"),
+        ("POST", "/admin/api/bff-web/mc/syncConversation"),
+    },
     "real-client-common-checkin": {
         ("POST", "/api/bff-web/common/checkIn"),
     },
     "real-client-live-view": {
         ("GET", "/api/bff-web/live/view/:salesId/redirect"),
+    },
+    "real-client-interface-dispatch": {
+        ("GET", "/api/bff-web/live/view/:salesId/redirect"),
+        ("GET", "/api/bff-web/mc/form/redirect_info/:formId"),
+        ("GET", "/sc1-internal/app-proxy/api/merchant/info"),
+    },
+    "real-admin-new-builtin": {
+        ("GET", "/admin/api/bff-web/auth/oauth/callback"),
+    },
+    "real-admin-typed-const": {
+        ("POST", "/admin/api/bff-web/uc/merchant/setting/get"),
     },
 }
 
@@ -692,6 +716,30 @@ write_real_file_diff \
 run_real_impact_case "real-admin-route-helper" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-route-helper.diff" "POST" "/admin/api/bff-web/live/activity/:id"
 
 write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "pkg/auth/cache/auth_redis.go" \
+  "	tokenKey := fmt.Sprintf(constant.TokenKey, token)" \
+  "	tokenKey := fmt.Sprintf(constant.TokenKey, token) // smoke route param group" \
+  "${OUT_DIR}/real-admin-route-param-group.diff"
+run_real_impact_case "real-admin-route-param-group" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-route-param-group.diff" "POST" "/admin/api/bff-web/auth/revokeToken/:clientId"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "router/live/activity.go" \
+  "			pathParams := ctx.Param(path)" \
+  "			pathParams := ctx.Param(path) // smoke package initializer" \
+  "${OUT_DIR}/real-admin-path-param-flow-control.diff"
+run_real_impact_case "real-admin-path-param-flow-control" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-path-param-flow-control.diff" "POST" "/admin/api/bff-web/live/activity/:id/start"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "service/mc/conversation_service.go" \
+  "	inputKey := sc_redisx.BuildKey(sc_redisx.CONVERSATION_KEY, INPUT.String(), params.MerchantId, params.ConversationId)" \
+  "	inputKey := sc_redisx.BuildKey(sc_redisx.CONVERSATION_KEY, INPUT.String(), params.MerchantId, params.ConversationId) // smoke static map interface dispatch" \
+  "${OUT_DIR}/real-admin-conversation-action-map.diff"
+run_real_impact_case "real-admin-conversation-action-map" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-conversation-action-map.diff" "POST" "/admin/api/bff-app/mc/conversation/status/report"
+
+write_real_file_diff \
   "${SC1_BFF}" \
   "controller/common/common.go" \
   "	// 获取当前商家/用户信息" \
@@ -742,6 +790,32 @@ write_real_file_diff \
   "	resp, err := live.LiveViewClient.GetMerchantIdBySalesId(c, &live_viewer_client.GetMerchantIdReq{ // smoke route" \
   "${OUT_DIR}/real-client-live-view.diff"
 run_real_impact_case "real-client-live-view" "${SC1_BFF}" "${OUT_DIR}/real-client-live-view.diff" "GET" "/api/bff-web/live/view/:salesId/redirect"
+
+write_real_file_diff \
+  "${SC1_BFF}" \
+  "remote/oa/oa.go" \
+  "	if response.Status < 200 || response.Status >= 400 {" \
+  "	if response.Status <= 199 || response.Status >= 400 {" \
+  "${OUT_DIR}/real-client-interface-dispatch.diff"
+run_real_impact_case "real-client-interface-dispatch" "${SC1_BFF}" "${OUT_DIR}/real-client-interface-dispatch.diff" "GET" "/sc1-internal/app-proxy/api/merchant/info"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "pkg/auth/cache/auth_redis.go" \
+  "func (r *AuthRedis) GetRedirectData(ctx context.Context, key string, oauthSid string) (*model.RedirectCacheDo, error) {
+	if r.CheckNilClient() {" \
+  "func (r *AuthRedis) GetRedirectData(ctx context.Context, key string, oauthSid string) (*model.RedirectCacheDo, error) {
+	if r.CheckNilClient() == true {" \
+  "${OUT_DIR}/real-admin-new-builtin.diff"
+run_real_impact_case "real-admin-new-builtin" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-new-builtin.diff" "GET" "/admin/api/bff-web/auth/oauth/callback"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "service/uc/merchant_setting_code.go" \
+  "	return string(m)" \
+  "	return \"\" + string(m)" \
+  "${OUT_DIR}/real-admin-typed-const.diff"
+run_real_impact_case "real-admin-typed-const" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-typed-const.diff" "POST" "/admin/api/bff-web/uc/merchant/setting/get"
 
 validate_known_real_endpoint_sets
 

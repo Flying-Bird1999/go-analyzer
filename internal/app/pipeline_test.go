@@ -380,6 +380,292 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/x")
 }
 
+func TestRunImpactMapsSecondRouteGroupParameterToEndpoint(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/route-param\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/auth.go", `package controller
+
+import "example.com/route-param/service"
+
+// @Post /admin/api/bff-web/auth/revokeToken/:clientId
+func RevokeTokenWebhook() {
+	service.RemoveToken()
+}
+`)
+	writeTestFile(t, root, "service/cache.go", `package service
+
+func RemoveToken() {
+	_ = "new"
+}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/route-param/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) POST(path string, handler any) {}
+
+func InitRouter(g *RouterGroup) {
+	authGroup := g.Group("/admin/api/bff-web")
+	withoutAuth := g.Group("/admin/api/bff-web")
+	InitAuthRouter(authGroup, withoutAuth)
+}
+
+func InitAuthRouter(g *RouterGroup, withoutAuth *RouterGroup) {
+	g.GET("/auth/check", controller.Health)
+	withoutAuth.POST("/auth/revokeToken/:clientId", controller.RevokeTokenWebhook)
+}
+`)
+	writeTestFile(t, root, "controller/health.go", `package controller
+
+func Health() {}
+`)
+	diffPath := filepath.Join(t.TempDir(), "route-param.diff")
+	patch := []byte("diff --git a/service/cache.go b/service/cache.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/service/cache.go\n" +
+		"+++ b/service/cache.go\n" +
+		"@@ -1,5 +1,5 @@\n" +
+		" package service\n" +
+		" \n" +
+		" func RemoveToken() {\n" +
+		"-\t_ = \"old\"\n" +
+		"+\t_ = \"new\"\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/auth/revokeToken/:clientId")
+}
+
+func TestRunImpactMapsPackageInitializerHelperToRouteMiddleware(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/package-init\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller/activity.go", `package controller
+
+// @Post /admin/api/bff-web/live/activity/:id/start
+func StartActivity() {}
+`)
+	writeTestFile(t, root, "router/activity.go", `package router
+
+import "example.com/package-init/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) POST(path string, handler any) {}
+
+var idMiddleware = createPathParamsMiddleware("id")
+
+func createPathParamsMiddleware(path string) any {
+	return "new-" + path
+}
+
+func MiddlewareController(middleware []any, handler any) any {
+	return handler
+}
+
+func InitActivityRouter(g *RouterGroup) {
+	g.POST("/:id/start", MiddlewareController([]any{
+		idMiddleware,
+	}, controller.StartActivity))
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "package-init.diff")
+	patch := []byte("diff --git a/router/activity.go b/router/activity.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/router/activity.go\n" +
+		"+++ b/router/activity.go\n" +
+		"@@ -9,7 +9,7 @@\n" +
+		" var idMiddleware = createPathParamsMiddleware(\"id\")\n" +
+		" \n" +
+		" func createPathParamsMiddleware(path string) any {\n" +
+		"-\treturn \"old-\" + path\n" +
+		"+\treturn \"new-\" + path\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/live/activity/:id/start")
+}
+
+func TestRunImpactMapsStaticMapInterfaceDispatchToEndpoint(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/static-map-impact\n\ngo 1.24\n")
+	writeTestFile(t, root, "service/conversation.go", `package service
+
+type Kind int
+
+const (
+	Out Kind = iota
+	In
+)
+
+type Action interface {
+	Computing()
+}
+
+type outAction struct{}
+
+func (*outAction) Computing() {
+	_ = "new"
+}
+
+type inAction struct{}
+
+func (*inAction) Computing() {}
+
+var actions = map[Kind]Action{
+	Out: &outAction{},
+	In:  &inAction{},
+}
+
+func SyncConversation(kind Kind) {
+	if action, ok := actions[kind]; ok {
+		action.Computing()
+	}
+}
+`)
+	writeTestFile(t, root, "controller/conversation.go", `package controller
+
+import "example.com/static-map-impact/service"
+
+// @Post /admin/api/bff-web/mc/syncConversation
+func SyncConversation() {
+	service.SyncConversation(service.Out)
+}
+`)
+	writeTestFile(t, root, "router/conversation.go", `package router
+
+import "example.com/static-map-impact/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) POST(path string, handler any) {}
+
+func InitRouter(g *RouterGroup) {
+	g.POST("/mc/syncConversation", controller.SyncConversation)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "static-map.diff")
+	patch := []byte("diff --git a/service/conversation.go b/service/conversation.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/service/conversation.go\n" +
+		"+++ b/service/conversation.go\n" +
+		"@@ -14,7 +14,7 @@\n" +
+		" type outAction struct{}\n" +
+		" \n" +
+		" func (*outAction) Computing() {\n" +
+		"-\t_ = \"old\"\n" +
+		"+\t_ = \"new\"\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/mc/syncConversation")
+}
+
+func TestRunImpactUsesRouteGroupPrefixPassedToChildRouteFunction(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/child-route-prefix\n\ngo 1.24\n")
+	writeTestFile(t, root, "service/service.go", `package service
+
+func Changed() {
+	_ = "new"
+}
+`)
+	writeTestFile(t, root, "controller/controller.go", `package controller
+
+import "example.com/child-route-prefix/service"
+
+func Handle() {
+	service.Changed()
+}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/child-route-prefix/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) POST(path string, handler any) {}
+
+const AppPrefix = "/admin/api/bff-app"
+
+func createAuthGroup(g *RouterGroup, prefix string) *RouterGroup {
+	return g.Group(prefix)
+}
+
+func InitRouter(g *RouterGroup) {
+	appGroup := createAuthGroup(g, AppPrefix)
+	InitAppRouter(appGroup)
+}
+
+func InitAppRouter(g *RouterGroup) {
+	InitConversationRouter(g)
+}
+
+func InitConversationRouter(g *RouterGroup) {
+	child := g.Group("/mc/conversation")
+	child.POST("/status/report", controller.Handle)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "child-route-prefix.diff")
+	patch := []byte("diff --git a/service/service.go b/service/service.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/service/service.go\n" +
+		"+++ b/service/service.go\n" +
+		"@@ -1,5 +1,5 @@\n" +
+		" package service\n" +
+		" \n" +
+		" func Changed() {\n" +
+		"-\t_ = \"old\"\n" +
+		"+\t_ = \"new\"\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-app/mc/conversation/status/report")
+}
+
 func TestRunImpactRecoversMultilineDeletedRouteAndHandlerAnnotation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/deleted-route\n\ngo 1.24\n")
