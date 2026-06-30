@@ -13,11 +13,17 @@ func resolveCallCandidates(file *project.File, idx *astindex.Index, scopedTypes 
 	switch fun := unwrapGenericCallee(call.Fun).(type) {
 	case *ast.Ident:
 		id := astindex.FunctionSymbolID(file.Package.Path, fun.Name)
-		_, ok := idx.Symbols[id]
-		if !ok {
-			return nil, fun.Name, false
+		if _, ok := idx.Symbols[id]; ok {
+			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
 		}
-		return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+		if id, ok := idx.PackageValueSymbol(fun.Obj); ok {
+			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+		}
+		id = astindex.ValueSymbolID("var", file.Package.Path, fun.Name)
+		if _, ok := idx.Symbols[id]; ok {
+			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+		}
+		return nil, fun.Name, false
 	case *ast.SelectorExpr:
 		return resolveSelectorCandidates(file, idx, scopedTypes, fun)
 	default:

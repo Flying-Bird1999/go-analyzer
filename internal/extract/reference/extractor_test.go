@@ -21,6 +21,51 @@ func TestExtractFunctionCallReference(t *testing.T) {
 	)
 }
 
+func TestExtractPackageFunctionValueCallReference(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/function-value\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	serviceDir := filepath.Join(root, "service")
+	if err := os.Mkdir(serviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(serviceDir, "service.go"), []byte(`package service
+
+func Query() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	controllerDir := filepath.Join(root, "controller")
+	if err := os.Mkdir(controllerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controllerDir, "controller.go"), []byte(`package controller
+
+import "example.com/function-value/service"
+
+var querySvc = service.Query
+
+func Handle() {
+	querySvc()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	assertReference(t, store,
+		"var:example.com/function-value/controller::querySvc",
+		"func:example.com/function-value/service::Query",
+		facts.ReferenceKindValue,
+	)
+	assertReference(t, store,
+		"func:example.com/function-value/controller::Handle",
+		"var:example.com/function-value/controller::querySvc",
+		facts.ReferenceKindCall,
+	)
+}
+
 func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	store := extractReferenceFixture(t)
 
