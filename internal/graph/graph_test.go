@@ -118,6 +118,33 @@ func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.RouteGroupFlows = append(store.RouteGroupFlows, facts.RouteGroupFlowFact{
+		ID:            "flow:helper-child",
+		ParentGroupID: "group:helper",
+		ChildGroupID:  "group:child-root",
+	})
+	store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
+		ID:             "middleware:auth",
+		GroupID:        "group:helper",
+		RouteFunc:      "func:example.com/project/router::AddAuth",
+		StatementIndex: 10,
+	})
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:             "route:child",
+		GroupID:        "group:child-root",
+		RouteFunc:      "func:example.com/project/router::Register",
+		StatementIndex: 1,
+	})
+
+	graph := NewRouteGraph(store)
+	routes := graph.RoutesAffectedByMiddleware("middleware:auth")
+	if len(routes) != 1 || routes[0].ID != "route:child" {
+		t.Fatalf("cross-function middleware routes = %#v", routes)
+	}
+}
+
 func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
@@ -148,10 +175,52 @@ func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T
 	}
 }
 
+func TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
+	guard := facts.SymbolID("func:example.com/project/router::AddReadGuard")
+	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
+		ID:             "group:guarded",
+		GroupVar:       "guarded",
+		RouteFunc:      routeFunc,
+		StatementIndex: 1,
+		Span:           facts.SourceSpan{File: "router/router.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 42},
+	})
+	store.Routes = append(store.Routes,
+		facts.RouteRegistrationFact{
+			ID:             "route:guarded",
+			GroupID:        "group:guarded",
+			GroupVar:       "guarded",
+			RouteFunc:      routeFunc,
+			StatementIndex: 2,
+			Span:           facts.SourceSpan{File: "router/router.go", StartLine: 11, StartCol: 2, EndLine: 11, EndCol: 42},
+		},
+		facts.RouteRegistrationFact{
+			ID:             "route:plain",
+			GroupVar:       "root",
+			RouteFunc:      routeFunc,
+			StatementIndex: 3,
+			Span:           facts.SourceSpan{File: "router/router.go", StartLine: 12, StartCol: 2, EndLine: 12, EndCol: 35},
+		},
+	)
+	store.References = append(store.References, facts.ReferenceFact{
+		ID:         "ref:guard-assignment",
+		FromSymbol: routeFunc,
+		ToSymbol:   guard,
+		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 10, StartCol: 13, EndLine: 10, EndCol: 32},
+	})
+
+	graph := NewRouteGraph(store)
+	routes := graph.RoutesForDependency(guard)
+	if len(routes) != 1 || routes[0].ID != "route:guarded" {
+		t.Fatalf("assigned group dependency routes = %#v", routes)
+	}
+}
+
 func extractAndLinkFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "testdata", "fixtures", fixture)
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

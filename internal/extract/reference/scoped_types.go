@@ -14,16 +14,28 @@ type scopedValueType struct {
 	valueTypes []astindex.ValueType
 }
 
-type scopedValueTypes map[string][]scopedValueType
-
-func (s scopedValueTypes) addAll(name string, declPos token.Pos, valueTypes []astindex.ValueType) {
-	if name == "" || name == "_" {
-		return
-	}
-	s[name] = append(s[name], scopedValueType{declPos: declPos, valueTypes: valueTypes})
+type scopedValueTypes struct {
+	byObject map[*ast.Object][]astindex.ValueType
+	byName   map[string][]scopedValueType
 }
 
-func (s scopedValueTypes) resolve(name string, pos token.Pos) (astindex.ValueType, bool) {
+func (s *scopedValueTypes) addAll(name *ast.Ident, declPos token.Pos, valueTypes []astindex.ValueType) {
+	if name == nil || name.Name == "" || name.Name == "_" {
+		return
+	}
+	if name.Obj != nil {
+		if s.byObject == nil {
+			s.byObject = map[*ast.Object][]astindex.ValueType{}
+		}
+		s.byObject[name.Obj] = valueTypes
+	}
+	if s.byName == nil {
+		s.byName = map[string][]scopedValueType{}
+	}
+	s.byName[name.Name] = append(s.byName[name.Name], scopedValueType{declPos: declPos, valueTypes: valueTypes})
+}
+
+func (s scopedValueTypes) resolve(name *ast.Ident, pos token.Pos) (astindex.ValueType, bool) {
 	valueTypes, ok := s.resolveAll(name, pos)
 	if !ok {
 		return astindex.ValueType{}, false
@@ -34,13 +46,20 @@ func (s scopedValueTypes) resolve(name string, pos token.Pos) (astindex.ValueTyp
 	return valueTypes[0], true
 }
 
-func (s scopedValueTypes) resolveAll(name string, pos token.Pos) ([]astindex.ValueType, bool) {
+func (s scopedValueTypes) resolveAll(name *ast.Ident, pos token.Pos) ([]astindex.ValueType, bool) {
+	if name == nil {
+		return nil, false
+	}
+	if name.Obj != nil {
+		valueTypes, ok := s.byObject[name.Obj]
+		return valueTypes, ok
+	}
 	var (
 		best    []astindex.ValueType
 		bestPos token.Pos
 		found   bool
 	)
-	for _, candidate := range s[name] {
+	for _, candidate := range s.byName[name.Name] {
 		if candidate.declPos != token.NoPos && candidate.declPos > pos {
 			continue
 		}
@@ -63,7 +82,7 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 		for _, field := range fields.List {
 			valueTypes := scopedTypesFromTypeExpr(file, field.Type)
 			for _, name := range field.Names {
-				out.addAll(name.Name, token.NoPos, valueTypes)
+				out.addAll(name, token.NoPos, valueTypes)
 			}
 		}
 	}
@@ -91,7 +110,7 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 				if valueIndex >= len(x.Rhs) {
 					valueIndex = len(x.Rhs) - 1
 				}
-				out.addAll(name.Name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
+				out.addAll(name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
 			}
 		case *ast.DeclStmt:
 			decl, ok := x.Decl.(*ast.GenDecl)
@@ -115,7 +134,7 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 						}
 						valueTypes = scopedTypesFromValueExpr(file, idx, value.Values[valueIndex])
 					}
-					out.addAll(name.Name, name.Pos(), valueTypes)
+					out.addAll(name, name.Pos(), valueTypes)
 				}
 			}
 		}

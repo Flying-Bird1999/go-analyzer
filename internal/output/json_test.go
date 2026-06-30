@@ -14,7 +14,7 @@ import (
 
 func TestRenderJSONIsDeterministicAndSorted(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,10 +5,6 @@ import (
 	"go/token"
 )
 
-type Options struct {
-	ExcludeDirs []string
-}
-
 type Project struct {
 	Root        string
 	ModulePath  string
@@ -24,8 +20,6 @@ type LoadDiagnostic struct {
 
 type Package struct {
 	Path  string
-	Dir   string
-	Name  string
 	Files []*File
 }
 

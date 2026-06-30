@@ -9,7 +9,7 @@ import (
 
 func TestLoadProjectScansGoFilesAndImports(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
-	p, err := Load(root, Options{})
+	p, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestLoadSkipsInvalidGoFileAndRecordsDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := Load(root, Options{})
+	p, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestLoadSkipsGoIgnoredFilesAndDirectories(t *testing.T) {
 		}
 	}
 
-	p, err := Load(root, Options{})
+	p, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

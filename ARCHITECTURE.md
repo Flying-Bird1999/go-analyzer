@@ -1,6 +1,6 @@
 # go-analyzer 架构与开发指南
 
-> 文档状态：当前实现基线，更新于 2026-06-30。
+> 文档状态：当前实现基线，更新于 2026-07-01。
 > 适用读者：项目维护者、代码评审者、首次接手的开发者，以及需要继续迭代本项目的 agent。
 > 当前输出：facts JSON 与 impact JSON。
 
@@ -402,6 +402,11 @@ g.Use(provider.Default.Auth.Middleware)
 
 解析 selector 时既支持从 package-level var/显式 typed const 开始，也支持当前方法 receiver、显式类型参数/局部变量、`new(T)`，以及由项目内 constructor 返回值推断出的局部变量；随后按 field 链一路走到最终 receiver type，再拼出 method symbol。
 
+局部变量绑定使用 `go/parser` 建立的 `ast.Object` 词法对象关系，而不是只按名称和
+声明行号选择。内层 block 的同名变量退出作用域后，不会污染外层变量的方法解析。
+package-level constructor 优先使用项目内 callable 的真实首返回值类型；外部
+constructor 只用于确认依赖边界，不猜测一个可传播的项目内具体类型。
+
 包级接口变量采用严格赋值证据：索引 loader 实际加载的非测试源码中的直接赋值，只有至少存在一个具体候选、已发现赋值都能高置信度解析且最终只有一个具体类型时，才把接口调用连接到具体方法。多实现或未知 RHS 一律不猜测，后续接口调用保留 unresolved diagnostic。`_test.go` 不参与绑定；普通 `.go` 中的 mock 赋值仍视为真实候选。反射或项目源码之外的运行时注入不在这个闭世界模型内。
 
 它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；接口参数/字段、复杂控制流和运行时注入不在当前精度目标内。
@@ -418,6 +423,7 @@ g.Use(provider.Default.Auth.Middleware)
 | `SymbolFact`            | declaration symbol                | astindex                                 |
 | `AnnotationFact`        | handler HTTP method/path          | annotation extractor                     |
 | `RouteGroupFact`        | route group/prefix/parent         | route extractor                          |
+| `RouteGroupFlowFact`    | group 参数/返回值的跨函数流向     | route extractor（内部传播事实）           |
 | `RouteRegistrationFact` | method/path/handler/wrapper       | route extractor / deleted route recovery |
 | `MiddlewareBindingFact` | group middleware 及顺序           | route extractor + linker                 |
 | `ReferenceFact`         | call/type/value 边                | reference extractor                      |
@@ -456,9 +462,13 @@ annotation span 精确到注释行，而不是整个函数体：
 - handler wrapper stack。
 - route group wrapper。
 - route 子函数调用上下文中的唯一 group 前缀。
+- group 参数传递和直接返回值形成的跨函数 group flow。
 - statement order。
 
 `internal/extract/route/call.go` 是正常 AST 提取和 deleted-route recovery 共用的 route call parser，避免两套语法漂移。
+项目内 `Add*`/`Create*`/`New*`/`Build*` group helper 还会校验其返回类型：
+必须是明确的 `RouterGroup`，或与首个 `*Group` 参数类型一致，避免仅凭函数名把普通
+业务函数误识别为 route group wrapper。
 
 ### 5.8 `internal/extract/reference`
 
@@ -472,12 +482,11 @@ project.Project + astindex.Index + facts.Store
 
 它在 `buildFacts` 阶段执行，也就是 `RunFacts` 和 `RunImpact` 都会先做这一步；并不是等 diff 出现以后才分析引用关系。
 
-提取四类 reference：
+提取三类 reference：
 
 - `call`：函数/方法调用。
 - `type`：参数、返回值、字段、组合字面量、泛型参数等类型引用。
 - `value`：var/const/function value。
-- `selector`：模型保留类型；当前常见 selector 主要输出为 call/value。
 
 边方向是：
 
@@ -528,6 +537,7 @@ ToSymbol -> all FromSymbol
 
 - 单行 require。
 - require block 中单独变化的依赖行，即使 hunk 不包含 `require (`。
+- 单行 replace 和 replace block。
 - replace-only hunk。
 - added/removed/upgraded/downgraded/replaced。
 
@@ -701,6 +711,10 @@ RouteGraph: HTTP 路由域传播
 
   route-scoped dependency
     -> reference span 所在的具体 route registration
+
+  assigned-group dependency
+    -> group 创建表达式引用的 guard/factory
+    -> 该 group 及跨函数 descendant group routes
 
   route group
     -> descendant routes
@@ -1256,9 +1270,9 @@ PY
 | impact          | `internal/impact`                      | tree、cycle、route helper、deleted route |
 | pipeline E2E    | `internal/app/pipeline_test.go`        | diff -> endpoint 完整闭环          |
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
-| real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 真实文件 diff |
+| real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 18 组真实文件 diff |
 
-2026-06-30 验证快照：
+2026-07-01 验证快照：
 
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
@@ -1269,7 +1283,7 @@ PY
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 16 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 18 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1278,7 +1292,9 @@ PY
 | `real-admin-product-set-list` | `GET /admin/api/bff-web/trade/product/product_set/list` |
 | `real-admin-user-info` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
-| `real-admin-route-helper` | `AddLiveWriteGuard` 变更精确命中 12 个写路由 |
+| `real-admin-route-helper` | `AddLiveWriteGuard` 变更精确命中 20 个 inline/assigned-group 写路由 |
+| `real-admin-assigned-route-helper` | `AddLiveReadGuard` 变更精确命中 activity/sale 中 37 个 inline/assigned-group routes |
+| `real-admin-returned-group-middleware` | `MiddlewareWithAuthLocal` 经 `createAdminAuthGroup` 返回值和 child router 传播到 424 个 auth-group endpoints |
 | `real-admin-route-param-group` | `AuthRedis.RemoveToken` -> 第二个 route group 参数注册的 `POST /admin/api/bff-web/auth/revokeToken/:clientId` |
 | `real-admin-path-param-flow-control` | `createPathParamsFlowControlMid` 包级初始化依赖 -> 4 个限流中间件 route |
 | `real-admin-conversation-action-map` | `conversationAction` 静态 map interface dispatch -> app/web 两个会话上报 endpoint |
@@ -1307,8 +1323,10 @@ PY
 - 声明值类型为项目内 interface、且所有 value 都可解析为具体项目类型的 package-level static map dispatch。
 - 包级 var/const 初始化表达式中的 call/value/type 依赖。
 - 多 route-group 参数和唯一调用上下文下的 route 子函数前缀传播。
+- route group 赋值表达式中的 guard/factory 依赖传播到该 group 及其子 group routes。
+- route group 参数和直接返回值在 route function 间的静态流向传播。
 - 删除 route registration 的单行/多行恢复。
-- go.mod require/replace diff 到本仓 usage 和 endpoint。
+- go.mod require/replace（含 block）diff 到本仓 usage 和 endpoint。
 - cycle 检测与完整传播。
 - 按来源组织的可追踪 impact tree 和 endpoint 摘要。
 

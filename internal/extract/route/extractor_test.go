@@ -12,7 +12,7 @@ import (
 
 func TestExtractDirectRouteRegistration(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "controller-wrapper")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,9 +367,62 @@ func Init(g *Group) {
 	}
 }
 
+func TestExtractRejectsNonLegoCamelCaseHTTPMethod(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/non-route-get\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "client.go"), []byte(`package client
+
+type Client struct{}
+
+func Handler() {}
+
+func Load(client *Client) {
+	client.Get("/cache-key", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 0 {
+		t.Fatalf("camel-case client.Get was parsed as a route: %#v", store.Routes)
+	}
+}
+
+func TestExtractRejectsProjectAddFunctionReturningNonGroup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/non-group-helper\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type RouterGroup struct{}
+
+func Handler() {}
+
+func AddCount(g *RouterGroup) int {
+	return 1
+}
+
+func Init(g *RouterGroup) {
+	value := AddCount(g)
+	value.GET("/not-a-route", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 0 {
+		t.Fatalf("non-group AddCount result was parsed as a route group: %#v", store.Routes)
+	}
+}
+
 func extractFixture(t *testing.T, root string) *facts.Store {
 	t.Helper()
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

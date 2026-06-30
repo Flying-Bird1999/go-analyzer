@@ -13,7 +13,6 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 	if fn.Body == nil {
 		return
 	}
-	locals := localDeclarations(fn)
 	ignored := ignoredValuePositions(fn.Body)
 	callFuns := callFunPositions(fn.Body)
 
@@ -27,24 +26,27 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 			if callFuns[x.Pos()] {
 				targets = resolveReceiverValueIDs(file, idx, x)
 			} else {
-				targets = resolveValueIDs(file, idx, x, locals, x.Pos())
+				targets = resolveValueIDs(file, idx, x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
 			return false
 		case *ast.Ident:
-			if ignored[x.Pos()] || callFuns[x.Pos()] || locals.isLocalAt(x.Name, x.Pos()) {
+			if ignored[x.Pos()] || callFuns[x.Pos()] || isLocalIdentifier(idx, x) {
 				return true
 			}
-			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x, locals, x.Pos()))
+			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x))
 		}
 		return true
 	})
 }
 
-func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, locals localScope, pos token.Pos) []facts.SymbolID {
+func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr) []facts.SymbolID {
 	switch x := expr.(type) {
 	case *ast.Ident:
-		if locals.isLocalAt(x.Name, pos) {
+		if id, ok := idx.PackageValueSymbol(x.Obj); ok {
+			return []facts.SymbolID{id}
+		}
+		if isLocalIdentifier(idx, x) {
 			return nil
 		}
 		return existingValueIDs(idx, file.Package.Path, x.Name)
@@ -54,7 +56,7 @@ func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, loc
 			if importPath := file.Imports[parts[0]]; importPath != "" {
 				return existingValueIDs(idx, importPath, parts[1])
 			}
-			if locals.isLocalAt(parts[0], pos) {
+			if isLocalIdentifier(idx, selectorRootIdent(x)) {
 				return nil
 			}
 			return resolveLocalVarMethod(idx, file, parts)
@@ -73,6 +75,16 @@ func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr, loc
 		}
 	}
 	return nil
+}
+
+func isLocalIdentifier(idx *astindex.Index, ident *ast.Ident) bool {
+	if ident == nil || ident.Obj == nil {
+		return false
+	}
+	if _, ok := idx.PackageValueSymbol(ident.Obj); ok {
+		return false
+	}
+	return ident.Obj.Kind == ast.Var || ident.Obj.Kind == ast.Con
 }
 
 func resolveReceiverValueIDs(file *project.File, idx *astindex.Index, selector *ast.SelectorExpr) []facts.SymbolID {
@@ -145,77 +157,6 @@ func addValueReferenceFacts(p *project.Project, file *project.File, store *facts
 			Span:       span,
 		})
 	}
-}
-
-type localScope map[string][]token.Pos
-
-func (s localScope) add(name string, pos token.Pos) {
-	if name == "" {
-		return
-	}
-	s[name] = append(s[name], pos)
-}
-
-func (s localScope) isLocalAt(name string, pos token.Pos) bool {
-	if name == "_" {
-		return true
-	}
-	for _, declPos := range s[name] {
-		if declPos == token.NoPos || declPos <= pos {
-			return true
-		}
-	}
-	return false
-}
-
-func localDeclarations(fn *ast.FuncDecl) localScope {
-	out := localScope{}
-	addFields := func(fields *ast.FieldList) {
-		if fields == nil {
-			return
-		}
-		for _, field := range fields.List {
-			for _, name := range field.Names {
-				out.add(name.Name, token.NoPos)
-			}
-		}
-	}
-	addFields(fn.Recv)
-	addFields(fn.Type.Params)
-	addFields(fn.Type.Results)
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		switch x := node.(type) {
-		case *ast.AssignStmt:
-			if x.Tok == token.DEFINE {
-				for _, lhs := range x.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok {
-						out.add(id.Name, id.Pos())
-					}
-				}
-			}
-		case *ast.RangeStmt:
-			if x.Tok == token.DEFINE {
-				if id, ok := x.Key.(*ast.Ident); ok {
-					out.add(id.Name, id.Pos())
-				}
-				if id, ok := x.Value.(*ast.Ident); ok {
-					out.add(id.Name, id.Pos())
-				}
-			}
-		case *ast.DeclStmt:
-			if decl, ok := x.Decl.(*ast.GenDecl); ok {
-				for _, spec := range decl.Specs {
-					if value, ok := spec.(*ast.ValueSpec); ok {
-						for _, name := range value.Names {
-							out.add(name.Name, name.Pos())
-						}
-					}
-				}
-			}
-		}
-		return true
-	})
-	return out
 }
 
 func ignoredValuePositions(root ast.Node) map[token.Pos]bool {

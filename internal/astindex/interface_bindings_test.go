@@ -186,7 +186,7 @@ func buildInterfaceBindingFiles(t *testing.T, sources map[string]string) (*Index
 			t.Fatal(err)
 		}
 	}
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

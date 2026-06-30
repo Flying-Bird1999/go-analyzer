@@ -39,44 +39,33 @@ func TestExtractModuleDependencies(t *testing.T) {
 	}
 }
 
-func TestDiffModulesDetectsDependencyChanges(t *testing.T) {
-	oldMod := []byte(`module example.com/app
+func TestExtractModuleDependenciesSupportsReplaceBlock(t *testing.T) {
+	data := []byte(`module example.com/app
 
 go 1.24
 
 require (
-	example.com/removed v1.0.0
-	example.com/upgraded v1.0.0
-	example.com/downgraded v1.2.0
-	example.com/replaced v1.0.0
+	example.com/one v1.0.0
+	example.com/two v2.0.0
 )
 
-replace example.com/replaced => example.com/replaced v1.0.1
-`)
-	newMod := []byte(`module example.com/app
-
-go 1.24
-
-require (
-	example.com/added v1.0.0
-	example.com/upgraded v1.1.0
-	example.com/downgraded v1.1.0
-	example.com/replaced v1.0.0
+replace (
+	example.com/one => example.com/one-fork v1.1.0
+	example.com/two => ../two
 )
-
-replace example.com/replaced => example.com/replaced v1.0.2
 `)
-
-	changes, err := DiffModules(oldMod, newMod)
+	deps, err := ExtractDependencies(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	assertModuleChange(t, changes, "example.com/added", facts.ModuleChangeAdded)
-	assertModuleChange(t, changes, "example.com/removed", facts.ModuleChangeRemoved)
-	assertModuleChange(t, changes, "example.com/upgraded", facts.ModuleChangeUpgraded)
-	assertModuleChange(t, changes, "example.com/downgraded", facts.ModuleChangeDowngraded)
-	assertModuleChange(t, changes, "example.com/replaced", facts.ModuleChangeReplaced)
+	one := findDep(t, deps, "example.com/one")
+	if one.ReplacePath != "example.com/one-fork" || one.ReplaceVersion != "v1.1.0" {
+		t.Fatalf("one replace = %#v", one)
+	}
+	two := findDep(t, deps, "example.com/two")
+	if two.ReplacePath != "../two" || two.ReplaceVersion != "" {
+		t.Fatalf("two replace = %#v", two)
+	}
 }
 
 func TestCompareVersionUsesSemanticPrereleaseOrdering(t *testing.T) {
@@ -179,6 +168,46 @@ func TestMapModuleUsageUnreferenced(t *testing.T) {
 	assertGomodDiagnosticCode(t, store, "module_unreferenced")
 }
 
+func TestMapModuleUsageGenericReceiverIsPrecise(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generic-usage\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(`package service
+
+import utils "gopkg.inshopline.com/sc1/commons/utils"
+
+type Client[T any] struct{}
+
+func (c *Client[T]) Trace() string {
+	return utils.TraceID()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := astindex.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := facts.NewStore(p.Root, p.ModulePath)
+	usages := MapModuleUsage(p, idx, store, []facts.ModuleChangeFact{{
+		Path: "gopkg.inshopline.com/sc1/commons/utils",
+		Kind: facts.ModuleChangeUpgraded,
+	}})
+	usage := findUsage(t, usages, "gopkg.inshopline.com/sc1/commons/utils")
+	if usage.Basis != facts.ModuleUsagePrecise {
+		t.Fatalf("basis = %q, want precise: %#v", usage.Basis, usage)
+	}
+	want := facts.SymbolID("method:example.com/generic-usage:Client:Trace")
+	if usage.SymbolID != want {
+		t.Fatalf("symbol = %q, want %q", usage.SymbolID, want)
+	}
+}
+
 func findDep(t *testing.T, deps []facts.ModuleDependencyFact, path string) facts.ModuleDependencyFact {
 	t.Helper()
 	for _, dep := range deps {
@@ -203,7 +232,7 @@ func assertModuleChange(t *testing.T, changes []facts.ModuleChangeFact, path str
 func mapUsageFixture(t *testing.T, name string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", name)
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -250,7 +250,7 @@ func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want f
 
 func loadAndExtract(t *testing.T, root string) (*project.Project, *astindex.Index, *facts.Store) {
 	t.Helper()
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

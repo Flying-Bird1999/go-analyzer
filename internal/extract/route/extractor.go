@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,7 @@ func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 	funcs := routeFunctions(p)
 	stringConsts := routeStringConstants(p)
 	var callContexts []routeCallContext
+	var returnCallContexts []routeReturnCallContext
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
 			for _, decl := range file.AST.Decls {
@@ -24,10 +26,11 @@ func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 				if !ok || fn.Body == nil {
 					continue
 				}
-				collectFunc(p, pkg, file, fn, store, funcs, stringConsts, &callContexts)
+				collectFunc(p, pkg, file, fn, store, funcs, stringConsts, &callContexts, &returnCallContexts)
 			}
 		}
 	}
+	addRouteGroupFlows(store, funcs, callContexts, returnCallContexts)
 	applyRouteCallPrefixes(store, callContexts)
 	return nil
 }
@@ -68,7 +71,9 @@ func routeStringConstants(p *project.Project) map[string]map[string]string {
 }
 
 type routeFunction struct {
-	fn *ast.FuncDecl
+	fn                *ast.FuncDecl
+	returnsGroup      bool
+	returnedGroupVars []string
 }
 
 type routeCallContext struct {
@@ -80,6 +85,12 @@ type routeCallContext struct {
 type routeParamContext struct {
 	prefix        string
 	callerRootVar string
+	groupID       string
+}
+
+type routeReturnCallContext struct {
+	callee        facts.SymbolID
+	callerGroupID string
 }
 
 func routeFunctions(p *project.Project) map[facts.SymbolID]routeFunction {
@@ -91,10 +102,53 @@ func routeFunctions(p *project.Project) map[facts.SymbolID]routeFunction {
 				if !ok || fn.Body == nil {
 					continue
 				}
-				out[routeFuncSymbolID(pkg.Path, fn)] = routeFunction{fn: fn}
+				out[routeFuncSymbolID(pkg.Path, fn)] = routeFunction{
+					fn:                fn,
+					returnsGroup:      returnsRouterGroup(fn),
+					returnedGroupVars: returnedGroupVars(fn),
+				}
 			}
 		}
 	}
+	return out
+}
+
+func returnsRouterGroup(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+		return false
+	}
+	resultType := fn.Type.Results.List[0].Type
+	if isRouterGroupType(resultType) {
+		return true
+	}
+	return fn.Type.Params != nil &&
+		len(fn.Type.Params.List) > 0 &&
+		strings.HasSuffix(astindex.ReceiverTypeName(resultType), "Group") &&
+		exprString(resultType) == exprString(fn.Type.Params.List[0].Type)
+}
+
+func returnedGroupVars(fn *ast.FuncDecl) []string {
+	seen := map[string]bool{}
+	var out []string
+	if fn.Body == nil {
+		return out
+	}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if _, nested := node.(*ast.FuncLit); nested {
+			return false
+		}
+		ret, ok := node.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) == 0 {
+			return true
+		}
+		ident, ok := ret.Results[0].(*ast.Ident)
+		if ok && !seen[ident.Name] {
+			seen[ident.Name] = true
+			out = append(out, ident.Name)
+		}
+		return false
+	})
+	sort.Strings(out)
 	return out
 }
 
@@ -136,12 +190,22 @@ func isRouterGroupType(expr ast.Expr) bool {
 	}
 }
 
-func collectFunc(p *project.Project, pkg *project.Package, file *project.File, fn *ast.FuncDecl, store *facts.Store, funcs map[facts.SymbolID]routeFunction, stringConsts map[string]map[string]string, callContexts *[]routeCallContext) {
+func collectFunc(
+	p *project.Project,
+	pkg *project.Package,
+	file *project.File,
+	fn *ast.FuncDecl,
+	store *facts.Store,
+	funcs map[facts.SymbolID]routeFunction,
+	stringConsts map[string]map[string]string,
+	callContexts *[]routeCallContext,
+	returnCallContexts *[]routeReturnCallContext,
+) {
 	routeFunc := routeFuncSymbolID(pkg.Path, fn)
 	groups := rootGroups(routeFunc, fn)
 	cursor := &routeEventCursor{}
 	for _, stmt := range fn.Body.List {
-		collectStmt(p, file, routeFunc, store, groups, stmt, cursor, funcs, stringConsts, callContexts)
+		collectStmt(p, file, routeFunc, store, groups, stmt, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 	}
 }
 
@@ -154,7 +218,19 @@ func (c *routeEventCursor) Next() int {
 	return c.next
 }
 
-func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, stmt ast.Stmt, cursor *routeEventCursor, funcs map[facts.SymbolID]routeFunction, stringConsts map[string]map[string]string, callContexts *[]routeCallContext) {
+func collectStmt(
+	p *project.Project,
+	file *project.File,
+	routeFunc facts.SymbolID,
+	store *facts.Store,
+	groups map[string]groupContext,
+	stmt ast.Stmt,
+	cursor *routeEventCursor,
+	funcs map[facts.SymbolID]routeFunction,
+	stringConsts map[string]map[string]string,
+	callContexts *[]routeCallContext,
+	returnCallContexts *[]routeReturnCallContext,
+) {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
 		for i, lhs := range s.Lhs {
@@ -162,7 +238,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 			if !ok || i >= len(s.Rhs) {
 				continue
 			}
-			if parent, prefix, ok := groupCall(file, stringConsts, groups, s.Rhs[i]); ok {
+			if parent, prefix, ok := groupCall(file, funcs, stringConsts, groups, s.Rhs[i]); ok {
 				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
 				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix, rootVar: parent.rootVar}
@@ -176,6 +252,7 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 					StatementIndex: statementIndex,
 					Span:           spanFor(p, file, s.Pos(), s.End()),
 				})
+				recordRouteReturnCallContext(file, groupID, s.Rhs[i], funcs, returnCallContexts)
 				for _, raw := range groupMiddlewareArgs(s.Rhs[i]) {
 					middlewareIndex := cursor.Next()
 					store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
@@ -210,21 +287,21 @@ func collectStmt(p *project.Project, file *project.File, routeFunc facts.SymbolI
 		recordRouteFunctionCallContext(file, routeFunc, funcs, groups, call, callContexts)
 	case *ast.BlockStmt:
 		for _, child := range s.List {
-			collectStmt(p, file, routeFunc, store, groups, child, cursor, funcs, stringConsts, callContexts)
+			collectStmt(p, file, routeFunc, store, groups, child, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 		}
 	case *ast.IfStmt:
 		branchGroups := copyGroups(groups)
 		if s.Init != nil {
-			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, cursor, funcs, stringConsts, callContexts)
+			collectStmt(p, file, routeFunc, store, branchGroups, s.Init, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 		}
-		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, cursor, funcs, stringConsts, callContexts)
+		collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Body, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 		if s.Else != nil {
-			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, cursor, funcs, stringConsts, callContexts)
+			collectStmt(p, file, routeFunc, store, copyGroups(branchGroups), s.Else, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 		}
 	case *ast.ForStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 	case *ast.RangeStmt:
-		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts)
+		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 	}
 }
 
@@ -232,24 +309,7 @@ func routeFuncSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
 	}
-	return astindex.MethodSymbolID(pkgPath, receiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
-}
-
-func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return receiverTypeName(t.X)
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	case *ast.IndexExpr:
-		return receiverTypeName(t.X)
-	case *ast.IndexListExpr:
-		return receiverTypeName(t.X)
-	default:
-		return ""
-	}
+	return astindex.MethodSymbolID(pkgPath, astindex.ReceiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
 }
 
 func copyGroups(groups map[string]groupContext) map[string]groupContext {
@@ -283,6 +343,7 @@ func recordRouteFunctionCallContext(file *project.File, routeFunc facts.SymbolID
 			params[name] = routeParamContext{
 				prefix:        group.prefix,
 				callerRootVar: group.rootVar,
+				groupID:       group.id,
 			}
 		}
 	}
@@ -293,6 +354,77 @@ func recordRouteFunctionCallContext(file *project.File, routeFunc facts.SymbolID
 		caller: routeFunc,
 		callee: callee,
 		params: params,
+	})
+}
+
+func recordRouteReturnCallContext(
+	file *project.File,
+	callerGroupID string,
+	expr ast.Expr,
+	funcs map[facts.SymbolID]routeFunction,
+	contexts *[]routeReturnCallContext,
+) {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	callee, ok := resolveRouteFunctionCall(file, call.Fun)
+	if !ok || !funcs[callee].returnsGroup || len(funcs[callee].returnedGroupVars) == 0 {
+		return
+	}
+	*contexts = append(*contexts, routeReturnCallContext{
+		callee:        callee,
+		callerGroupID: callerGroupID,
+	})
+}
+
+func addRouteGroupFlows(
+	store *facts.Store,
+	funcs map[facts.SymbolID]routeFunction,
+	callContexts []routeCallContext,
+	returnContexts []routeReturnCallContext,
+) {
+	seen := map[string]bool{}
+	add := func(parent, child string) {
+		if parent == "" || child == "" || parent == child {
+			return
+		}
+		id := "route_group_flow:" + parent + ":" + child
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		store.RouteGroupFlows = append(store.RouteGroupFlows, facts.RouteGroupFlowFact{
+			ID:            id,
+			ParentGroupID: parent,
+			ChildGroupID:  child,
+		})
+	}
+	for _, context := range callContexts {
+		for param, paramContext := range context.params {
+			add(paramContext.groupID, rootGroupID(context.callee, param))
+		}
+	}
+	groups := map[facts.SymbolID]map[string][]string{}
+	for _, group := range store.RouteGroups {
+		if groups[group.RouteFunc] == nil {
+			groups[group.RouteFunc] = map[string][]string{}
+		}
+		groups[group.RouteFunc][group.GroupVar] = append(groups[group.RouteFunc][group.GroupVar], group.ID)
+	}
+	for _, context := range returnContexts {
+		for _, returnedVar := range funcs[context.callee].returnedGroupVars {
+			returnedGroups := groups[context.callee][returnedVar]
+			if len(returnedGroups) == 0 {
+				returnedGroups = []string{rootGroupID(context.callee, returnedVar)}
+			}
+			for _, returnedGroupID := range returnedGroups {
+				add(returnedGroupID, context.callerGroupID)
+			}
+		}
+	}
+	sort.Slice(store.RouteGroupFlows, func(i, j int) bool {
+		return store.RouteGroupFlows[i].ID < store.RouteGroupFlows[j].ID
 	})
 }
 
@@ -477,7 +609,13 @@ func groupMiddlewareArgs(expr ast.Expr) []string {
 	return out
 }
 
-func groupCall(file *project.File, stringConsts map[string]map[string]string, groups map[string]groupContext, expr ast.Expr) (parent groupContext, prefix string, ok bool) {
+func groupCall(
+	file *project.File,
+	funcs map[facts.SymbolID]routeFunction,
+	stringConsts map[string]map[string]string,
+	groups map[string]groupContext,
+	expr ast.Expr,
+) (parent groupContext, prefix string, ok bool) {
 	if ident, ok := expr.(*ast.Ident); ok {
 		parent, ok := groups[ident.Name]
 		if !ok {
@@ -506,8 +644,15 @@ func groupCall(file *project.File, stringConsts map[string]map[string]string, gr
 		return parent, joinPath(parent.prefix, local), true
 	}
 	name := shortCallName(call)
+	if isRouteGroupFactory(name) || isRouteGroupWrapper(name) {
+		if callee, resolved := resolveRouteFunctionCall(file, call.Fun); resolved {
+			if target, projectFunction := funcs[callee]; projectFunction && !target.returnsGroup {
+				return groupContext{}, "", false
+			}
+		}
+	}
 	if isRouteGroupFactory(name) {
-		parent, prefix, ok := groupCall(file, stringConsts, groups, call.Args[0])
+		parent, prefix, ok := groupCall(file, funcs, stringConsts, groups, call.Args[0])
 		if !ok {
 			return groupContext{}, "", false
 		}
@@ -521,7 +666,7 @@ func groupCall(file *project.File, stringConsts map[string]map[string]string, gr
 	if !isRouteGroupWrapper(name) {
 		return groupContext{}, "", false
 	}
-	return groupCall(file, stringConsts, groups, call.Args[0])
+	return groupCall(file, funcs, stringConsts, groups, call.Args[0])
 }
 
 func routeStringArg(file *project.File, stringConsts map[string]map[string]string, expr ast.Expr) (string, bool) {

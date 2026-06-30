@@ -63,7 +63,7 @@ func CheckIn() {}
 
 func TestExtractAnnotationFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "annotation-only")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

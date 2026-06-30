@@ -63,7 +63,7 @@ func normalizeMiniBFFGolden(t *testing.T, input []byte) []byte {
 
 func TestTypeImpactTreeGolden(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "type-impact")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -265,7 +265,7 @@ func deletedHandlerSymbol(packagePath, file string, fn *ast.FuncDecl, span facts
 			Span:        span,
 		}
 	}
-	receiver := deletedReceiverTypeName(fn.Recv.List[0].Type)
+	receiver := astindex.ReceiverTypeName(fn.Recv.List[0].Type)
 	return facts.SymbolFact{
 		ID:          astindex.MethodSymbolID(packagePath, receiver, fn.Name.Name),
 		Kind:        "method",
@@ -273,23 +273,6 @@ func deletedHandlerSymbol(packagePath, file string, fn *ast.FuncDecl, span facts
 		Receiver:    receiver,
 		Name:        fn.Name.Name,
 		Span:        span,
-	}
-}
-
-func deletedReceiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return deletedReceiverTypeName(t.X)
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	case *ast.IndexExpr:
-		return deletedReceiverTypeName(t.X)
-	case *ast.IndexListExpr:
-		return deletedReceiverTypeName(t.X)
-	default:
-		return ""
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 
 func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 
 func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "declaration-spans")
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ const DefaultCode Code = "default"
 	if err := os.WriteFile(filepath.Join(root, "values.go"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -987,6 +987,74 @@ func TestRunImpactRejectsDiffThatIsNotApplied(t *testing.T) {
 	}
 }
 
+func TestRunImpactPropagatesReturnedGroupMiddlewareToChildRouter(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/returned-group\n\ngo 1.24\n")
+	writeTestFile(t, root, "middleware/auth.go", `package middleware
+
+func Auth() any {
+	return "changed"
+}
+`)
+	writeTestFile(t, root, "controller/order.go", `package controller
+
+// @Get /orders
+func GetOrder() {}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import (
+	"example.com/returned-group/controller"
+	"example.com/returned-group/middleware"
+)
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(string) *RouterGroup { return g }
+func (g *RouterGroup) Use(...any) {}
+func (g *RouterGroup) GET(string, any) {}
+
+func AddAuth(g *RouterGroup) *RouterGroup {
+	group := g.Group("")
+	group.Use(middleware.Auth())
+	return group
+}
+
+func Register(g *RouterGroup) {
+	g.GET("/orders", controller.GetOrder)
+}
+
+func Init(g *RouterGroup) {
+	authGroup := AddAuth(g)
+	Register(authGroup)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/middleware/auth.go b/middleware/auth.go\n" +
+		"--- a/middleware/auth.go\n" +
+		"+++ b/middleware/auth.go\n" +
+		"@@ -1,5 +1,5 @@\n" +
+		" package middleware\n" +
+		" \n" +
+		" func Auth() any {\n" +
+		"-\treturn \"old\"\n" +
+		"+\treturn \"changed\"\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "GET", "/orders")
+}
+
 func TestRunImpactRejectsParseErrorInChangedFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/broken\n\ngo 1.24\n")

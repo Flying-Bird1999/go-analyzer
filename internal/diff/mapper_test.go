@@ -195,7 +195,7 @@ func TestMapChangesDiagnosesUnresolvedDeletedSymbol(t *testing.T) {
 
 func loadFactsForDiff(t *testing.T, root string) *facts.Store {
 	t.Helper()
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

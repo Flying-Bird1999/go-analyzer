@@ -401,8 +401,6 @@ func referenceRelation(kind facts.ReferenceKind) string {
 	switch kind {
 	case facts.ReferenceKindType:
 		return "type_ref"
-	case facts.ReferenceKindSelector:
-		return "selector_ref"
 	case facts.ReferenceKindValue:
 		return "value_ref"
 	default:

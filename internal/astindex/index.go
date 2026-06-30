@@ -232,7 +232,7 @@ func (idx *Index) indexFuncDecl(p *project.Project, pkg *project.Package, file *
 		idx.indexCallableReturnType(file, id, decl)
 		return
 	}
-	receiver := receiverTypeName(decl.Recv.List[0].Type)
+	receiver := ReceiverTypeName(decl.Recv.List[0].Type)
 	id := MethodSymbolID(pkg.Path, receiver, decl.Name.Name)
 	idx.Symbols[id] = symbolFact(p, file, id, "method", pkg.Path, receiver, decl.Name.Name, decl.Pos(), decl.End())
 	idx.indexCallableReturnType(file, id, decl)
@@ -259,23 +259,6 @@ func valueKind(tok token.Token) string {
 	}
 }
 
-func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return receiverTypeName(t.X)
-	case *ast.IndexExpr:
-		return receiverTypeName(t.X)
-	case *ast.IndexListExpr:
-		return receiverTypeName(t.X)
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	default:
-		return ""
-	}
-}
-
 func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
 	if spec.Type != nil {
 		return valueTypeFromTypeExpr(file, spec.Type)
@@ -291,8 +274,37 @@ func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec
 		if valueType, ok := idx.ResolveBuiltinNewType(file, call); ok {
 			return valueType
 		}
+		if valueType, ok := idx.callableReturnType(file, call.Fun); ok {
+			valueType.Confidence = facts.ConfidenceMedium
+			return valueType
+		}
+		if valueType, ok := idx.externalCallableReceiver(file, call.Fun); ok {
+			return valueType
+		}
 	}
 	return valueTypeFromExpr(file, spec.Values[valueIndex])
+}
+
+func (idx *Index) externalCallableReceiver(file *project.File, expr ast.Expr) (ValueType, bool) {
+	callable, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return ValueType{}, false
+	}
+	pkg, ok := callable.X.(*ast.Ident)
+	if !ok {
+		return ValueType{}, false
+	}
+	importPath := file.Imports[pkg.Name]
+	if importPath == "" ||
+		importPath == idx.Project.ModulePath ||
+		strings.HasPrefix(importPath, idx.Project.ModulePath+"/") {
+		return ValueType{}, false
+	}
+	return ValueType{
+		PackagePath: importPath,
+		TypeName:    callable.Sel.Name,
+		Confidence:  facts.ConfidenceMedium,
+	}, true
 }
 
 func valueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
@@ -301,17 +313,35 @@ func valueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
 		return valueTypeFromExpr(file, x.X)
 	case *ast.CompositeLit:
 		return valueTypeFromTypeExpr(file, x.Type)
-	case *ast.CallExpr:
-		valueType := valueTypeFromTypeExpr(file, x.Fun)
-		name := valueType.TypeName
-		if strings.HasPrefix(name, "New") && len(name) > len("New") {
-			valueType.TypeName = strings.TrimPrefix(name, "New")
-		}
-		valueType.Confidence = facts.ConfidenceMedium
-		return valueType
 	default:
 		return ValueType{}
 	}
+}
+
+func (idx *Index) callableReturnType(file *project.File, expr ast.Expr) (ValueType, bool) {
+	var id facts.SymbolID
+	switch callable := expr.(type) {
+	case *ast.Ident:
+		id = FunctionSymbolID(file.Package.Path, callable.Name)
+	case *ast.SelectorExpr:
+		pkg, ok := callable.X.(*ast.Ident)
+		if !ok {
+			return ValueType{}, false
+		}
+		importPath := file.Imports[pkg.Name]
+		if importPath == "" {
+			return ValueType{}, false
+		}
+		id = FunctionSymbolID(importPath, callable.Sel.Name)
+	case *ast.IndexExpr:
+		return idx.callableReturnType(file, callable.X)
+	case *ast.IndexListExpr:
+		return idx.callableReturnType(file, callable.X)
+	default:
+		return ValueType{}, false
+	}
+	valueType, ok := idx.CallableReturnTypes[id]
+	return valueType, ok
 }
 
 // ResolveBuiltinNewType resolves new(T) only when new is not shadowed.
@@ -476,6 +506,14 @@ func (idx *Index) ResolveMapIndexValueTypes(file *project.File, expr *ast.IndexE
 		return nil, false
 	}
 	return append([]ValueType(nil), valueTypes...), true
+}
+
+func (idx *Index) PackageValueSymbol(object *ast.Object) (facts.SymbolID, bool) {
+	if object == nil {
+		return "", false
+	}
+	id, ok := idx.packageValueObjects[object]
+	return id, ok
 }
 
 func selectorParts(expr ast.Expr) []string {

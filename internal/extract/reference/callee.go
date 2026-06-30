@@ -39,7 +39,7 @@ func resolveSelectorCandidates(file *project.File, idx *astindex.Index, scopedTy
 		}
 	}
 	if len(parts) >= 2 {
-		if valueTypes, ok := scopedTypes.resolveAll(parts[0], selector.Pos()); ok {
+		if valueTypes, ok := scopedTypes.resolveAll(selectorRootIdent(selector), selector.Pos()); ok {
 			if len(valueTypes) != 1 {
 				return resolveValueTypeMethodCandidates(idx, valueTypes, parts[1:], raw)
 			}
@@ -54,6 +54,20 @@ func resolveSelectorCandidates(file *project.File, idx *astindex.Index, scopedTy
 		return []astindex.ResolvedSymbol{resolved}, raw, true
 	}
 	return nil, raw, false
+}
+
+func selectorRootIdent(selector *ast.SelectorExpr) *ast.Ident {
+	var expr ast.Expr = selector
+	for {
+		switch current := expr.(type) {
+		case *ast.SelectorExpr:
+			expr = current.X
+		case *ast.Ident:
+			return current
+		default:
+			return nil
+		}
+	}
 }
 
 func resolveValueTypeMethodCandidates(idx *astindex.Index, valueTypes []astindex.ValueType, selectors []string, raw string) ([]astindex.ResolvedSymbol, string, bool) {

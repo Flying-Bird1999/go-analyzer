@@ -14,6 +14,7 @@ func ExtractDependencies(data []byte) ([]facts.ModuleDependencyFact, error) {
 	deps := map[string]facts.ModuleDependencyFact{}
 	replaces := map[string]replaceTarget{}
 	inRequireBlock := false
+	inReplaceBlock := false
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
@@ -25,12 +26,24 @@ func ExtractDependencies(data []byte) ([]facts.ModuleDependencyFact, error) {
 		case raw == "require (":
 			inRequireBlock = true
 			continue
+		case raw == "replace (":
+			inReplaceBlock = true
+			continue
 		case inRequireBlock && raw == ")":
 			inRequireBlock = false
+			continue
+		case inReplaceBlock && raw == ")":
+			inReplaceBlock = false
 			continue
 		case inRequireBlock:
 			if dep, ok := parseRequireLine(raw); ok {
 				deps[dep.Path] = dep
+			}
+			continue
+		case inReplaceBlock:
+			oldPath, target, ok := parseReplaceLine(raw)
+			if ok {
+				replaces[oldPath] = target
 			}
 			continue
 		case strings.HasPrefix(raw, "require "):
@@ -59,60 +72,6 @@ func ExtractDependencies(data []byte) ([]facts.ModuleDependencyFact, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
-}
-
-func DiffModules(oldMod, newMod []byte) ([]facts.ModuleChangeFact, error) {
-	oldDeps, err := ExtractDependencies(oldMod)
-	if err != nil {
-		return nil, err
-	}
-	newDeps, err := ExtractDependencies(newMod)
-	if err != nil {
-		return nil, err
-	}
-	oldByPath := depsByPath(oldDeps)
-	newByPath := depsByPath(newDeps)
-	paths := map[string]bool{}
-	for path := range oldByPath {
-		paths[path] = true
-	}
-	for path := range newByPath {
-		paths[path] = true
-	}
-	var out []facts.ModuleChangeFact
-	for path := range paths {
-		oldDep, hadOld := oldByPath[path]
-		newDep, hasNew := newByPath[path]
-		switch {
-		case !hadOld && hasNew:
-			out = append(out, moduleChange(path, facts.ModuleChangeAdded, oldDep, newDep))
-		case hadOld && !hasNew:
-			out = append(out, moduleChange(path, facts.ModuleChangeRemoved, oldDep, newDep))
-		case hadOld && hasNew && replaceChanged(oldDep, newDep):
-			out = append(out, moduleChange(path, facts.ModuleChangeReplaced, oldDep, newDep))
-		case hadOld && hasNew && oldDep.Version != newDep.Version:
-			if compareVersion(newDep.Version, oldDep.Version) >= 0 {
-				out = append(out, moduleChange(path, facts.ModuleChangeUpgraded, oldDep, newDep))
-			} else {
-				out = append(out, moduleChange(path, facts.ModuleChangeDowngraded, oldDep, newDep))
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
-		}
-		return out[i].Kind < out[j].Kind
-	})
-	return out, nil
-}
-
-func depsByPath(deps []facts.ModuleDependencyFact) map[string]facts.ModuleDependencyFact {
-	out := map[string]facts.ModuleDependencyFact{}
-	for _, dep := range deps {
-		out[dep.Path] = dep
-	}
-	return out
 }
 
 func replaceChanged(oldDep, newDep facts.ModuleDependencyFact) bool {

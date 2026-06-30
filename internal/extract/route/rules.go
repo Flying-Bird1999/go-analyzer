@@ -15,7 +15,7 @@ var handlerWrappers = map[string]struct{}{
 }
 
 func isHTTPMethod(name string) bool {
-	_, ok := httpMethods[strings.ToUpper(name)]
+	_, ok := httpMethods[name]
 	return ok
 }
 

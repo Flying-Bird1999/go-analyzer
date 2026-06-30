@@ -57,26 +57,9 @@ func handlerSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
 	}
-	return astindex.MethodSymbolID(pkgPath, receiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
+	return astindex.MethodSymbolID(pkgPath, astindex.ReceiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
 }
 
 func annotationID(handler facts.SymbolID, method, path string, index int) string {
 	return "annotation:" + string(handler) + ":" + method + ":" + path + ":" + strconv.Itoa(index)
-}
-
-func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return receiverTypeName(t.X)
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	case *ast.IndexExpr:
-		return receiverTypeName(t.X)
-	case *ast.IndexListExpr:
-		return receiverTypeName(t.X)
-	default:
-		return ""
-	}
 }

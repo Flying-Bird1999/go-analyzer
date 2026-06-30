@@ -161,20 +161,7 @@ func functionSymbol(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
 	}
-	return astindex.MethodSymbolID(pkgPath, receiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
-}
-
-func receiverTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return receiverTypeName(t.X)
-	case *ast.SelectorExpr:
-		return t.Sel.Name
-	default:
-		return ""
-	}
+	return astindex.MethodSymbolID(pkgPath, astindex.ReceiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
 }
 
 func relFile(p *project.Project, path string) string {

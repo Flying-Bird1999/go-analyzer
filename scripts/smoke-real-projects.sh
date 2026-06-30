@@ -480,6 +480,37 @@ print(
 PY
 }
 
+validate_returned_group_case() {
+  local out="${OUT_DIR}/real-admin-returned-group-middleware.impact.json"
+
+  python3 - "$out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+summary = data.get("summary") or {}
+endpoints = {
+    (item.get("method"), item.get("path"))
+    for item in summary.get("impactedEndpoints") or []
+}
+expected_examples = {
+    ("GET", "/admin/api/bff-web/user/info"),
+    ("GET", "/admin/api/bff-app/live/sale/:salesId/statistics"),
+    ("GET", "/uc/customers/:customerId"),
+    ("GET", "/internal/*proxyPath"),
+}
+missing = expected_examples - endpoints
+if missing:
+    raise SystemExit(f"returned-group representative endpoints missing: {missing}")
+if ("POST", "/admin/api/bff-web/auth/revokeToken/:clientId") in endpoints:
+    raise SystemExit("without-auth revokeToken route leaked into returned auth group impact")
+if summary.get("impactedEndpointCount") != 424 or len(endpoints) != 424:
+    raise SystemExit(f"unexpected returned-group endpoint count: {summary.get('impactedEndpointCount')}, set={len(endpoints)}")
+PY
+}
+
 validate_known_real_endpoint_sets() {
   python3 - "${OUT_DIR}" <<'PY'
 import json
@@ -507,7 +538,9 @@ expected = {
         ("GET", "/api/posts/post/sales/statistics/:salesId"),
     },
     "real-admin-route-helper": {
+        ("DELETE", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
         ("DELETE", "/admin/api/bff-web/live/activity/:activityId"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/keyword/cur_available_seq"),
         ("PATCH", "/admin/api/bff-web/live/activity/voucher/:activityId"),
         ("POST", "/admin/api/bff-web/live/activity/:id"),
         ("POST", "/admin/api/bff-web/live/activity/:id/comment/post"),
@@ -518,7 +551,52 @@ expected = {
         ("POST", "/admin/api/bff-web/live/activity/:id/start"),
         ("POST", "/admin/api/bff-web/live/activity/bidding/:activityId/publish-maximum-bid"),
         ("POST", "/admin/api/bff-web/live/activity/end/manual"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/config/commentSync"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/config/shopperApp"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set/recommend"),
         ("PUT", "/admin/api/bff-web/live/activity/:activityId"),
+        ("PUT", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
+        ("PUT", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set/keyword/status"),
+    },
+    "real-admin-assigned-route-helper": {
+        ("GET", "/admin/api/bff-web/live/activity/answerFirst/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/answerFirst/:activityId/winner/detail/list"),
+        ("GET", "/admin/api/bff-web/live/activity/answerFirst/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/activity/bidding/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/bidding/:activityId/task/complete/log"),
+        ("GET", "/admin/api/bff-web/live/activity/bidding/:activityId/user/list"),
+        ("GET", "/admin/api/bff-web/live/activity/bidding/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/activity/last-progress/:salesId/info"),
+        ("GET", "/admin/api/bff-web/live/activity/list/:businessType/:salesId"),
+        ("GET", "/admin/api/bff-web/live/activity/list/business/:businessType/:businessId/validation"),
+        ("GET", "/admin/api/bff-web/live/activity/list/sync-status/:businessType/:salesId"),
+        ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/user/list"),
+        ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/winner/detail/list"),
+        ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/activity/post/sales/keys/repeat/:salesId"),
+        ("GET", "/admin/api/bff-web/live/activity/vote/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/vote/:activityId/option/:optionId/user/list"),
+        ("GET", "/admin/api/bff-web/live/activity/vote/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/activity/vote/listOption/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/voucher/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/voucher/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/comments/product_set/detail"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/keyword/list"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/product/product_set/:id"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/product_list"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/sale_list/product/buyers"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/statistics"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/statistics/simple"),
+        ("GET", "/api/posts/comments/report/export"),
+        ("GET", "/api/posts/post/sales/statistics/dynamics/:salesId"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/product/sales_statistics"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/product/sales_statistics/sku_report"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/product/sales_statistics/spu_report"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/product_set/sales_statistics/spu_report"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set/spuId"),
+        ("PUT", "/admin/api/bff-web/live/sale/:salesId/product/sales_statistics/sort_priority"),
     },
     "real-admin-route-param-group": {
         ("POST", "/admin/api/bff-web/auth/revokeToken/:clientId"),
@@ -658,7 +736,10 @@ PY
 SC1_BFF="$(resolve_sibling "sl-sc1-bff-service" "sc1-bff-service")"
 SC1_ADMIN_BFF="$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
 
-(cd "${ROOT_DIR}" && GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" go build -o "${ANALYZER_BIN}" ./cmd/go-analyzer)
+(cd "${ROOT_DIR}" && \
+  GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" \
+  GOMODCACHE="${GOMODCACHE:-/private/tmp/go-mod-go-analyzer-smoke}" \
+  go build -o "${ANALYZER_BIN}" ./cmd/go-analyzer)
 
 run_project "sl-sc1-bff-service" "${SC1_BFF}"
 run_project "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
@@ -714,6 +795,23 @@ write_real_file_diff \
   "	liveWritePermissionMid := middleware.Permission(middleware.Live, middleware.ShoplineStudio, middleware.CreateUpdate, false) // smoke route helper" \
   "${OUT_DIR}/real-admin-route-helper.diff"
 run_real_impact_case "real-admin-route-helper" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-route-helper.diff" "POST" "/admin/api/bff-web/live/activity/:id"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "router/live/activity.go" \
+  "	liveReadPermissionMid := middleware.Permission(middleware.Live, middleware.ShoplineStudio, middleware.Read, false)" \
+  "	liveReadPermissionMid := middleware.Permission(middleware.Live, middleware.ShoplineStudio, middleware.Read, false) // smoke assigned route helper" \
+  "${OUT_DIR}/real-admin-assigned-route-helper.diff"
+run_real_impact_case "real-admin-assigned-route-helper" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-assigned-route-helper.diff" "GET" "/admin/api/bff-web/live/sale/:salesId/statistics"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "middleware/mock/mock_auth.go" \
+  "		mid := configx.Get(\"dev-setup.merchant-id\")" \
+  "		mid := configx.Get(\"dev-setup.merchant-id\") // smoke returned route group" \
+  "${OUT_DIR}/real-admin-returned-group-middleware.diff"
+run_real_impact_case "real-admin-returned-group-middleware" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-returned-group-middleware.diff" "GET" "/admin/api/bff-web/user/info"
+validate_returned_group_case
 
 write_real_file_diff \
   "${SC1_ADMIN_BFF}" \

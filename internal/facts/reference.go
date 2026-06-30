@@ -3,10 +3,9 @@ package facts
 type ReferenceKind string
 
 const (
-	ReferenceKindCall     ReferenceKind = "call"
-	ReferenceKindSelector ReferenceKind = "selector"
-	ReferenceKindType     ReferenceKind = "type"
-	ReferenceKindValue    ReferenceKind = "value"
+	ReferenceKindCall  ReferenceKind = "call"
+	ReferenceKindType  ReferenceKind = "type"
+	ReferenceKindValue ReferenceKind = "value"
 )
 
 type Confidence string

@@ -37,7 +37,7 @@ The MVP validation target is stability rather than perfect precision:
 
 ## Latest Facts Smoke Snapshot
 
-Local smoke run on 2026-06-30:
+Local smoke run on 2026-07-01:
 
 | Project | Symbols | Annotations | Routes | Diagnostics |
 | --- | ---: | ---: | ---: | ---: |
@@ -97,7 +97,7 @@ fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates sixteen real-file diff cases across the two target BFF
+The smoke script validates eighteen real-file diff cases across the two target BFF
 projects:
 
 | Case | Project file | Expected endpoint |
@@ -107,7 +107,9 @@ projects:
 | `real-admin-product-set-list` | `sl-sc1-admin-bff/controller/trade/product/product.go` | `GET /admin/api/bff-web/trade/product/product_set/list` |
 | `real-admin-user-info` | `sl-sc1-admin-bff/controller/user/user.go` | `GET /admin/api/bff-web/user/info` |
 | `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
-| `real-admin-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 12 routes using `AddLiveWriteGuard` |
+| `real-admin-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 20 inline/assigned-group routes using `AddLiveWriteGuard` |
+| `real-admin-assigned-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 37 activity/sale routes using inline or assigned `AddLiveReadGuard` groups |
+| `real-admin-returned-group-middleware` | `sl-sc1-admin-bff/middleware/mock/mock_auth.go` | 424 endpoints reached through `createAdminAuthGroup` return values and child router parameters |
 | `real-admin-route-param-group` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `POST /admin/api/bff-web/auth/revokeToken/:clientId` through the second route-group parameter |
 | `real-admin-path-param-flow-control` | `sl-sc1-admin-bff/router/live/activity.go` | 4 routes using package-level `createPathParamsFlowControlMid(...)` initializers |
 | `real-admin-conversation-action-map` | `sl-sc1-admin-bff/service/mc/conversation_service.go` | app + web conversation routes through static map interface dispatch |
@@ -121,8 +123,14 @@ projects:
 
 Controller handlers registered under both current and compatibility routes
 produce both endpoints; the exact sets are checked. The route-helper case
-proves that changing `AddLiveWriteGuard` reaches only the 12 route expressions
-that reference it. The route-param case proves that a non-first
+proves that changing `AddLiveWriteGuard` reaches its 20 inline and assigned-group
+routes. The assigned-route-helper case independently verifies 37 read-guard
+routes across `activity.go` and `sale.go`, including
+`saleGroupInLiveReadGuard := AddLiveReadGuard(saleGroup)`. The returned-group
+case covers the real `MiddlewareWithAuthLocal -> createAdminAuthGroup ->
+InitRouter -> child router` chain, checks representative web/app/legacy/internal
+endpoints, and verifies that the without-auth revoke-token route is excluded.
+The route-param case proves that a non-first
 `*lego.RouterGroup` parameter can register endpoints. The path-param case proves
 package-level initializer dependencies propagate from middleware factory helpers
 to the routes that consume the initialized middleware values. The conversation

@@ -111,7 +111,7 @@ func buildFactStore(projectPath string) (*facts.Store, error) {
 }
 
 func buildFacts(projectPath string) (builtFacts, error) {
-	p, err := project.Load(projectPath, project.Options{})
+	p, err := project.Load(projectPath)
 	if err != nil {
 		return builtFacts{}, err
 	}

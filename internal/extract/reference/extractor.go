@@ -122,7 +122,7 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 			if callFuns[x.Pos()] {
 				targets = resolveReceiverValueIDs(file, idx, x)
 			} else {
-				targets = resolveValueIDs(file, idx, x, localScope{}, x.Pos())
+				targets = resolveValueIDs(file, idx, x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
 			return false
@@ -130,7 +130,7 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 			if ignored[x.Pos()] || callFuns[x.Pos()] {
 				return true
 			}
-			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x, localScope{}, x.Pos()))
+			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x))
 		}
 		return true
 	})
@@ -182,7 +182,7 @@ func isUnresolvedProjectCall(file *project.File, idx *astindex.Index, scopedType
 	if !isProjectPackage(idx.Project.ModulePath, importPath) {
 		return false
 	}
-	if receiverType, ok := scopedTypes.resolve(parts[0], selector.Pos()); ok {
+	if receiverType, ok := scopedTypes.resolve(selectorRootIdent(selector), selector.Pos()); ok {
 		return isProjectPackage(idx.Project.ModulePath, receiverType.PackagePath)
 	}
 	if receiverType, ok := idx.ResolveSelectorReceiverType(file, parts); ok {
@@ -210,7 +210,7 @@ func functionSymbol(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
 	}
-	return astindex.MethodSymbolID(pkgPath, receiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
+	return astindex.MethodSymbolID(pkgPath, astindex.ReceiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
 }
 
 func referenceID(from, to facts.SymbolID, kind facts.ReferenceKind, span facts.SourceSpan) string {

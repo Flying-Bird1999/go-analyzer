@@ -427,6 +427,72 @@ func Build() int {
 	)
 }
 
+func TestExtractValueReferenceAfterNestedLocalShadowing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nested-value-shadow\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+var DefaultRequest = 1
+
+func Build() int {
+	_ = DefaultRequest
+	{
+		DefaultRequest := 2
+		_ = DefaultRequest
+	}
+	return DefaultRequest
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/nested-value-shadow::Build")
+	to := facts.SymbolID("var:example.com/nested-value-shadow::DefaultRequest")
+	var count int
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToSymbol == to && ref.Kind == facts.ReferenceKindValue {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("package value references = %d, want 2: %#v", count, store.References)
+	}
+}
+
+func TestExtractMethodCallUsesLexicalScopeAfterNestedShadowing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nested-type-shadow\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type outerClient struct{}
+func (*outerClient) Run() {}
+
+type innerClient struct{}
+func (*innerClient) Run() {}
+
+func Handle() {
+	client := &outerClient{}
+	{
+		client := &innerClient{}
+		client.Run()
+	}
+	client.Run()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/nested-type-shadow::Handle")
+	assertReference(t, store, from, "method:example.com/nested-type-shadow:innerClient:Run", facts.ReferenceKindCall)
+	assertReference(t, store, from, "method:example.com/nested-type-shadow:outerClient:Run", facts.ReferenceKindCall)
+}
+
 func TestExtractConstructorInferredMethodCallUsesMediumConfidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/constructor-confidence\n\ngo 1.24\n"), 0o644); err != nil {
@@ -461,6 +527,40 @@ func Handle() {
 	)
 	if ref.Confidence != facts.ConfidenceMedium {
 		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
+	}
+}
+
+func TestExtractPackageConstructorUsesDeclaredReturnType(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/package-constructor\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte(`package service
+
+type Client struct{}
+func (*Client) Query() {}
+
+type Backend struct{}
+func (*Backend) Query() {}
+
+func NewClient() *Backend { return &Backend{} }
+
+var Default = NewClient()
+
+func Handle() {
+	Default.Query()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	from := facts.SymbolID("func:example.com/package-constructor::Handle")
+	assertReference(t, store, from, "method:example.com/package-constructor:Backend:Query", facts.ReferenceKindCall)
+	for _, ref := range store.References {
+		if ref.FromSymbol == from && ref.ToSymbol == "method:example.com/package-constructor:Client:Query" {
+			t.Fatalf("constructor name heuristic emitted wrong method reference: %#v", ref)
+		}
 	}
 }
 
@@ -734,7 +834,7 @@ func extractFixture(t *testing.T, fixture string) *facts.Store {
 
 func extractFixtureRoot(t *testing.T, root string) *facts.Store {
 	t.Helper()
-	p, err := project.Load(root, project.Options{})
+	p, err := project.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

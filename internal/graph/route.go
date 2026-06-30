@@ -19,6 +19,7 @@ type RouteGraph struct {
 
 func NewRouteGraph(store *facts.Store) *RouteGraph {
 	routesByFunc := map[facts.SymbolID][]facts.RouteRegistrationFact{}
+	groupsByFunc := map[facts.SymbolID][]facts.RouteGroupFact{}
 	g := &RouteGraph{
 		RoutesByID:           map[string]facts.RouteRegistrationFact{},
 		GroupsByID:           map[string]facts.RouteGroupFact{},
@@ -31,9 +32,16 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	}
 	for _, group := range store.RouteGroups {
 		g.GroupsByID[group.ID] = group
+		groupsByFunc[group.RouteFunc] = append(groupsByFunc[group.RouteFunc], group)
 		if group.ParentGroupID != "" {
 			g.ChildGroupsByID[group.ParentGroupID] = append(g.ChildGroupsByID[group.ParentGroupID], group.ID)
 		}
+	}
+	for _, flow := range store.RouteGroupFlows {
+		if flow.ParentGroupID == "" || flow.ChildGroupID == "" {
+			continue
+		}
+		g.ChildGroupsByID[flow.ParentGroupID] = append(g.ChildGroupsByID[flow.ParentGroupID], flow.ChildGroupID)
 	}
 	for _, route := range store.Routes {
 		g.RoutesByID[route.ID] = route
@@ -53,6 +61,14 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 				continue
 			}
 			g.RoutesByDependency[ref.ToSymbol] = appendRouteOnce(g.RoutesByDependency[ref.ToSymbol], route)
+		}
+		for _, group := range groupsByFunc[ref.FromSymbol] {
+			if !spanContains(group.Span, ref.Span) {
+				continue
+			}
+			for _, route := range g.RoutesForGroup(group.ID) {
+				g.RoutesByDependency[ref.ToSymbol] = appendRouteOnce(g.RoutesByDependency[ref.ToSymbol], route)
+			}
 		}
 	}
 	for _, binding := range store.Middleware {
@@ -133,7 +149,7 @@ func (g *RouteGraph) RoutesAffectedByMiddleware(bindingID string) []facts.RouteR
 	var out []facts.RouteRegistrationFact
 	groupID := effectiveGroupID(binding.GroupID, binding.RouteFunc, binding.GroupVar)
 	for _, route := range g.RoutesForGroup(groupID) {
-		if binding.StatementIndex < route.StatementIndex {
+		if binding.RouteFunc != route.RouteFunc || binding.StatementIndex < route.StatementIndex {
 			out = append(out, route)
 		}
 	}

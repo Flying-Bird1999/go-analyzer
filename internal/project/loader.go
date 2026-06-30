@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func Load(root string, opts Options) (*Project, error) {
+func Load(root string) (*Project, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -30,7 +30,7 @@ func Load(root string, opts Options) (*Project, error) {
 			return err
 		}
 		if d.IsDir() {
-			if path != absRoot && shouldSkipDir(d.Name(), opts.ExcludeDirs) {
+			if path != absRoot && shouldSkipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -45,18 +45,13 @@ func Load(root string, opts Options) (*Project, error) {
 	return p, nil
 }
 
-func shouldSkipDir(name string, extra []string) bool {
+func shouldSkipDir(name string) bool {
 	if isGoIgnoredName(name) {
 		return true
 	}
 	switch name {
 	case "vendor", "node_modules", "testdata":
 		return true
-	}
-	for _, item := range extra {
-		if strings.TrimSpace(item) == name {
-			return true
-		}
 	}
 	return false
 }
@@ -91,8 +86,6 @@ func (p *Project) loadFile(path string) error {
 	if pkg == nil {
 		pkg = &Package{
 			Path: pkgPath,
-			Dir:  dir,
-			Name: file.Name.Name,
 		}
 		p.Packages[pkgPath] = pkg
 	}
