@@ -329,6 +329,9 @@ func (e *evaluator) expressionTypes(file *project.File, fn *ast.FuncDecl, expr a
 			return []astindex.ValueType{valueType}
 		}
 	case *ast.CallExpr:
+		if valueType, ok := e.genericJSONXResultType(file, value); ok {
+			return []astindex.ValueType{valueType}
+		}
 		if len(value.Args) == 1 {
 			if valueType, ok := typeExprValueType(file, value.Fun); ok {
 				return []astindex.ValueType{valueType}
@@ -336,6 +339,33 @@ func (e *evaluator) expressionTypes(file *project.File, fn *ast.FuncDecl, expr a
 		}
 	}
 	return nil
+}
+
+func (e *evaluator) genericJSONXResultType(file *project.File, call *ast.CallExpr) (astindex.ValueType, bool) {
+	var callable ast.Expr
+	var typeArgs []ast.Expr
+	switch fun := call.Fun.(type) {
+	case *ast.IndexExpr:
+		callable = fun.X
+		typeArgs = []ast.Expr{fun.Index}
+	case *ast.IndexListExpr:
+		callable = fun.X
+		typeArgs = fun.Indices
+	default:
+		return astindex.ValueType{}, false
+	}
+	if len(typeArgs) != 1 {
+		return astindex.ValueType{}, false
+	}
+	selector, ok := callable.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Unmarshal" {
+		return astindex.ValueType{}, false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	if !ok || file.Imports[pkg.Name] != "gopkg.inshopline.com/sc1/commons/utils/jsonx" {
+		return astindex.ValueType{}, false
+	}
+	return typeExprValueType(file, typeArgs[0])
 }
 
 func functionValueType(file *project.File, fn *ast.FuncDecl, name string) (astindex.ValueType, bool) {

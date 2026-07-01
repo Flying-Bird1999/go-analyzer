@@ -50,6 +50,48 @@ func (Consumer) Receive(event Envelope) {
 	assertEventsForDependency(t, store.IMEvents, sender, conversation, []string{"inbox_conv"})
 }
 
+func TestExtractSDKCallsResolvesJSONXGenericPayload(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"consumer.go": `package sample
+
+import (
+	notifyim "gopkg.inshopline.com/sc1/commons/utils/bus/notify/im"
+	"gopkg.inshopline.com/sc1/commons/utils/jsonx"
+)
+
+const (
+	inboxMessage = "inbox_msg"
+	inboxConversation = "inbox_conv"
+)
+
+type Message struct{ ID string }
+type Conversation struct{ ID string }
+type Envelope struct {
+	MsgInfo *Message
+	ConvInfo *Conversation
+}
+type Consumer struct{}
+
+func (Consumer) Receive(data []byte) {
+	event, err := jsonx.Unmarshal[Envelope](data)
+	if err != nil { return }
+	notifyim.SendIm(nil, "app", "group", inboxConversation, event.ConvInfo)
+	notifyim.SendIm(nil, "app", "group", inboxMessage, event.MsgInfo)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := astindex.MethodSymbolID("example.com/im-flow", "Consumer", "Receive")
+	message := astindex.TypeSymbolID("example.com/im-flow", "Message")
+	conversation := astindex.TypeSymbolID("example.com/im-flow", "Conversation")
+	assertEventsForDependency(t, store.IMEvents, sender, message, []string{"inbox_msg"})
+	assertEventsForDependency(t, store.IMEvents, sender, conversation, []string{"inbox_conv"})
+}
+
 func TestExtractPropagatesBroadcastParamsWrapperToCaller(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"remote/im/im.go": `package im

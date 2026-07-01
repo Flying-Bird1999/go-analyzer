@@ -470,11 +470,15 @@ func (e *summaryEngine) templateFromExpr(info *functionInfo, expr ast.Expr, even
 		}
 	case *ast.SelectorExpr:
 		base := e.templateFromExpr(info, value.X, event, visiting)
+		typeIDs := e.eval.expressionTypeIDs(info.file, info.decl, expr)
+		if len(typeIDs) == 0 {
+			typeIDs = e.fieldTypeIDs(base.typeIDs, value.Sel.Name)
+		}
 		return &valueTemplate{
 			kind:       templateField,
 			field:      value.Sel.Name,
 			base:       base,
-			typeIDs:    e.eval.expressionTypeIDs(info.file, info.decl, expr),
+			typeIDs:    typeIDs,
 			symbolDeps: e.symbolDependencies(info.file, expr),
 			raw:        raw,
 		}
@@ -540,6 +544,18 @@ func (e *summaryEngine) templateFromExpr(info *functionInfo, expr ast.Expr, even
 		symbolDeps: e.symbolDependencies(info.file, expr),
 		raw:        raw,
 	}
+}
+
+func (e *summaryEngine) fieldTypeIDs(parents []facts.SymbolID, fieldName string) []facts.SymbolID {
+	found := map[facts.SymbolID]struct{}{}
+	for _, parent := range parents {
+		field, ok := e.index.StructFieldTypes[parent][fieldName]
+		if !ok || field.TypeName == "" {
+			continue
+		}
+		found[astindex.TypeSymbolID(field.PackagePath, field.TypeName)] = struct{}{}
+	}
+	return sortedSymbolSet(found)
 }
 
 func (e *summaryEngine) substitute(info *functionInfo, template *valueTemplate, args []ast.Expr, event bool) *valueTemplate {
