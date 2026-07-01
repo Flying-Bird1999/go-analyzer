@@ -836,17 +836,18 @@ func templateKey(template *valueTemplate) string {
 	if template == nil {
 		return "<nil>"
 	}
+	var key string
 	switch template.kind {
 	case templateLiteral:
-		return "literal:" + template.literal
+		key = "literal:" + template.literal
 	case templateParam, templateCallback:
-		return string(template.kind) + ":" + strconv.Itoa(template.param)
+		key = string(template.kind) + ":" + strconv.Itoa(template.param)
 	case templateField:
-		return "field:" + templateKey(template.base) + "." + template.field
+		key = "field:" + templateKey(template.base) + "." + template.field
 	case templateConcat:
-		return "concat:" + templateKey(template.left) + "+" + templateKey(template.right)
+		key = "concat:" + templateKey(template.left) + "+" + templateKey(template.right)
 	case templateString:
-		return "string:" + templateKey(template.base)
+		key = "string:" + templateKey(template.base)
 	case templateComposite:
 		names := make([]string, 0, len(template.fields))
 		for name := range template.fields {
@@ -857,10 +858,11 @@ func templateKey(template *valueTemplate) string {
 		for _, name := range names {
 			parts = append(parts, name+"="+templateKey(template.fields[name]))
 		}
-		return "composite:" + strings.Join(parts, ",")
+		key = "composite:" + strings.Join(parts, ",")
 	default:
-		return "unknown:" + template.raw + ":" + symbolListKey(template.typeIDs)
+		key = "unknown:" + template.raw
 	}
+	return key + "|types:" + symbolListKey(template.typeIDs) + "|deps:" + symbolListKey(template.symbolDeps)
 }
 
 func cloneTemplate(in *valueTemplate) *valueTemplate {

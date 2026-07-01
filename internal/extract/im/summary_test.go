@@ -187,6 +187,51 @@ func Receive(source *Source) {
 	assertEventsForDependency(t, store.IMEvents, senderID, producerID, []string{"ACTIVITY/VOUCHER_WINNER"})
 }
 
+func TestExtractKeepsSameEventFromDistinctPayloadProducers(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"remote/im/im.go": `package im
+
+const BroadcastURI = "/broadcast/send"
+type Event string
+type BroadcastParams struct{ Event Event }
+
+func generateTopic(event Event) string { return "broadcast://" + string(event) }
+func fetch(path string, body any) {}
+func SendSLMessage(params BroadcastParams, data any) {
+	_ = generateTopic(params.Event)
+	fetch(BroadcastURI, data)
+}
+`,
+		"consumer.go": `package sample
+
+import remoteim "example.com/im-flow/remote/im"
+
+const Message remoteim.Event = "message"
+
+type Source struct{ ID string }
+type Payload struct{ ID string }
+
+func BuildFirst(source *Source) *Payload { return &Payload{ID: source.ID} }
+func BuildSecond(source *Source) *Payload { return &Payload{ID: source.ID} }
+
+func Receive(source *Source) {
+	remoteim.SendSLMessage(remoteim.BroadcastParams{Event: Message}, BuildFirst(source))
+	remoteim.SendSLMessage(remoteim.BroadcastParams{Event: Message}, BuildSecond(source))
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
+	firstID := astindex.FunctionSymbolID("example.com/im-flow", "BuildFirst")
+	secondID := astindex.FunctionSymbolID("example.com/im-flow", "BuildSecond")
+	assertEventsForDependency(t, store.IMEvents, senderID, firstID, []string{"message"})
+	assertEventsForDependency(t, store.IMEvents, senderID, secondID, []string{"message"})
+}
+
 func TestExtractDiscoversSC2TopicPayloadWrapper(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"util/im/im.go": `package im
