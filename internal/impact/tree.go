@@ -23,8 +23,13 @@ type RootImpact struct {
 	Change    facts.ChangeFact `json:"change"`
 	Root      Node             `json:"root"`
 	Endpoints []EndpointImpact `json:"endpoints"`
+	IMEvents  []IMEventImpact  `json:"im_events"`
 }
 
 type TreeResult struct {
 	Roots []RootImpact `json:"roots"`
+}
+
+type IMEventImpact struct {
+	Event string `json:"event"`
 }

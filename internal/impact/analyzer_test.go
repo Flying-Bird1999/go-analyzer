@@ -26,6 +26,58 @@ func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath(t *testing.T) {
+	store := referenceImpactStore()
+	store.IMEvents = append(store.IMEvents,
+		facts.IMEventFact{
+			ID:           "im_event:check_in",
+			Event:        "check_in",
+			SenderSymbol: controllerSymbol,
+			Dependencies: []facts.IMEventDependency{{
+				SymbolID:   serviceSymbol,
+				Relation:   facts.IMRelationPayload,
+				Confidence: facts.ConfidenceHigh,
+			}},
+			Confidence: facts.ConfidenceHigh,
+			Resolved:   true,
+		},
+		facts.IMEventFact{
+			ID:           "im_event:dynamic",
+			EventRaw:     "event",
+			SenderSymbol: controllerSymbol,
+			Dependencies: []facts.IMEventDependency{{
+				SymbolID:   serviceSymbol,
+				Relation:   facts.IMRelationPayload,
+				Confidence: facts.ConfidenceHigh,
+			}},
+			Confidence: facts.ConfidenceHigh,
+			Resolved:   false,
+		},
+	)
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:service",
+		Kind:       facts.ChangeKindSymbolChanged,
+		SymbolID:   serviceSymbol,
+		File:       "service/common.go",
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:service")
+	if len(root.Endpoints) != 1 {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+	if len(root.IMEvents) != 1 || root.IMEvents[0].Event != "check_in" {
+		t.Fatalf("im events = %#v", root.IMEvents)
+	}
+	if !containsNodeKind(root.Root, "im_event") {
+		t.Fatalf("resolved IM event node missing: %#v", root.Root)
+	}
+	if !containsNodeKind(root.Root, "im_event_unresolved") {
+		t.Fatalf("unresolved IM event node missing: %#v", root.Root)
+	}
+}
+
 func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
@@ -275,6 +327,18 @@ func containsCycle(node Node) bool {
 	}
 	for _, child := range node.Children {
 		if containsCycle(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsNodeKind(node Node, kind string) bool {
+	if node.Kind == kind {
+		return true
+	}
+	for _, child := range node.Children {
+		if containsNodeKind(child, kind) {
 			return true
 		}
 	}

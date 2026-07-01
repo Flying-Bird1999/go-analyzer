@@ -12,6 +12,7 @@ import (
 type treeBuilder struct {
 	*treeContext
 	endpoints map[string]EndpointImpact
+	imEvents  map[string]IMEventImpact
 	change    facts.ChangeFact
 }
 
@@ -19,6 +20,7 @@ type treeContext struct {
 	store       *facts.Store
 	reverse     *graph.ReverseGraph
 	routes      *graph.RouteGraph
+	im          *graph.IMGraph
 	symbols     map[facts.SymbolID]facts.SymbolFact
 	annotations map[string]facts.AnnotationFact
 }
@@ -45,10 +47,18 @@ func AnalyzeTrees(store *facts.Store) TreeResult {
 			}
 			return endpoints[i].Path < endpoints[j].Path
 		})
+		imEvents := make([]IMEventImpact, 0, len(builder.imEvents))
+		for _, event := range builder.imEvents {
+			imEvents = append(imEvents, event)
+		}
+		sort.Slice(imEvents, func(i, j int) bool {
+			return imEvents[i].Event < imEvents[j].Event
+		})
 		result.Roots = append(result.Roots, RootImpact{
 			Change:    change,
 			Root:      root,
 			Endpoints: endpoints,
+			IMEvents:  imEvents,
 		})
 	}
 	return result
@@ -59,6 +69,7 @@ func newTreeContext(store *facts.Store) *treeContext {
 		store:       store,
 		reverse:     graph.NewReverseGraph(store),
 		routes:      graph.NewRouteGraph(store),
+		im:          graph.NewIMGraph(store),
 		symbols:     map[facts.SymbolID]facts.SymbolFact{},
 		annotations: map[string]facts.AnnotationFact{},
 	}
@@ -75,6 +86,7 @@ func newTreeBuilder(context *treeContext, change facts.ChangeFact) *treeBuilder 
 	return &treeBuilder{
 		treeContext: context,
 		endpoints:   map[string]EndpointImpact{},
+		imEvents:    map[string]IMEventImpact{},
 		change:      change,
 	}
 }
@@ -158,7 +170,36 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	for _, middleware := range middlewareBindings {
 		node.Children = append(node.Children, b.middlewareNode(middleware, node.Level+1, "middleware_symbol"))
 	}
+	for _, match := range b.im.EventsForPath(symbolID, path, b.change) {
+		node.Children = append(node.Children, b.imEventNode(match, node.Level+1))
+		if match.Fact.Resolved && match.Fact.Event != "" {
+			b.imEvents[match.Fact.Event] = IMEventImpact{Event: match.Fact.Event}
+		}
+	}
 	node.Children = mergeAndSortChildren(node.Children)
+}
+
+func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int) Node {
+	kind := "im_event"
+	id := "im_event:" + match.Fact.Event
+	name := match.Fact.Event
+	if !match.Fact.Resolved || match.Fact.Event == "" {
+		kind = "im_event_unresolved"
+		id = match.Fact.ID
+		name = match.Fact.EventRaw
+	}
+	return Node{
+		ID:         id,
+		Kind:       kind,
+		Name:       name,
+		File:       match.Fact.Span.File,
+		Relation:   string(match.Relation),
+		Raw:        match.Fact.EventRaw,
+		Span:       match.Fact.Span,
+		Confidence: match.Fact.Confidence,
+		Level:      level,
+		Children:   []Node{},
+	}
 }
 
 func (b *treeBuilder) middlewareBindingsForSymbol(symbolID facts.SymbolID) []facts.MiddlewareBindingFact {
