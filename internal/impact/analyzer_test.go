@@ -95,6 +95,53 @@ func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	}
 }
 
+func TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	handler := facts.SymbolID("func:example.com/project/controller/common::CheckIn")
+	annotation := facts.AnnotationFact{
+		ID:            "annotation:func:example.com/project/controller/common::CheckIn:POST:/api/bff-web/common/checkInV2:0",
+		Kind:          "annotation",
+		Method:        "POST",
+		Path:          "/api/bff-web/common/checkInV2",
+		Raw:           "@Post /api/bff-web/common/checkInV2",
+		HandlerSymbol: handler,
+		Span:          facts.SourceSpan{File: "controller/common/common.go", StartLine: 19, EndLine: 19},
+	}
+	store.Annotations = append(store.Annotations, annotation)
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:            "route:func:example.com/project/router/common::Init:POST:/checkIn:0",
+		Method:        "POST",
+		LocalPath:     "/checkIn",
+		ResolvedPath:  "/api/bff-web/common/checkIn",
+		GroupVar:      "group",
+		HandlerRaw:    "common.CheckIn",
+		HandlerSymbol: handler,
+		RouteFunc:     "func:example.com/project/router/common::Init",
+		File:          "router/common/common.go",
+		Span:          facts.SourceSpan{File: "router/common/common.go", StartLine: 21, EndLine: 21},
+	})
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:annotation:controller/common/common.go:19",
+		Kind:       facts.ChangeKindAnnotationChanged,
+		TargetID:   annotation.ID,
+		File:       "controller/common/common.go",
+		Source:     "git_diff",
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:annotation:controller/common/common.go:19")
+	if len(root.Endpoints) != 1 {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+	if root.Endpoints[0].Method != "POST" || root.Endpoints[0].Path != "/api/bff-web/common/checkIn" {
+		t.Fatalf("endpoint = %#v", root.Endpoints[0])
+	}
+	if len(root.Root.Children) != 1 || root.Root.Children[0].Kind != "route" {
+		t.Fatalf("annotation root children = %#v", root.Root.Children)
+	}
+}
+
 func TestAnalyzeMarksCycles(t *testing.T) {
 	store := referenceImpactStore()
 	store.References = append(store.References, facts.ReferenceFact{

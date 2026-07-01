@@ -66,6 +66,53 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 	}
 }
 
+func TestRecoveredDeletedRouteUsesAnnotationWhenItExtendsRecoveredRoutePath(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	handler := facts.SymbolID("func:example.com/project/controller/sms::SmsRecordPage")
+	route := facts.RouteRegistrationFact{
+		ID:                "route:deleted:router/sms_router.go:GET:/records:23:0",
+		Method:            "GET",
+		LocalPath:         "/records",
+		ResolvedPath:      "/api/bff-web/sc/message/sms/records",
+		GroupVar:          "smsGroup",
+		HandlerRaw:        "sms.SmsRecordPage",
+		HandlerSymbol:     handler,
+		RecoveredFromDiff: true,
+		File:              "router/sms_router.go",
+		Span:              facts.SourceSpan{File: "router/sms_router.go", StartLine: 23, EndLine: 23},
+	}
+	store.Routes = append(store.Routes, route)
+	store.Annotations = append(store.Annotations, facts.AnnotationFact{
+		ID:            "annotation:func:example.com/project/controller/sms::SmsRecordPage:GET:/admin/api/bff-web/sc/message/sms/records:0",
+		Kind:          "annotation",
+		Method:        "GET",
+		Path:          "/admin/api/bff-web/sc/message/sms/records",
+		Raw:           "@Get /admin/api/bff-web/sc/message/sms/records",
+		HandlerSymbol: handler,
+		Span:          facts.SourceSpan{File: "controller/sms/sms.go", StartLine: 17, EndLine: 17},
+	})
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:route_deleted:router/sms_router.go:23:0",
+		Kind:       facts.ChangeKindRouteDeleted,
+		TargetID:   route.ID,
+		File:       "router/sms_router.go",
+		Source:     "git_diff_deleted_route",
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:route_deleted:router/sms_router.go:23:0")
+	if len(root.Endpoints) != 1 {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+	if root.Endpoints[0].Method != "GET" || root.Endpoints[0].Path != "/admin/api/bff-web/sc/message/sms/records" {
+		t.Fatalf("endpoint = %#v", root.Endpoints[0])
+	}
+	if root.Root.Path != "/api/bff-web/sc/message/sms/records" {
+		t.Fatalf("route node path = %q", root.Root.Path)
+	}
+}
+
 func TestRecoverDeletedRoutesIgnoresNonGoFiles(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	changes := []diff.FileChange{{

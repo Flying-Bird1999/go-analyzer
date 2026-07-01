@@ -1350,9 +1350,9 @@ PY
 | impact          | `internal/impact`                      | tree、cycle、route helper、deleted route、IM terminal |
 | pipeline E2E    | `internal/app/pipeline_test.go`        | diff -> endpoint / IM event 完整闭环 |
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
-| real smoke      | `scripts/smoke-real-projects.sh`       | 三个真实 BFF + 四个 impact fixture + 24 组真实文件 diff |
+| real smoke      | `scripts/smoke-real-projects.sh`       | 三个真实 BFF + 四个 impact fixture + 27 组真实文件 diff |
 
-2026-07-01 验证快照：
+2026-07-02 验证快照：
 
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
@@ -1364,7 +1364,7 @@ PY
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 24 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 27 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1379,7 +1379,9 @@ PY
 | `real-admin-route-param-group` | `AuthRedis.RemoveToken` -> 第二个 route group 参数注册的 `POST /admin/api/bff-web/auth/revokeToken/:clientId` |
 | `real-admin-path-param-flow-control` | `createPathParamsFlowControlMid` 包级初始化依赖 -> 4 个限流中间件 route |
 | `real-admin-conversation-action-map` | `conversationAction` 静态 map interface dispatch -> app/web 两个会话上报 endpoint |
+| `real-admin-user-annotation-drift` | controller 注释 path 漂移时回查注册 route，仍输出 `GET /admin/api/bff-web/user/info` |
 | `real-client-common-checkin` | `POST /api/bff-web/common/checkIn` |
+| `real-client-checkin-annotation-drift` | controller 注释 path 漂移时回查注册 route，仍输出 `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `POST /api/bff-web/common/checkIn` + `github.com/shopspring/decimal` upgraded |
 | `real-client-multi-module-and-multi-source` | 3 个业务文件 root + `decimal` / `uuid` / `otel/trace` 3 个模块升级，共 31 个 endpoint |
 | `real-client-live-view` | `GET /api/bff-web/live/view/:salesId/redirect` |
@@ -1387,6 +1389,7 @@ PY
 | `real-admin-new-builtin` | `AuthRedis.GetRedirectData` -> `GET /admin/api/bff-web/auth/oauth/callback` |
 | `real-admin-typed-const` | `MerchantSettingCode.String` -> `POST /admin/api/bff-web/uc/merchant/setting/get` |
 | `real-sc2-channel-count` | SC2 常量拼接 route group + 括号包裹 handler -> `GET /admin/api/bff-web/sc/channel/count/:type` |
+| `real-sc2-deleted-sms-record-route` | 删除 SC2 route registration 后恢复完整 `GET /admin/api/bff-web/sc/message/sms/records` |
 | `real-sc2-generic-error-wrapmsg` | `NewGenericError() IGenericError` 收窄到 `*GenericError.WrapMsg`，真实传播到 109 个 endpoint |
 | `real-client-im-message` | `GetMessageItem` -> `inbox_msg`、`inbox_customer_msg`，不误报 `inbox_conv` |
 | `real-admin-im-lock` | `LockInventoryUpdateMsg` -> `POST/LOCK_INVENTORY_UPDATE` |

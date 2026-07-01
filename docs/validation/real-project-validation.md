@@ -100,7 +100,7 @@ fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates twenty-four real-file diff cases across the three target BFF
+The smoke script validates twenty-seven real-file diff cases across the three target BFF
 projects:
 
 | Case | Project file | Expected impact |
@@ -116,7 +116,9 @@ projects:
 | `real-admin-route-param-group` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `POST /admin/api/bff-web/auth/revokeToken/:clientId` through the second route-group parameter |
 | `real-admin-path-param-flow-control` | `sl-sc1-admin-bff/router/live/activity.go` | 4 routes using package-level `createPathParamsFlowControlMid(...)` initializers |
 | `real-admin-conversation-action-map` | `sl-sc1-admin-bff/service/mc/conversation_service.go` | app + web conversation routes through static map interface dispatch |
+| `real-admin-user-annotation-drift` | `sl-sc1-admin-bff/controller/user/user.go` | annotation path drift is corrected back to registered route `GET /admin/api/bff-web/user/info` |
 | `real-client-common-checkin` | `sl-sc1-bff-service/controller/common/common.go` | `POST /api/bff-web/common/checkIn` |
+| `real-client-checkin-annotation-drift` | `sl-sc1-bff-service/controller/common/common.go` | annotation path drift is corrected back to registered route `POST /api/bff-web/common/checkIn` |
 | `real-client-gomod-and-checkin` | `sl-sc1-bff-service/go.mod` + `sl-sc1-bff-service/controller/common/common.go` | 1 `fileSources` endpoint plus 10 Nexus endpoints from upgraded `github.com/shopspring/decimal` |
 | `real-client-multi-module-and-multi-source` | `go.mod` + `controller/common/common.go` + `model/form_product.go` + `service/merchant.go` | 3 file roots, 3 upgraded module sources and 31 deduplicated endpoints |
 | `real-client-live-view` | `sl-sc1-bff-service/controller/live/view/redirect.go` | `GET /api/bff-web/live/view/:salesId/redirect` |
@@ -124,6 +126,7 @@ projects:
 | `real-admin-new-builtin` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `GET /admin/api/bff-web/auth/oauth/callback` |
 | `real-admin-typed-const` | `sl-sc1-admin-bff/service/uc/merchant_setting_code.go` | `POST /admin/api/bff-web/uc/merchant/setting/get` |
 | `real-sc2-channel-count` | `sl-sc2-admin-bff/controller/channel/base/channel_config.go` | `GET /admin/api/bff-web/sc/channel/count/:type` through const-concatenated route groups and a parenthesized handler |
+| `real-sc2-deleted-sms-record-route` | `sl-sc2-admin-bff/router/sms_router.go` | deleted route recovery outputs full endpoint `GET /admin/api/bff-web/sc/message/sms/records` |
 | `real-sc2-generic-error-wrapmsg` | `sl-sc2-admin-bff/pkg/errors/errors.go` | 109 endpoints through `NewGenericError() IGenericError` narrowed to `*GenericError`, including `GET /admin/api/bff-web/sc/mc/conversation/inbox` |
 | `real-client-im-message` | `sl-sc1-bff-service/remote/pulsar/consumer/mc/inbox.go` | `inbox_msg` and `inbox_customer_msg`, excluding `inbox_conv` |
 | `real-admin-im-lock` | `sl-sc1-admin-bff/service/im/im.go` | `POST/LOCK_INVENTORY_UPDATE` |
@@ -144,7 +147,9 @@ The route-param case proves that a non-first
 package-level initializer dependencies propagate from middleware factory helpers
 to the routes that consume the initialized middleware values. The conversation
 case proves strict static map interface dispatch and route-prefix propagation
-through app router child functions. The combined
+through app router child functions. The annotation-drift cases prove changed
+controller comments do not override the registered Lego route when the route
+path is authoritative. The combined
 go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
 `moduleSources`. The module source tree explicitly contains
@@ -160,7 +165,9 @@ case proves constant-concatenated group prefixes and parenthesized handlers are
 linked to the same endpoint. Its error case proves a project constructor that
 declares an interface return but always returns one concrete project type can
 propagate method changes without guessing. Its IM case proves the generic
-topic/msg wrapper reaches only `mc/message`.
+topic/msg wrapper reaches only `mc/message`. Its deleted-route case proves
+single-line route deletions can recover the full endpoint from the surviving
+group prefix plus handler annotation, rather than falling back to a local path.
 
 The multi-module case generates six real diff hunks in four files. It verifies
 independent module trees for `github.com/shopspring/decimal`,

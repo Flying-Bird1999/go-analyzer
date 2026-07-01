@@ -119,7 +119,7 @@ func (b *treeBuilder) buildRoot() Node {
 		return root
 	}
 	if annotation, ok := b.annotations[b.change.TargetID]; ok {
-		return b.annotationNode(annotation, facts.RouteRegistrationFact{}, 0, "")
+		return b.annotationRootNode(annotation)
 	}
 	if b.change.SymbolID != "" {
 		root := b.symbolNode(b.change.SymbolID, 0)
@@ -300,6 +300,31 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 	return node
 }
 
+func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
+	routes := b.routes.RoutesForHandler(annotation.HandlerSymbol)
+	if len(routes) == 0 {
+		return b.annotationNode(annotation, facts.RouteRegistrationFact{}, 0, "")
+	}
+	root := Node{
+		ID:         annotation.ID,
+		Kind:       "annotation",
+		Name:       strings.TrimSpace(annotation.Method + " " + annotation.Path),
+		File:       annotation.Span.File,
+		Raw:        annotation.Raw,
+		Span:       annotation.Span,
+		Confidence: facts.ConfidenceHigh,
+		Level:      0,
+		Method:     annotation.Method,
+		Path:       annotation.Path,
+		Children:   []Node{},
+	}
+	for _, route := range routes {
+		root.Children = append(root.Children, b.routeNode(route, 1, "registered_route"))
+	}
+	root.Children = mergeAndSortChildren(root.Children)
+	return root
+}
+
 func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, level int, relation string) Node {
 	node := Node{
 		ID:         middleware.ID,
@@ -325,7 +350,9 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 	routePath := route.ResolvedPath
 	routePathAuthoritative := routePath != "" && (routePath != route.LocalPath || isLegacyPathGroup(route.GroupVar))
 	if route.RecoveredFromDiff && route.LocalPath != "" {
-		routePath = route.LocalPath
+		if routePath == "" {
+			routePath = route.LocalPath
+		}
 		routePathAuthoritative = true
 	}
 	if annotation.Path == "" && routePath == "" {

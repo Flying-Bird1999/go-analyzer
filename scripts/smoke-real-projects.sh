@@ -685,7 +685,13 @@ expected = {
         ("POST", "/admin/api/bff-app/mc/conversation/status/report"),
         ("POST", "/admin/api/bff-web/mc/syncConversation"),
     },
+    "real-admin-user-annotation-drift": {
+        ("GET", "/admin/api/bff-web/user/info"),
+    },
     "real-client-common-checkin": {
+        ("POST", "/api/bff-web/common/checkIn"),
+    },
+    "real-client-checkin-annotation-drift": {
         ("POST", "/api/bff-web/common/checkIn"),
     },
     "real-client-live-view": {
@@ -704,6 +710,9 @@ expected = {
     },
     "real-sc2-channel-count": {
         ("GET", "/admin/api/bff-web/sc/channel/count/:type"),
+    },
+    "real-sc2-deleted-sms-record-route": {
+        ("GET", "/admin/api/bff-web/sc/message/sms/records"),
     },
 }
 
@@ -917,12 +926,28 @@ write_real_file_diff \
 run_real_impact_case "real-admin-conversation-action-map" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-conversation-action-map.diff" "POST" "/admin/api/bff-app/mc/conversation/status/report"
 
 write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "controller/user/user.go" \
+  "// @Get /admin/api/bff-web/user/info" \
+  "// @Get /admin/api/bff-web/user/info-v2" \
+  "${OUT_DIR}/real-admin-user-annotation-drift.diff"
+run_real_impact_case "real-admin-user-annotation-drift" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-user-annotation-drift.diff" "GET" "/admin/api/bff-web/user/info"
+
+write_real_file_diff \
   "${SC1_BFF}" \
   "controller/common/common.go" \
   "	// 获取当前商家/用户信息" \
   "	// smoke: 获取当前商家/用户信息" \
   "${OUT_DIR}/real-client-common-checkin.diff"
 run_real_impact_case "real-client-common-checkin" "${SC1_BFF}" "${OUT_DIR}/real-client-common-checkin.diff" "POST" "/api/bff-web/common/checkIn"
+
+write_real_file_diff \
+  "${SC1_BFF}" \
+  "controller/common/common.go" \
+  "// @Post /api/bff-web/common/checkIn" \
+  "// @Post /api/bff-web/common/checkInV2" \
+  "${OUT_DIR}/real-client-checkin-annotation-drift.diff"
+run_real_impact_case "real-client-checkin-annotation-drift" "${SC1_BFF}" "${OUT_DIR}/real-client-checkin-annotation-drift.diff" "POST" "/api/bff-web/common/checkIn"
 
 write_real_multi_file_diff \
   "${SC1_BFF}" \
@@ -1001,6 +1026,14 @@ write_real_file_diff \
   "	channelType := c.Param(\"type\") + \"\"" \
   "${OUT_DIR}/real-sc2-channel-count.diff"
 run_real_impact_case "real-sc2-channel-count" "${SC2_ADMIN_BFF}" "${OUT_DIR}/real-sc2-channel-count.diff" "GET" "/admin/api/bff-web/sc/channel/count/:type"
+
+write_real_file_diff \
+  "${SC2_ADMIN_BFF}" \
+  "router/sms_router.go" \
+  $'\tsmsGroup.GET("/records", sa.ControllerWithReqResp(sms.SmsRecordPage))  // 查询短信发送历史记录\n' \
+  "" \
+  "${OUT_DIR}/real-sc2-deleted-sms-record-route.diff"
+run_real_impact_case "real-sc2-deleted-sms-record-route" "${SC2_ADMIN_BFF}" "${OUT_DIR}/real-sc2-deleted-sms-record-route.diff" "GET" "/admin/api/bff-web/sc/message/sms/records"
 
 write_real_file_diff \
   "${SC2_ADMIN_BFF}" \
