@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,6 +81,40 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpoint(t *testing.T) {
 	}
 	if doc.Summary.ImpactedEndpointCount != 0 || len(doc.Summary.ImpactedEndpoints) != 0 {
 		t.Fatalf("summary = %#v", doc.Summary)
+	}
+	if doc.Summary.ImpactedIMCount != 0 || len(doc.Summary.ImpactedIMEvents) != 0 {
+		t.Fatalf("IM summary = %#v", doc.Summary)
+	}
+	if doc.FileSources[0].ImpactedIMEvents == nil {
+		t.Fatal("source IM events must be a non-nil empty array")
+	}
+}
+
+func TestBuildImpactDocumentSummarizesIMEventsBySource(t *testing.T) {
+	rootA := testRootImpact("change:a", "func:example.com/project::A", "a.go", "A", "GET", "/a")
+	rootA.IMEvents = []impact.IMEventImpact{{Event: "inbox_msg"}, {Event: "inbox_customer_msg"}}
+	rootB := testRootImpact("change:b", "func:example.com/project::B", "b.go", "B", "POST", "/b")
+	rootB.IMEvents = []impact.IMEventImpact{{Event: "inbox_msg"}}
+
+	doc := BuildImpactDocument(
+		[]diff.FileChange{{NewPath: "b.go"}, {NewPath: "a.go"}},
+		impact.TreeResult{Roots: []impact.RootImpact{rootB, rootA}},
+		ImpactDocumentOptions{},
+	)
+
+	wantGlobal := []string{"inbox_customer_msg", "inbox_msg"}
+	if doc.Summary.ImpactedIMCount != len(wantGlobal) ||
+		!reflect.DeepEqual(doc.Summary.ImpactedIMEvents, wantGlobal) {
+		t.Fatalf("summary = %#v", doc.Summary)
+	}
+	if len(doc.FileSources) != 2 {
+		t.Fatalf("fileSources = %#v", doc.FileSources)
+	}
+	if !reflect.DeepEqual(doc.FileSources[0].ImpactedIMEvents, wantGlobal) {
+		t.Fatalf("a.go events = %#v", doc.FileSources[0].ImpactedIMEvents)
+	}
+	if !reflect.DeepEqual(doc.FileSources[1].ImpactedIMEvents, []string{"inbox_msg"}) {
+		t.Fatalf("b.go events = %#v", doc.FileSources[1].ImpactedIMEvents)
 	}
 }
 

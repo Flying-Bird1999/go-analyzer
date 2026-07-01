@@ -21,6 +21,7 @@ type FileSourceImpact struct {
 	Diff              string                `json:"diff,omitempty"`
 	Symbols           map[string]ImpactNode `json:"symbols"`
 	ImpactedEndpoints []EndpointSummary     `json:"impactedEndpoints"`
+	ImpactedIMEvents  []string              `json:"impactedIMEvents"`
 }
 
 type ImpactNode struct {
@@ -47,6 +48,8 @@ type EndpointSummary struct {
 type ImpactSummary struct {
 	ImpactedEndpointCount int               `json:"impactedEndpointCount"`
 	ImpactedEndpoints     []EndpointSummary `json:"impactedEndpoints"`
+	ImpactedIMCount       int               `json:"impactedIMCount"`
+	ImpactedIMEvents      []string          `json:"impactedIMEvents"`
 }
 
 type ModuleSourceImpact struct {
@@ -74,6 +77,7 @@ type ImpactDocumentOptions struct {
 type fileSourceBuilder struct {
 	source    FileSourceImpact
 	endpoints map[string]EndpointSummary
+	imEvents  map[string]struct{}
 }
 
 type moduleSourceBuilder struct {
@@ -86,6 +90,7 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 	moduleSources := buildModuleSourceBuilders(opts.ModuleChanges)
 	moduleUsages := indexModuleUsages(opts.ModuleUsages)
 	globalEndpoints := map[string]EndpointSummary{}
+	globalIMEvents := map[string]struct{}{}
 
 	for _, change := range fileChanges {
 		file := changedFile(change)
@@ -121,10 +126,17 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 			builder.endpoints[endpointID] = summary
 			globalEndpoints[endpointID] = summary
 		}
+		for _, event := range root.IMEvents {
+			if event.Event == "" {
+				continue
+			}
+			builder.imEvents[event.Event] = struct{}{}
+			globalIMEvents[event.Event] = struct{}{}
+		}
 	}
 
 	return normalizeImpactDocument(ImpactDocument{
-		Summary:       buildImpactSummary(globalEndpoints),
+		Summary:       buildImpactSummary(globalEndpoints, globalIMEvents),
 		FileSources:   finalizeFileSources(files),
 		ModuleSources: finalizeModuleSources(moduleSources),
 	})
@@ -165,8 +177,10 @@ func ensureFileSource(files map[string]*fileSourceBuilder, file string) *fileSou
 			SourceFile:        file,
 			Symbols:           map[string]ImpactNode{},
 			ImpactedEndpoints: []EndpointSummary{},
+			ImpactedIMEvents:  []string{},
 		},
 		endpoints: map[string]EndpointSummary{},
+		imEvents:  map[string]struct{}{},
 	}
 	files[file] = builder
 	return builder
@@ -182,6 +196,7 @@ func finalizeFileSources(files map[string]*fileSourceBuilder) []FileSourceImpact
 			builder.source.ImpactedEndpoints = append(builder.source.ImpactedEndpoints, endpoint)
 		}
 		sortEndpointSummaries(builder.source.ImpactedEndpoints)
+		builder.source.ImpactedIMEvents = sortedStrings(builder.imEvents)
 		out = append(out, builder.source)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -345,15 +360,17 @@ func sortImpactNodes(nodes []ImpactNode) {
 	})
 }
 
-func buildImpactSummary(endpoints map[string]EndpointSummary) ImpactSummary {
+func buildImpactSummary(endpoints map[string]EndpointSummary, imEvents map[string]struct{}) ImpactSummary {
 	out := ImpactSummary{
 		ImpactedEndpoints: make([]EndpointSummary, 0, len(endpoints)),
+		ImpactedIMEvents:  sortedStrings(imEvents),
 	}
 	for _, endpoint := range endpoints {
 		out.ImpactedEndpoints = append(out.ImpactedEndpoints, endpoint)
 	}
 	sortEndpointSummaries(out.ImpactedEndpoints)
 	out.ImpactedEndpointCount = len(out.ImpactedEndpoints)
+	out.ImpactedIMCount = len(out.ImpactedIMEvents)
 	return out
 }
 
@@ -363,6 +380,12 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 	}
 	sortEndpointSummaries(doc.Summary.ImpactedEndpoints)
 	doc.Summary.ImpactedEndpointCount = len(doc.Summary.ImpactedEndpoints)
+	if doc.Summary.ImpactedIMEvents == nil {
+		doc.Summary.ImpactedIMEvents = []string{}
+	}
+	sort.Strings(doc.Summary.ImpactedIMEvents)
+	doc.Summary.ImpactedIMEvents = uniqueStrings(doc.Summary.ImpactedIMEvents)
+	doc.Summary.ImpactedIMCount = len(doc.Summary.ImpactedIMEvents)
 	if doc.FileSources == nil {
 		doc.FileSources = []FileSourceImpact{}
 	}
@@ -397,6 +420,11 @@ func normalizeFileSource(source FileSourceImpact) FileSourceImpact {
 		source.ImpactedEndpoints = []EndpointSummary{}
 	}
 	sortEndpointSummaries(source.ImpactedEndpoints)
+	if source.ImpactedIMEvents == nil {
+		source.ImpactedIMEvents = []string{}
+	}
+	sort.Strings(source.ImpactedIMEvents)
+	source.ImpactedIMEvents = uniqueStrings(source.ImpactedIMEvents)
 	return source
 }
 
@@ -420,4 +448,26 @@ func sortEndpointSummaries(endpoints []EndpointSummary) {
 		}
 		return endpoints[i].Path < endpoints[j].Path
 	})
+}
+
+func sortedStrings(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
 }

@@ -6,7 +6,9 @@
         "method": "POST",
         "path": "/orders"
       }
-    ]
+    ],
+    "impactedIMCount": 0,
+    "impactedIMEvents": []
   },
   "fileSources": [
     {
@@ -133,7 +135,8 @@
           "method": "POST",
           "path": "/orders"
         }
-      ]
+      ],
+      "impactedIMEvents": []
     }
   ]
 }

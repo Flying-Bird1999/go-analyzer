@@ -160,6 +160,30 @@ func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	}
 }
 
+func TestImpactSchemaExposesIMEventSummaries(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	defs := doc["$defs"].(map[string]any)
+	summary := defs["impact_summary"].(map[string]any)
+	summaryProperties := summary["properties"].(map[string]any)
+	for _, field := range []string{"impactedIMCount", "impactedIMEvents"} {
+		if _, ok := summaryProperties[field]; !ok {
+			t.Fatalf("summary field %q missing: %#v", field, summaryProperties)
+		}
+	}
+	fileSource := defs["file_source_impact"].(map[string]any)
+	sourceProperties := fileSource["properties"].(map[string]any)
+	if _, ok := sourceProperties["impactedIMEvents"]; !ok {
+		t.Fatalf("source impactedIMEvents missing: %#v", sourceProperties)
+	}
+}
+
 func TestFactsSchemaOmitsDiffOnlyTransientFacts(t *testing.T) {
 	got, err := SchemaJSON("facts")
 	if err != nil {

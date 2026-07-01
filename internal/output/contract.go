@@ -141,11 +141,14 @@ func commonDefinitions() map[string]any {
 			"diff":              stringType(),
 			"symbols":           map[string]any{"type": "object", "additionalProperties": ref("impact_node")},
 			"impactedEndpoints": arrayOf(ref("endpoint_summary")),
-		}, "sourceFile", "symbols", "impactedEndpoints"),
+			"impactedIMEvents":  arrayOf(stringType()),
+		}, "sourceFile", "symbols", "impactedEndpoints", "impactedIMEvents"),
 		"impact_summary": object(map[string]any{
 			"impactedEndpointCount": numberType(),
 			"impactedEndpoints":     arrayOf(ref("endpoint_summary")),
-		}, "impactedEndpointCount", "impactedEndpoints"),
+			"impactedIMCount":       numberType(),
+			"impactedIMEvents":      arrayOf(stringType()),
+		}, "impactedEndpointCount", "impactedEndpoints", "impactedIMCount", "impactedIMEvents"),
 		"im_event": object(map[string]any{
 			"id":            stringType(),
 			"event":         stringType(),
