@@ -105,19 +105,24 @@ func TestHelpCommandListsCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"facts", "impact", "schema", "HTTP endpoints", "IM events", "absolute paths"} {
+	for _, want := range []string{"impact", "HTTP 接口", "IM event", "绝对路径"} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Fatalf("help output missing %q: %s", want, out)
 		}
 	}
+	for _, hidden := range []string{"facts", "schema"} {
+		if bytes.Contains(out, []byte(hidden)) {
+			t.Fatalf("default help should not mention internal command %q: %s", hidden, out)
+		}
+	}
 }
 
-func TestImpactHelpMentionsIMEvents(t *testing.T) {
+func TestImpactHelpMentionsEndpointAndIMEvents(t *testing.T) {
 	out, err := runWithCapturedStdoutBytes(t, []string{"help", "impact"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"HTTP endpoints", "IM events"} {
+	for _, want := range []string{"HTTP 接口", "IM event", "unified diff", "变更后源码", "--impact-config"} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Fatalf("impact help output missing %q: %s", want, out)
 		}

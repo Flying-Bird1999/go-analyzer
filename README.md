@@ -88,14 +88,11 @@ diff
 
 ## CLI 使用
 
-CLI 边界要求输入路径使用绝对路径：
+对外接入只需要使用 `impact` 命令。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
 
 ```bash
-go-analyzer facts --project /absolute/path/to/sl-sc1-bff-service --format json
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --impact-config /absolute/path/to/go-impact.config.json --format json
-go-analyzer schema --type facts
-go-analyzer schema --type impact
 ```
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。

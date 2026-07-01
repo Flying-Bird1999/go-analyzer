@@ -128,37 +128,34 @@ func validateAbsPath(name string, path string) error {
 func usage(command string) string {
 	switch command {
 	case "facts":
-		return `Usage:
+		return `用法:
   go-analyzer facts --project /absolute/path/to/project [--format json]
 
-Extract project facts as JSON.
+提取项目 facts JSON，用于调试 symbol、route、annotation、reference、IM event 和 linker 结果。
 `
 	case "impact":
-		return `Usage:
+		return `用法:
   go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
-Analyze impacted HTTP endpoints and IM events from a unified diff.
+基于已经应用到变更后源码的 unified diff，分析受影响的 HTTP 接口和出站 IM event。
+--impact-config 为可选配置，仅用于 module 版本变更过滤；未传时自动尝试读取项目内 .analyzer/go-impact.config.json。
 `
 	case "schema":
-		return `Usage:
+		return `用法:
   go-analyzer schema --type facts
   go-analyzer schema --type impact
 
-Print the JSON schema for a stable output contract.
+输出 facts/impact JSON Schema，用于校验稳定输出契约。
 `
 	default:
-		return `Usage:
- go-analyzer help [facts|impact|schema]
- go-analyzer facts --project /absolute/path/to/project [--format json]
+		return `用法:
+ go-analyzer help impact
  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
- go-analyzer schema --type facts|impact
 
-Commands:
-  facts   Extract analyzer facts as JSON.
-  impact  Analyze impacted HTTP endpoints and IM events from a unified diff.
-  schema  Print JSON schemas for output contracts.
+对外接入命令:
+  impact  从已应用到变更后源码的 unified diff 分析受影响 HTTP 接口和 IM event。
 
-CLI path flags require absolute paths.
+CLI 路径参数必须使用绝对路径。
 `
 	}
 }
