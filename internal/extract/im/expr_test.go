@@ -88,6 +88,33 @@ var conversation = Conversation.String()
 	}
 }
 
+func TestEvaluatorResolvesStringMethodDeclaredBeforeTable(t *testing.T) {
+	p, idx, file := loadEvaluatorProject(t, `package sample
+
+type EventCode int
+
+func (e EventCode) String() string { return eventNames[e] }
+
+const (
+	LockInventory EventCode = iota
+	Conversation
+)
+
+var eventNames = [...]string{
+	"LOCK_INVENTORY_UPDATE",
+	"CONVERSATION_UPDATE",
+}
+
+var lock = LockInventory.String()
+`)
+	eval := newEvaluator(p, idx)
+
+	got, ok := eval.eventValue(file, packageValueExpr(t, file, "lock"))
+	if !ok || got != "LOCK_INVENTORY_UPDATE" {
+		t.Fatalf("eventValue(lock) = %q, %v; want %q", got, ok, "LOCK_INVENTORY_UPDATE")
+	}
+}
+
 func TestEvaluatorResolvesSelectorPayloadType(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 

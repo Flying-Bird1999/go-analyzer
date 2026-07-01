@@ -43,10 +43,16 @@ func (e *evaluator) indexDeclarations() {
 	for _, pkg := range e.project.Packages {
 		for _, file := range pkg.Files {
 			for _, rawDecl := range file.AST.Decls {
-				switch decl := rawDecl.(type) {
-				case *ast.GenDecl:
+				if decl, ok := rawDecl.(*ast.GenDecl); ok {
 					e.indexGenDecl(file, decl)
-				case *ast.FuncDecl:
+				}
+			}
+		}
+	}
+	for _, pkg := range e.project.Packages {
+		for _, file := range pkg.Files {
+			for _, rawDecl := range file.AST.Decls {
+				if decl, ok := rawDecl.(*ast.FuncDecl); ok {
 					e.indexStringMethod(file, decl)
 				}
 			}
