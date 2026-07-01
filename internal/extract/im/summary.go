@@ -496,9 +496,22 @@ func (e *summaryEngine) templateFromExpr(info *functionInfo, expr ast.Expr, even
 			if index, isParam := info.params[ident.Name]; isParam {
 				return &valueTemplate{kind: templateCallback, param: index, raw: raw}
 			}
+		}
+		if callee, ok := e.resolveLocalCall(info.file, value); ok {
+			out := &valueTemplate{kind: templateUnknown, raw: raw}
 			if len(value.Args) == 1 {
-				return e.templateFromExpr(info, value.Args[0], event, visiting)
+				out = cloneTemplate(e.templateFromExpr(info, value.Args[0], event, visiting))
+				out.raw = raw
 			}
+			out.symbolDeps = appendUniqueSymbols(out.symbolDeps, callee)
+			if resultType, ok := e.index.CallableReturnTypes[callee]; ok && resultType.TypeName != "" {
+				resultID := astindex.TypeSymbolID(resultType.PackagePath, resultType.TypeName)
+				out.typeIDs = appendUniqueSymbols(out.typeIDs, resultID)
+			}
+			return out
+		}
+		if _, ok := value.Fun.(*ast.Ident); ok && len(value.Args) == 1 {
+			return e.templateFromExpr(info, value.Args[0], event, visiting)
 		}
 		if selector, ok := value.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "String" {
 			return &valueTemplate{

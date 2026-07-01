@@ -140,6 +140,53 @@ func Receive(source Source) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"POST/PRODUCT_CHANGE"})
 }
 
+func TestExtractTracksLocalPayloadProducer(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"remote/im/im.go": `package im
+
+const BroadcastURI = "/broadcast/send"
+type Event string
+type BroadcastParams struct{ Event Event }
+
+func generateTopic(event Event) string { return "broadcast://" + string(event) }
+func fetch(path string, body any) {}
+func SendSLMessage(params BroadcastParams, data any) {
+	_ = generateTopic(params.Event)
+	fetch(BroadcastURI, data)
+}
+`,
+		"consumer.go": `package sample
+
+import remoteim "example.com/im-flow/remote/im"
+
+const VoucherWinner remoteim.Event = "ACTIVITY/VOUCHER_WINNER"
+
+type Source struct{ ID string }
+type VoucherWinnerPayload struct{ ID string }
+
+func ConvertVoucherWinner(source *Source) (*VoucherWinnerPayload, error) {
+	return &VoucherWinnerPayload{ID: source.ID}, nil
+}
+
+func Receive(source *Source) {
+	payload, err := ConvertVoucherWinner(source)
+	if err != nil {
+		return
+	}
+	remoteim.SendSLMessage(remoteim.BroadcastParams{Event: VoucherWinner}, payload)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
+	producerID := astindex.FunctionSymbolID("example.com/im-flow", "ConvertVoucherWinner")
+	assertEventsForDependency(t, store.IMEvents, senderID, producerID, []string{"ACTIVITY/VOUCHER_WINNER"})
+}
+
 func TestExtractDiscoversSC2TopicPayloadWrapper(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"util/im/im.go": `package im
