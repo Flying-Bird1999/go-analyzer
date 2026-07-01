@@ -21,10 +21,15 @@ go-analyzer facts --project /absolute/path/to/project --format json
 ```
 
 It retains project metadata, symbols, annotations, routes, middleware, current
-module dependencies, references, links, source spans, raw evidence and
-diagnostics. Diff-only transient facts (`changes`, `module_changes`, and
+module dependencies, references, IM event facts, links, source spans, raw
+evidence and diagnostics. Diff-only transient facts (`changes`, `module_changes`, and
 `module_usages`) are internal to impact analysis and are not emitted by the
 `facts` command.
+
+`im_events` records each discovered outbound IM send with its sender symbol,
+static event value when resolvable, payload/event/control dependencies,
+evidence spans and resolution state. It is a debugging contract; the impact
+report projects only event names and propagation nodes.
 
 ## Impact Output
 
@@ -45,14 +50,16 @@ Top-level shape:
     "impactedEndpointCount": 1,
     "impactedEndpoints": [
       {"method": "POST", "path": "/orders"}
-    ]
+    ],
+    "impactedIMCount": 1,
+    "impactedIMEvents": ["order/changed"]
   },
   "fileSources": [],
   "moduleSources": []
 }
 ```
 
-- `summary` is the globally deduplicated endpoint result.
+- `summary` is the globally deduplicated endpoint and concrete IM event result.
 - `fileSources` contains ordinary source-file changes and their complete trees.
 - `moduleSources` contains semantic go.mod changes and their local usage trees.
 
@@ -76,7 +83,8 @@ endpoint:
       "children": []
     }
   },
-  "impactedEndpoints": []
+  "impactedEndpoints": [],
+  "impactedIMEvents": []
 }
 ```
 
@@ -85,6 +93,8 @@ endpoint:
 - `symbols` is keyed by stable changed-root ID and contains recursive trees.
 - file fallback uses the reserved `__non_symbol__` key.
 - `impactedEndpoints` is the deduplicated endpoint result for this source.
+- `impactedIMEvents` is the sorted, deduplicated set of statically resolved IM
+  event strings for this source.
 
 ### `moduleSources`
 
@@ -107,7 +117,8 @@ Resolved dependency changes are separate from ordinary source changes:
           "children": []
         }
       },
-      "impactedEndpoints": []
+      "impactedEndpoints": [],
+      "impactedIMEvents": []
     }
   ]
 }
@@ -138,6 +149,16 @@ Every root and descendant may contain:
 Endpoint nodes remain in the tree so reviewers can follow a changed symbol to
 the final HTTP endpoint without joining another top-level graph.
 
+Resolved IM terminals use `kind: "im_event"` and put the concrete event string
+in `name`. Dynamic event expressions use `kind: "im_event_unresolved"` so the
+reviewer can see the incomplete path. Unresolved terminals are intentionally
+excluded from `impactedIMCount`, `impactedIMEvents`, and source event summaries.
+
+The public impact contract reports only the event identity. It does not expose
+app ID, delivery mode, payload expressions, or changed payload fields. The
+source diff and recursive tree retain the evidence needed for human or agent
+review.
+
 Source spans are intentionally absent from impact JSON. Full spans remain
 available from `facts`.
 
@@ -164,3 +185,12 @@ Other deleted declarations can degrade to a file fallback and
 `deleted_symbol_unresolved`.
 
 Dual base/head snapshots are intentionally deferred.
+
+## IM Analysis Boundary
+
+IM impact starts from the BFF-local unified diff and post-change source. It
+does not inspect sc1-server or infer upstream schema changes across repositories.
+Protocol implementations are discovered only when both `broadcast://` and
+`/broadcast/send` anchors are present. Common IM SDKs are matched through
+built-in exact import/function adapters. No project configuration is required
+for IM discovery.

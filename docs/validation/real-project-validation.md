@@ -17,8 +17,9 @@ resolves the sibling demo projects to absolute paths, writes JSON outputs to
 impact cases temporarily edit business files, collect `git diff` from the BFF
 project, keep the files in their post-change state while running impact twice,
 compare the JSON byte-for-byte, validate exact endpoint sets, and then restore
-the files. Lego BFF syntax is recognized by built-in rules; no analyzer config
-is required.
+the files. IM cases additionally validate exact event sets and zero unexpected
+HTTP endpoints. Lego BFF syntax and IM transports are recognized by built-in
+rules; no analyzer config is required for them.
 
 ## Current Expectations
 
@@ -31,7 +32,7 @@ The MVP validation target is stability rather than perfect precision:
   smoke run.
 - Impact smoke should record changed source count, changed root count,
   recursive tree node count and endpoint count.
-- Real BFF impact smoke should assert exact impacted endpoint sets and deterministic output.
+- Real BFF impact smoke should assert exact impacted endpoint/IM event sets and deterministic output.
 - Unsupported patterns should appear as diagnostics instead of being silently
   lost where the analyzer can identify them.
 
@@ -97,10 +98,10 @@ fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates eighteen real-file diff cases across the two target BFF
+The smoke script validates twenty-one real-file diff cases across the two target BFF
 projects:
 
-| Case | Project file | Expected endpoint |
+| Case | Project file | Expected impact |
 | --- | --- | --- |
 | `real-admin-customer-empty-path` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `GET /admin/api/bff-web/mc/customer/:customerId` |
 | `real-admin-customer-wrapper` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `PUT /admin/api/bff-web/mc/customer/:customerId` |
@@ -120,6 +121,9 @@ projects:
 | `real-client-interface-dispatch` | `sl-sc1-bff-service/remote/oa/oa.go` | 3 exact endpoints through both direct and service callers of `oaClient.GetMerchant` |
 | `real-admin-new-builtin` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `GET /admin/api/bff-web/auth/oauth/callback` |
 | `real-admin-typed-const` | `sl-sc1-admin-bff/service/uc/merchant_setting_code.go` | `POST /admin/api/bff-web/uc/merchant/setting/get` |
+| `real-client-im-message` | `sl-sc1-bff-service/remote/pulsar/consumer/mc/inbox.go` | `inbox_msg` and `inbox_customer_msg`, excluding `inbox_conv` |
+| `real-admin-im-lock` | `sl-sc1-admin-bff/service/im/im.go` | `POST/LOCK_INVENTORY_UPDATE` |
+| `real-admin-im-voucher` | `sl-sc1-admin-bff/remote/pulsar/consumer/activity_convert.go` | `ACTIVITY/VOUCHER_WINNER` through a local multi-return converter |
 
 Controller handlers registered under both current and compatibility routes
 produce both endpoints; the exact sets are checked. The route-helper case
@@ -140,6 +144,16 @@ go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `fileSources`, while the ten decimal-dependent Nexus routes are grouped under
 `moduleSources`. The module source tree explicitly contains
 `ParseStringToFloat64 -> ConvertPrice -> endpoint`.
+
+The three checked-in IM smoke cases cover exact common-SDK argument matching,
+legacy `iota + String()`/closure wrappers, local converter return values, and
+same-sender payload separation. Each case runs twice against the post-change
+snapshot and compares output byte-for-byte.
+
+`sl-sc2-admin-bff` was additionally validated manually because it is outside the
+portable sibling-project layout. Changing `McMessageRespImDO` reaches only
+`mc/message` through its generic topic/msg wrapper. The local report is
+`.analyzer-smoke/sc2-admin-im-message.impact.json`.
 
 The multi-module case generates six real diff hunks in four files. It verifies
 independent module trees for `github.com/shopspring/decimal`,
@@ -180,6 +194,10 @@ therefore it is not used as the exact endpoint fixture for receiver inference.
   `route_unresolved_handler`.
 - go.mod changes propagate conservatively from changed modules to all resolved
   local import usages; external module API/source differences are not analyzed.
+- Dynamic IM event expressions remain as `im_event_unresolved` tree terminals
+  and are excluded from event summaries.
+- Upstream sc1-server or proto repository changes are not propagated across
+  repositories into BFF IM events.
 - Declarations absent from the post-change snapshot can degrade to
   `deleted_symbol_unresolved`.
 - Ambiguous or unknown interface dispatch, reflection, arbitrary control-flow
