@@ -59,15 +59,25 @@ for required in ("summary", "fileSources"):
 if "nodes" in data:
     raise SystemExit("raw impact report must keep trees in sources, not top-level nodes")
 
+summary = data["summary"]
+if not isinstance(summary.get("impactedIMCount"), int):
+    raise SystemExit(f"summary impactedIMCount missing: {summary}")
+if not isinstance(summary.get("impactedIMEvents"), list):
+    raise SystemExit(f"summary impactedIMEvents missing: {summary}")
+
 for source in data.get("fileSources") or []:
     if not source.get("diff"):
         raise SystemExit(f"ordinary source diff was not retained: {source}")
     if not isinstance(source.get("symbols"), dict):
         raise SystemExit(f"ordinary source symbols missing: {source}")
+    if not isinstance(source.get("impactedIMEvents"), list):
+        raise SystemExit(f"ordinary source impactedIMEvents missing: {source}")
 for module in data.get("moduleSources") or []:
     for source in module.get("sourceFiles") or []:
         if not isinstance(source.get("symbols"), dict):
             raise SystemExit(f"module source symbols missing: {source}")
+        if not isinstance(source.get("impactedIMEvents"), list):
+            raise SystemExit(f"module source impactedIMEvents missing: {source}")
 
 forbidden = {"meta", "schemaVersion", "projectRoot", "span"}
 def walk(value):
@@ -276,6 +286,70 @@ print(
         endpoints=len(endpoints),
     )
 )
+PY
+  restore_active_change
+}
+
+run_real_im_case() {
+  local name="$1"
+  local project="$2"
+  local patch="$3"
+  shift 3
+  local out="${OUT_DIR}/${name}.impact.json"
+  local repeated_out="${OUT_DIR}/${name}.repeat.impact.json"
+
+  echo "analyzing ${name} real IM impact case"
+  if [[ "${ACTIVE_PROJECT}" != "${project}" || "${ACTIVE_PATCH}" != "${patch}" ]]; then
+    echo "real IM impact case must run against its active post-change source: ${name}" >&2
+    return 1
+  fi
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${out}"
+  "${ANALYZER_BIN}" impact --project "${project}" --diff "${patch}" --format json > "${repeated_out}"
+  cmp "${out}" "${repeated_out}"
+  rm -f "${repeated_out}"
+  python3 -m json.tool "${out}" > /dev/null
+  validate_raw_impact "${out}"
+  python3 - "$out" "$name" "$@" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+name = sys.argv[2]
+expected = set(sys.argv[3:])
+summary = data.get("summary") or {}
+actual = set(summary.get("impactedIMEvents") or [])
+if actual != expected:
+    raise SystemExit(
+        f"{name} IM event mismatch: missing={expected - actual}, unexpected={actual - expected}"
+    )
+if summary.get("impactedIMCount") != len(expected):
+    raise SystemExit(f"{name} invalid impactedIMCount: {summary}")
+if summary.get("impactedEndpointCount") != 0:
+    raise SystemExit(f"{name} unexpectedly impacted HTTP endpoints: {summary}")
+
+source_events = set()
+for source in data.get("fileSources") or []:
+    source_events.update(source.get("impactedIMEvents") or [])
+if source_events != expected:
+    raise SystemExit(f"{name} source IM event mismatch: {source_events}")
+
+terminals = []
+def walk(value):
+    if isinstance(value, dict):
+        if value.get("kind") == "im_event":
+            terminals.append(value.get("name"))
+        for item in value.values():
+            walk(item)
+    elif isinstance(value, list):
+        for item in value:
+            walk(item)
+
+walk(data.get("fileSources") or [])
+if set(terminals) != expected:
+    raise SystemExit(f"{name} IM terminal mismatch: {terminals}")
+print(f"real_im_case={name} impactedIMCount={len(expected)} events={sorted(expected)}")
 PY
   restore_active_change
 }
@@ -914,6 +988,46 @@ write_real_file_diff \
   "	return \"\" + string(m)" \
   "${OUT_DIR}/real-admin-typed-const.diff"
 run_real_impact_case "real-admin-typed-const" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-typed-const.diff" "POST" "/admin/api/bff-web/uc/merchant/setting/get"
+
+write_real_file_diff \
+  "${SC1_BFF}" \
+  "remote/pulsar/consumer/mc/inbox.go" \
+  '	Id             string  `json:"id"`' \
+  '	AnalyzerProbe  string  `json:"analyzerProbe,omitempty"`
+	Id             string  `json:"id"`' \
+  "${OUT_DIR}/real-client-im-message.diff"
+run_real_im_case \
+  "real-client-im-message" \
+  "${SC1_BFF}" \
+  "${OUT_DIR}/real-client-im-message.diff" \
+  "inbox_customer_msg" \
+  "inbox_msg"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "service/im/im.go" \
+  '	ID                             string         `json:"id"`' \
+  '	AnalyzerProbe                  string         `json:"analyzerProbe,omitempty"`
+	ID                             string         `json:"id"`' \
+  "${OUT_DIR}/real-admin-im-lock.diff"
+run_real_im_case \
+  "real-admin-im-lock" \
+  "${SC1_ADMIN_BFF}" \
+  "${OUT_DIR}/real-admin-im-lock.diff" \
+  "POST/LOCK_INVENTORY_UPDATE"
+
+write_real_file_diff \
+  "${SC1_ADMIN_BFF}" \
+  "remote/pulsar/consumer/activity_convert.go" \
+  '	WinLogId     int64   `json:"winLogId"`     // 获奖记录ID' \
+  '	AnalyzerProbe string  `json:"analyzerProbe,omitempty"`
+	WinLogId     int64   `json:"winLogId"`     // 获奖记录ID' \
+  "${OUT_DIR}/real-admin-im-voucher.diff"
+run_real_im_case \
+  "real-admin-im-voucher" \
+  "${SC1_ADMIN_BFF}" \
+  "${OUT_DIR}/real-admin-im-voucher.diff" \
+  "ACTIVITY/VOUCHER_WINNER"
 
 validate_known_real_endpoint_sets
 
