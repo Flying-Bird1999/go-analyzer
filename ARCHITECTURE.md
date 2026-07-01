@@ -995,7 +995,7 @@ changed module
 }
 ```
 
-`analyzeModuleChanges` 默认 `true`；`ignoredModuleChanges` 支持精确 module path 和 glob。被过滤的 go.mod module change 不生成 `moduleSources`，也不会退化成 `fileSources` 中的 go.mod 噪音；同一个 MR 的普通源码改动仍然进入 `fileSources`。这不是 route/annotation/middleware 语法配置，BFF 接入仍不要求业务方维护框架规则。
+`analyzeModuleChanges` 默认 `true`；`ignoredModuleChanges` 支持精确 module path 和 glob。配置文件使用严格字段校验，未知字段、拼错字段或旧的 route/annotation/middleware schema 会直接失败，避免业务方误以为配置生效。被过滤的 go.mod module change 不生成 `moduleSources`，也不会退化成 `fileSources` 中的 go.mod 噪音；同一个 MR 的普通源码改动仍然进入 `fileSources`。这不是 route/annotation/middleware 语法配置，BFF 接入仍不要求业务方维护框架规则。
 
 成功解析出 module change 后，`go.mod` 不再作为低置信度 `__non_symbol__` root 出现在 `fileSources`。内部 Store 仍分别保留 `ModuleChanges` / `ModuleUsages` 供传播使用，公开 facts JSON 不输出这些在 facts 命令中恒为空的数组，impact projection 将模块语义合并成面向消费方的 `moduleSources`。
 

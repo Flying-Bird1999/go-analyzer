@@ -84,11 +84,11 @@ func resolveValueTypeMethodCandidates(idx *astindex.Index, valueTypes []astindex
 	out := make([]astindex.ResolvedSymbol, 0, len(valueTypes))
 	for _, valueType := range valueTypes {
 		if valueType.TypeName == "" {
-			return nil, raw, false
+			continue
 		}
 		resolved, ok := idx.ResolveValueTypeMethod(valueType, selectors)
 		if !ok {
-			return nil, raw, false
+			continue
 		}
 		if seen[resolved.ID] {
 			continue

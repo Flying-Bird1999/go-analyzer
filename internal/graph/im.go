@@ -16,6 +16,12 @@ type IMGraph struct {
 	bySender map[facts.SymbolID][]facts.IMEventFact
 }
 
+var imRelationPriority = []facts.IMEventRelation{
+	facts.IMRelationPayload,
+	facts.IMRelationEventValue,
+	facts.IMRelationControl,
+}
+
 func NewIMGraph(store *facts.Store) *IMGraph {
 	graph := &IMGraph{bySender: map[facts.SymbolID][]facts.IMEventFact{}}
 	for _, event := range store.IMEvents {
@@ -59,11 +65,7 @@ func (g *IMGraph) EventsForPath(
 }
 
 func matchIMDependency(event facts.IMEventFact, path map[facts.SymbolID]bool) (facts.IMEventRelation, bool) {
-	for _, relation := range []facts.IMEventRelation{
-		facts.IMRelationPayload,
-		facts.IMRelationEventValue,
-		facts.IMRelationControl,
-	} {
+	for _, relation := range imRelationPriority {
 		for _, dependency := range event.Dependencies {
 			if dependency.Relation == relation && path[dependency.SymbolID] {
 				return relation, true
@@ -74,11 +76,7 @@ func matchIMDependency(event facts.IMEventFact, path map[facts.SymbolID]bool) (f
 }
 
 func matchIMEvidence(event facts.IMEventFact, change facts.ChangeFact) (facts.IMEventRelation, bool) {
-	for _, relation := range []facts.IMEventRelation{
-		facts.IMRelationPayload,
-		facts.IMRelationEventValue,
-		facts.IMRelationControl,
-	} {
+	for _, relation := range imRelationPriority {
 		for _, evidence := range event.Evidence {
 			if evidence.Relation != relation ||
 				filepath.ToSlash(evidence.Span.File) != filepath.ToSlash(change.File) {

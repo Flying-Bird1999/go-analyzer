@@ -88,6 +88,40 @@ var conversation = Conversation.String()
 	}
 }
 
+func TestEvaluatorResolvesOffsetIotaStringTable(t *testing.T) {
+	p, idx, file := loadEvaluatorProject(t, `package sample
+
+type EventCode int
+
+const (
+	LockInventory EventCode = iota + 1
+	Conversation
+)
+
+var eventNames = [...]string{
+	"",
+	"LOCK_INVENTORY_UPDATE",
+	"CONVERSATION_UPDATE",
+}
+
+func (e EventCode) String() string { return eventNames[e] }
+
+var lock = LockInventory.String()
+var conversation = Conversation.String()
+`)
+	eval := newEvaluator(p, idx)
+
+	for name, want := range map[string]string{
+		"lock":         "LOCK_INVENTORY_UPDATE",
+		"conversation": "CONVERSATION_UPDATE",
+	} {
+		got, ok := eval.eventValue(file, packageValueExpr(t, file, name))
+		if !ok || got != want {
+			t.Fatalf("eventValue(%s) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+}
+
 func TestEvaluatorResolvesStringMethodDeclaredBeforeTable(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 

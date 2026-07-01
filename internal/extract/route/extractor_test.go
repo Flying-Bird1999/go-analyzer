@@ -237,6 +237,46 @@ func (r *Router) Init(g *Group) {
 	}
 }
 
+func TestExtractRouteInsideSwitchAndSelect(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/route-branches\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) GET(path string, handler any) {}
+func CheckIn() {}
+func Poll() {}
+
+func Init(g *Group, mode string, done <-chan struct{}) {
+	switch mode {
+	case "check":
+		g.GET("/checkIn", CheckIn)
+	}
+	select {
+	case <-done:
+		g.GET("/poll", Poll)
+	default:
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 2 {
+		t.Fatalf("routes = %#v", store.Routes)
+	}
+	if findRoute(t, store, "/checkIn").HandlerRaw != "CheckIn" {
+		t.Fatalf("check route = %#v", store.Routes)
+	}
+	if findRoute(t, store, "/poll").HandlerRaw != "Poll" {
+		t.Fatalf("poll route = %#v", store.Routes)
+	}
+}
+
 func TestExtractRecursivelyFindsLegoHandlerInsideBusinessWrapper(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/lego-wrapper\n\ngo 1.24\n"), 0o644); err != nil {

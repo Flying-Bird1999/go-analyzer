@@ -324,6 +324,42 @@ func Handle() {
 	}
 }
 
+func TestExtractMethodReferenceFromResolvableMapCandidate(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/map-candidates\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller.go"), []byte(`package controller
+
+type handler interface{}
+
+type fetchHandler struct{}
+
+func (*fetchHandler) Fetch() {}
+
+type otherHandler struct{}
+
+var handlers = map[string]handler{
+	"fetch": new(fetchHandler),
+	"other": new(otherHandler),
+}
+
+func Handle() {
+	h := handlers["fetch"]
+	h.Fetch()
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	assertReference(t, store,
+		"func:example.com/map-candidates::Handle",
+		"method:example.com/map-candidates:fetchHandler:Fetch",
+		facts.ReferenceKindCall,
+	)
+}
+
 func TestMethodOnLocalWithoutProjectImportDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-method\n\ngo 1.24\n"), 0o644); err != nil {

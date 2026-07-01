@@ -328,19 +328,7 @@ func collectStmt(
 		if !ok {
 			return
 		}
-		nextIndex := cursor.next + 1
-		if binding, ok := middlewareCall(p, file, routeFunc, funcs, groups, call, nextIndex); ok {
-			cursor.Next()
-			store.Middleware = append(store.Middleware, binding)
-			return
-		}
-		nextIndex = cursor.next + 1
-		if route, ok := routeCall(p, file, routeFunc, store, funcs, groups, call, nextIndex); ok {
-			cursor.Next()
-			store.Routes = append(store.Routes, route)
-			return
-		}
-		recordRouteFunctionCallContext(file, routeFunc, funcs, groups, call, callContexts)
+		collectCall(p, file, routeFunc, store, groups, call, cursor, funcs, callContexts)
 	case *ast.BlockStmt:
 		for _, child := range s.List {
 			collectStmt(p, file, routeFunc, store, groups, child, cursor, funcs, stringConsts, callContexts, returnCallContexts)
@@ -358,7 +346,86 @@ func collectStmt(
 		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts, returnCallContexts)
 	case *ast.RangeStmt:
 		collectStmt(p, file, routeFunc, store, copyGroups(groups), s.Body, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+	case *ast.SwitchStmt:
+		switchGroups := copyGroups(groups)
+		if s.Init != nil {
+			collectStmt(p, file, routeFunc, store, switchGroups, s.Init, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+		}
+		for _, rawClause := range s.Body.List {
+			clause, ok := rawClause.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			clauseGroups := copyGroups(switchGroups)
+			for _, child := range clause.Body {
+				collectStmt(p, file, routeFunc, store, clauseGroups, child, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+			}
+		}
+	case *ast.TypeSwitchStmt:
+		switchGroups := copyGroups(groups)
+		if s.Init != nil {
+			collectStmt(p, file, routeFunc, store, switchGroups, s.Init, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+		}
+		if s.Assign != nil {
+			collectStmt(p, file, routeFunc, store, switchGroups, s.Assign, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+		}
+		for _, rawClause := range s.Body.List {
+			clause, ok := rawClause.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			clauseGroups := copyGroups(switchGroups)
+			for _, child := range clause.Body {
+				collectStmt(p, file, routeFunc, store, clauseGroups, child, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+			}
+		}
+	case *ast.SelectStmt:
+		for _, rawClause := range s.Body.List {
+			clause, ok := rawClause.(*ast.CommClause)
+			if !ok {
+				continue
+			}
+			clauseGroups := copyGroups(groups)
+			if clause.Comm != nil {
+				collectStmt(p, file, routeFunc, store, clauseGroups, clause.Comm, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+			}
+			for _, child := range clause.Body {
+				collectStmt(p, file, routeFunc, store, clauseGroups, child, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+			}
+		}
+	case *ast.LabeledStmt:
+		collectStmt(p, file, routeFunc, store, groups, s.Stmt, cursor, funcs, stringConsts, callContexts, returnCallContexts)
+	case *ast.DeferStmt:
+		collectCall(p, file, routeFunc, store, groups, s.Call, cursor, funcs, callContexts)
+	case *ast.GoStmt:
+		collectCall(p, file, routeFunc, store, groups, s.Call, cursor, funcs, callContexts)
 	}
+}
+
+func collectCall(
+	p *project.Project,
+	file *project.File,
+	routeFunc facts.SymbolID,
+	store *facts.Store,
+	groups map[string]groupContext,
+	call *ast.CallExpr,
+	cursor *routeEventCursor,
+	funcs map[facts.SymbolID]routeFunction,
+	callContexts *[]routeCallContext,
+) {
+	nextIndex := cursor.next + 1
+	if binding, ok := middlewareCall(p, file, routeFunc, funcs, groups, call, nextIndex); ok {
+		cursor.Next()
+		store.Middleware = append(store.Middleware, binding)
+		return
+	}
+	nextIndex = cursor.next + 1
+	if route, ok := routeCall(p, file, routeFunc, store, funcs, groups, call, nextIndex); ok {
+		cursor.Next()
+		store.Routes = append(store.Routes, route)
+		return
+	}
+	recordRouteFunctionCallContext(file, routeFunc, funcs, groups, call, callContexts)
 }
 
 func routeFuncSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {

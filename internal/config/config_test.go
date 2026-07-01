@@ -71,3 +71,31 @@ func TestLoadImpactConfigRejectsInvalidIgnoredModulePattern(t *testing.T) {
 		t.Fatal("expected invalid pattern to fail")
 	}
 }
+
+func TestLoadImpactConfigRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go-impact.config.json")
+	if err := os.WriteFile(path, []byte(`{
+  "route": {
+    "handlerWrappers": ["ControllerWithReqResp"]
+  }
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadImpactConfig("", path); err == nil {
+		t.Fatal("expected stale route config to fail")
+	}
+}
+
+func TestLoadImpactConfigRejectsMisspelledFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "go-impact.config.json")
+	if err := os.WriteFile(path, []byte(`{
+  "ignoredModuleChange": ["github.com/example/module"]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadImpactConfig("", path); err == nil {
+		t.Fatal("expected misspelled config field to fail")
+	}
+}

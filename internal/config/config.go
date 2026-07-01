@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,7 +35,9 @@ func LoadImpactConfig(projectRoot, explicitPath string) (Config, error) {
 		return Config{}, fmt.Errorf("read impact config: %w", err)
 	}
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse impact config: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {

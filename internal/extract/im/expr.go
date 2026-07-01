@@ -284,6 +284,35 @@ func (e *evaluator) integerValue(file *project.File, expr ast.Expr, iotaValue in
 		return out, err == nil
 	case *ast.ParenExpr:
 		return e.integerValue(file, value.X, iotaValue, seen)
+	case *ast.BinaryExpr:
+		left, ok := e.integerValue(file, value.X, iotaValue, seen)
+		if !ok {
+			return 0, false
+		}
+		right, ok := e.integerValue(file, value.Y, iotaValue, seen)
+		if !ok {
+			return 0, false
+		}
+		switch value.Op {
+		case token.ADD:
+			return left + right, true
+		case token.SUB:
+			return left - right, true
+		case token.MUL:
+			return left * right, true
+		case token.QUO:
+			if right == 0 {
+				return 0, false
+			}
+			return left / right, true
+		case token.REM:
+			if right == 0 {
+				return 0, false
+			}
+			return left % right, true
+		default:
+			return 0, false
+		}
 	default:
 		return 0, false
 	}

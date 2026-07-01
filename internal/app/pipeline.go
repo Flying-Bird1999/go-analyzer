@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
@@ -147,8 +148,13 @@ func buildFacts(projectPath string) (builtFacts, error) {
 			Span:     facts.SourceSpan{File: loadDiagnostic.File},
 		})
 	}
-	for _, symbol := range idx.Symbols {
-		store.AddSymbol(symbol)
+	symbolIDs := make([]facts.SymbolID, 0, len(idx.Symbols))
+	for id := range idx.Symbols {
+		symbolIDs = append(symbolIDs, id)
+	}
+	sort.Slice(symbolIDs, func(i, j int) bool { return symbolIDs[i] < symbolIDs[j] })
+	for _, id := range symbolIDs {
+		store.AddSymbol(idx.Symbols[id])
 	}
 	if err := annotation.Extract(p, idx, store); err != nil {
 		return builtFacts{}, err

@@ -98,7 +98,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 `impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。
 `--impact-config` 是可选配置；未传时会自动尝试读取项目内 `.analyzer/go-impact.config.json`，文件不存在则使用默认行为。
-当前配置只用于 module 版本变更过滤，不开放 route、annotation、middleware 等业务语法配置：
+当前配置只用于 module 版本变更过滤，不开放 route、annotation、middleware 等业务语法配置；配置文件会严格校验字段，未知字段或旧 schema 会直接失败：
 
 ```json
 {
