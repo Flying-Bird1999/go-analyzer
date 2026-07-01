@@ -86,3 +86,24 @@ func TestRenderJSONSortsReferencesAndLinks(t *testing.T) {
 		t.Fatalf("first link id = %q", got)
 	}
 }
+
+func TestRenderJSONIncludesSortedIMEvents(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.IMEvents = append(store.IMEvents,
+		facts.IMEventFact{ID: "im_event:z", Event: "z", Resolved: true},
+		facts.IMEventFact{ID: "im_event:a", Event: "a", Resolved: true},
+	)
+
+	out, err := RenderJSON(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc Document
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.IMEvents) != 2 || doc.IMEvents[0].Event != "a" || doc.IMEvents[1].Event != "z" {
+		t.Fatalf("im events = %#v", doc.IMEvents)
+	}
+}

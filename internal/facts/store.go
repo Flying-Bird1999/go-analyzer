@@ -27,6 +27,7 @@ type Store struct {
 	Modules         []ModuleDependencyFact  `json:"modules"`
 	ModuleChanges   []ModuleChangeFact      `json:"module_changes"`
 	ModuleUsages    []ModuleUsageFact       `json:"module_usages"`
+	IMEvents        []IMEventFact           `json:"im_events"`
 	Links           []LinkFact              `json:"links"`
 	Diagnostics     []DiagnosticFact        `json:"diagnostics"`
 }
@@ -48,6 +49,7 @@ func NewStore(root, modulePath string) *Store {
 		Modules:         []ModuleDependencyFact{},
 		ModuleChanges:   []ModuleChangeFact{},
 		ModuleUsages:    []ModuleUsageFact{},
+		IMEvents:        []IMEventFact{},
 		Links:           []LinkFact{},
 		Diagnostics:     []DiagnosticFact{},
 	}

@@ -183,6 +183,27 @@ func TestFactsSchemaOmitsDiffOnlyTransientFacts(t *testing.T) {
 	}
 }
 
+func TestFactsSchemaExposesIMEvents(t *testing.T) {
+	got, err := SchemaJSON("facts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	if _, ok := properties["im_events"]; !ok {
+		t.Fatalf("im_events property missing: %#v", properties)
+	}
+	defs := doc["$defs"].(map[string]any)
+	for _, name := range []string{"im_event", "im_event_dependency", "im_event_evidence"} {
+		if _, ok := defs[name]; !ok {
+			t.Fatalf("definition %q missing: %#v", name, defs)
+		}
+	}
+}
+
 func TestImpactSchemaDoesNotExposeSchemaVersion(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {

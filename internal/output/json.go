@@ -17,6 +17,7 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 		Middleware:  append([]facts.MiddlewareBindingFact(nil), store.Middleware...),
 		References:  append([]facts.ReferenceFact(nil), store.References...),
 		Modules:     append([]facts.ModuleDependencyFact(nil), store.Modules...),
+		IMEvents:    append([]facts.IMEventFact(nil), store.IMEvents...),
 		Links:       append([]facts.LinkFact(nil), store.Links...),
 		Diagnostics: append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
@@ -40,6 +41,9 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	})
 	sort.Slice(doc.Modules, func(i, j int) bool {
 		return doc.Modules[i].ID < doc.Modules[j].ID
+	})
+	sort.Slice(doc.IMEvents, func(i, j int) bool {
+		return doc.IMEvents[i].ID < doc.IMEvents[j].ID
 	})
 	sort.Slice(doc.Links, func(i, j int) bool {
 		return doc.Links[i].ID < doc.Links[j].ID
@@ -76,6 +80,9 @@ func ensureNonNilSlices(doc *Document) {
 	}
 	if doc.Modules == nil {
 		doc.Modules = []facts.ModuleDependencyFact{}
+	}
+	if doc.IMEvents == nil {
+		doc.IMEvents = []facts.IMEventFact{}
 	}
 	if doc.Links == nil {
 		doc.Links = []facts.LinkFact{}

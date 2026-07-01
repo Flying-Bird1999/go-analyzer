@@ -11,6 +11,7 @@ type Document struct {
 	Middleware  []facts.MiddlewareBindingFact `json:"middleware"`
 	References  []facts.ReferenceFact         `json:"references"`
 	Modules     []facts.ModuleDependencyFact  `json:"modules"`
+	IMEvents    []facts.IMEventFact           `json:"im_events"`
 	Links       []facts.LinkFact              `json:"links"`
 	Diagnostics []facts.DiagnosticFact        `json:"diagnostics"`
 }
