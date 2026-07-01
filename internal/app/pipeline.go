@@ -13,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/gomod"
+	imextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/im"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -159,6 +160,9 @@ func buildFacts(projectPath string) (builtFacts, error) {
 		return builtFacts{}, err
 	}
 	if err := reference.Extract(p, idx, store); err != nil {
+		return builtFacts{}, err
+	}
+	if err := imextract.Extract(p, idx, store); err != nil {
 		return builtFacts{}, err
 	}
 	return builtFacts{project: p, index: idx, store: store}, nil

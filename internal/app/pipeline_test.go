@@ -214,6 +214,77 @@ func TestRunImpactMapsStructChangeToEndpointTree(t *testing.T) {
 	assertEndpointSummary(t, doc, "POST", "/orders")
 }
 
+func TestRunImpactMapsStructChangeToEndpointAndExactIMEvent(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/im-impact\n\ngo 1.24\n")
+	writeTestFile(t, root, "model/model.go", `package model
+
+type Message struct {
+	ID string
+	Changed string `+"`json:\"changed\"`"+`
+}
+`)
+	writeTestFile(t, root, "consumer/consumer.go", `package consumer
+
+import (
+	"example.com/im-impact/model"
+	notifyim "gopkg.inshopline.com/sc1/commons/utils/bus/notify/im"
+)
+
+func Receive(msg *model.Message, dynamicEvent string) {
+	notifyim.SendIm(nil, "app", "group", "inbox_msg", msg)
+	notifyim.SendIm(nil, "app", "group", dynamicEvent, msg)
+}
+`)
+	writeTestFile(t, root, "controller/controller.go", `package controller
+
+import "example.com/im-impact/model"
+
+// @Post /messages
+func Create(req *model.Message) {}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import "example.com/im-impact/controller"
+
+type RouterGroup struct{}
+func (g *RouterGroup) POST(path string, handler any) {}
+func Init(g *RouterGroup) { g.POST("/messages", controller.Create) }
+`)
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	patch := []byte("diff --git a/model/model.go b/model/model.go\n" +
+		"--- a/model/model.go\n" +
+		"+++ b/model/model.go\n" +
+		"@@ -2,5 +2,5 @@ package model\n" +
+		" \n" +
+		" type Message struct {\n" +
+		" \tID string\n" +
+		"-\tChanged string `json:\"before\"`\n" +
+		"+\tChanged string `json:\"changed\"`\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	assertEndpointSummary(t, doc, "POST", "/messages")
+	if doc.Summary.ImpactedIMCount != 1 ||
+		len(doc.Summary.ImpactedIMEvents) != 1 ||
+		doc.Summary.ImpactedIMEvents[0] != "inbox_msg" {
+		t.Fatalf("IM summary = %#v", doc.Summary)
+	}
+	if !impactDocumentContainsKind(doc, "im_event_unresolved") {
+		t.Fatalf("unresolved IM event node missing: %s", got)
+	}
+}
+
 func TestRunImpactMapsGoModDiffToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", `module example.com/gomod-impact
@@ -1182,4 +1253,27 @@ func assertEndpointSummary(t *testing.T, doc output.ImpactDocument, method, path
 		}
 	}
 	t.Fatalf("endpoint %s %s not found: %#v", method, path, doc.Summary)
+}
+
+func impactDocumentContainsKind(doc output.ImpactDocument, kind string) bool {
+	var contains func(output.ImpactNode) bool
+	contains = func(node output.ImpactNode) bool {
+		if node.Kind == kind {
+			return true
+		}
+		for _, child := range node.Children {
+			if contains(child) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, source := range doc.FileSources {
+		for _, node := range source.Symbols {
+			if contains(node) {
+				return true
+			}
+		}
+	}
+	return false
 }
