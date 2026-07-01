@@ -6,7 +6,8 @@ type Options struct {
 }
 
 type ImpactOptions struct {
-	ProjectPath string
-	DiffPath    string
-	Format      string
+	ProjectPath      string
+	DiffPath         string
+	ImpactConfigPath string
+	Format           string
 }

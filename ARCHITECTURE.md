@@ -941,6 +941,19 @@ changed module
 - 普通文件逻辑变更进入 `fileSources`。
 - go.mod 语义模块变更进入 `moduleSources`，其中 `sourceFiles` 是实际命中的本仓 usage 入口。
 
+可选 impact 配置允许过滤明确不需要按版本升级传播的 module 变更，例如当前 BFF 中由外部流程保障兼容的 proto 包。过滤只作用于 `moduleSources`：
+
+```json
+{
+  "analyzeModuleChanges": true,
+  "ignoredModuleChanges": [
+    "gopkg.inshopline.com/sc1/app/modules/*/proto"
+  ]
+}
+```
+
+`analyzeModuleChanges` 默认 `true`；`ignoredModuleChanges` 支持精确 module path 和 glob。被过滤的 go.mod module change 不生成 `moduleSources`，也不会退化成 `fileSources` 中的 go.mod 噪音；同一个 MR 的普通源码改动仍然进入 `fileSources`。这不是 route/annotation/middleware 语法配置，BFF 接入仍不要求业务方维护框架规则。
+
 成功解析出 module change 后，`go.mod` 不再作为低置信度 `__non_symbol__` root 出现在 `fileSources`。内部 Store 仍分别保留 `ModuleChanges` / `ModuleUsages` 供传播使用，公开 facts JSON 不输出这些在 facts 命令中恒为空的数组，impact projection 将模块语义合并成面向消费方的 `moduleSources`。
 
 ## 9. Route 与 endpoint 语义
@@ -1027,8 +1040,11 @@ go run ./cmd/go-analyzer facts \
 go run ./cmd/go-analyzer impact \
   --project /absolute/path/to/project \
   --diff /absolute/path/to/change.diff \
+  --impact-config /absolute/path/to/go-impact.config.json \
   --format json
 ```
+
+`--impact-config` 可选；未传时会尝试读取项目内 `.analyzer/go-impact.config.json`，不存在则使用默认配置。
 
 顶层：
 

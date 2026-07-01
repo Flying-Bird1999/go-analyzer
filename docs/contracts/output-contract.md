@@ -120,6 +120,8 @@ Resolved dependency changes are separate from ordinary source changes:
   `fileSources`.
 - module usage files do not duplicate the go.mod diff.
 - a resolved go.mod change is not repeated as a file fallback source.
+- module changes ignored by optional impact config are omitted from
+  `moduleSources` and from the top-level `summary`.
 
 ### Recursive Impact Nodes
 

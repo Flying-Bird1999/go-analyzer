@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
@@ -51,6 +52,10 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if opts.Format != "json" {
 		return nil, fmt.Errorf("unsupported format %q", opts.Format)
 	}
+	cfg, err := config.LoadImpactConfig(opts.ProjectPath, opts.ImpactConfigPath)
+	if err != nil {
+		return nil, err
+	}
 	diffBytes, err := os.ReadFile(opts.DiffPath)
 	if err != nil {
 		return nil, fmt.Errorf("read diff: %w", err)
@@ -76,7 +81,9 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("diff go.mod modules: %w", err)
 	}
-	if hasGoModDiff(fileChanges) && len(moduleChanges) == 0 {
+	moduleDiffResolved := len(moduleChanges) > 0
+	moduleChanges = cfg.FilterModuleChanges(moduleChanges)
+	if hasGoModDiff(fileChanges) && !moduleDiffResolved {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:     diagnostics.CodeModuleDiffUnresolved,
 			Severity: diagnostics.SeverityWarning,
@@ -90,8 +97,9 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 	store.Changes = append(store.Changes, moduleUsageChanges(moduleUsages, store, "go_mod_diff")...)
 	result := impact.AnalyzeTrees(store)
 	doc := output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{
-		ModuleChanges: store.ModuleChanges,
-		ModuleUsages:  store.ModuleUsages,
+		ModuleChanges:           store.ModuleChanges,
+		ModuleUsages:            store.ModuleUsages,
+		SuppressGoModFileSource: moduleDiffResolved,
 	})
 	return output.RenderImpactTreeJSON(doc)
 }

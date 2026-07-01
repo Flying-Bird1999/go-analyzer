@@ -148,14 +148,47 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 }
 
 func parseDiffPaths(line string) (string, string) {
-	fields := strings.Fields(line)
-	if len(fields) < 4 {
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "diff --git "))
+	oldPath, rest, ok := nextDiffPathToken(rest)
+	if !ok {
 		return "", ""
 	}
-	return normalizeDiffPath(fields[2]), normalizeDiffPath(fields[3])
+	newPath, _, ok := nextDiffPathToken(rest)
+	if !ok {
+		return "", ""
+	}
+	return normalizeDiffPath(oldPath), normalizeDiffPath(newPath)
+}
+
+func nextDiffPathToken(input string) (string, string, bool) {
+	input = strings.TrimLeft(input, " \t")
+	if input == "" {
+		return "", "", false
+	}
+	if input[0] != '"' {
+		for i, r := range input {
+			if r == ' ' || r == '\t' {
+				return input[:i], input[i:], true
+			}
+		}
+		return input, "", true
+	}
+	escaped := false
+	for i := 1; i < len(input); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case input[i] == '\\':
+			escaped = true
+		case input[i] == '"':
+			return input[:i+1], input[i+1:], true
+		}
+	}
+	return "", "", false
 }
 
 func normalizeDiffPath(path string) string {
+	path = unquoteDiffPath(path)
 	switch {
 	case path == "/dev/null":
 		return ""
@@ -164,6 +197,17 @@ func normalizeDiffPath(path string) string {
 	default:
 		return path
 	}
+}
+
+func unquoteDiffPath(path string) string {
+	if len(path) < 2 || path[0] != '"' || path[len(path)-1] != '"' {
+		return path
+	}
+	unquoted, err := strconv.Unquote(path)
+	if err != nil {
+		return path
+	}
+	return unquoted
 }
 
 func parseHunkStart(line string) (int, int, error) {

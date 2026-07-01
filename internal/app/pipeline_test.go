@@ -291,6 +291,77 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
 }
 
+func TestRunImpactIgnoresConfiguredModuleChanges(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", `module example.com/gomod-ignore
+
+go 1.24
+
+require gopkg.inshopline.com/sc1/app/modules/medium/proto v1.0.1
+`)
+	writeTestFile(t, root, "controller/common.go", `package controller
+
+import _ "gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/channel"
+
+// @Get /api/checkIn
+func CheckIn() {}
+`)
+	writeTestFile(t, root, "router/router.go", `package router
+
+import common "example.com/gomod-ignore/controller"
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) GET(path string, handler any) {}
+
+func InitRouter(g *RouterGroup) {
+	g.GET("/checkIn", common.CheckIn)
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "gomod.diff")
+	patch := []byte("diff --git a/go.mod b/go.mod\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/go.mod\n" +
+		"+++ b/go.mod\n" +
+		"@@ -2,4 +2,4 @@ module example.com/gomod-ignore\n" +
+		" \n" +
+		" go 1.24\n" +
+		" \n" +
+		"-require gopkg.inshopline.com/sc1/app/modules/medium/proto v1.0.0\n" +
+		"+require gopkg.inshopline.com/sc1/app/modules/medium/proto v1.0.1\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "go-impact.config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "ignoredModuleChanges": [
+    "gopkg.inshopline.com/sc1/app/modules/*/proto"
+  ]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json", ImpactConfigPath: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.ModuleSources) != 0 {
+		t.Fatalf("module sources = %#v", doc.ModuleSources)
+	}
+	if len(doc.Summary.ImpactedEndpoints) != 0 {
+		t.Fatalf("summary = %#v", doc.Summary)
+	}
+	for _, source := range doc.FileSources {
+		if source.SourceFile == "go.mod" {
+			t.Fatalf("ignored go.mod module change leaked into fileSources: %#v", doc.FileSources)
+		}
+	}
+}
+
 func TestRunImpactOmitsUnresolvedGoModDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/gomod-unresolved\n\ngo 1.24\n")

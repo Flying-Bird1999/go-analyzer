@@ -66,8 +66,9 @@ type ModuleReplacement struct {
 }
 
 type ImpactDocumentOptions struct {
-	ModuleChanges []facts.ModuleChangeFact
-	ModuleUsages  []facts.ModuleUsageFact
+	ModuleChanges           []facts.ModuleChangeFact
+	ModuleUsages            []facts.ModuleUsageFact
+	SuppressGoModFileSource bool
 }
 
 type fileSourceBuilder struct {
@@ -88,7 +89,7 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 
 	for _, change := range fileChanges {
 		file := changedFile(change)
-		if file == "go.mod" && len(opts.ModuleChanges) > 0 {
+		if file == "go.mod" && (len(opts.ModuleChanges) > 0 || opts.SuppressGoModFileSource) {
 			continue
 		}
 		builder := ensureFileSource(files, file)
@@ -98,7 +99,7 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 	for _, root := range result.Roots {
 		if filepath.ToSlash(root.Change.File) == "go.mod" &&
 			root.Change.Source != "go_mod_diff" &&
-			len(opts.ModuleChanges) > 0 {
+			(len(opts.ModuleChanges) > 0 || opts.SuppressGoModFileSource) {
 			continue
 		}
 		builder := sourceBuilderForRoot(files, moduleSources, moduleUsages, root)

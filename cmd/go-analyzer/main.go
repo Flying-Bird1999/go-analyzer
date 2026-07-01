@@ -71,6 +71,7 @@ func runImpact(args []string) error {
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "absolute project path")
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
+	impactConfigPath := fs.String("impact-config", "", "optional absolute impact config path")
 	format := fs.String("format", "json", "output format")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -81,10 +82,16 @@ func runImpact(args []string) error {
 	if err := validateAbsPath("diff path", *diffPath); err != nil {
 		return err
 	}
+	if *impactConfigPath != "" {
+		if err := validateAbsPath("impact config path", *impactConfigPath); err != nil {
+			return err
+		}
+	}
 	out, err := app.RunImpact(app.ImpactOptions{
-		ProjectPath: *projectPath,
-		DiffPath:    *diffPath,
-		Format:      *format,
+		ProjectPath:      *projectPath,
+		DiffPath:         *diffPath,
+		ImpactConfigPath: *impactConfigPath,
+		Format:           *format,
 	})
 	if err != nil {
 		return err
@@ -128,7 +135,7 @@ Extract project facts as JSON.
 `
 	case "impact":
 		return `Usage:
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--format json]
+  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
 Analyze impacted endpoints from a unified diff.
 `
@@ -141,10 +148,10 @@ Print the JSON schema for a stable output contract.
 `
 	default:
 		return `Usage:
-  go-analyzer help [facts|impact|schema]
-  go-analyzer facts --project /absolute/path/to/project [--format json]
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--format json]
-  go-analyzer schema --type facts|impact
+ go-analyzer help [facts|impact|schema]
+ go-analyzer facts --project /absolute/path/to/project [--format json]
+ go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
+ go-analyzer schema --type facts|impact
 
 Commands:
   facts   Extract analyzer facts as JSON.

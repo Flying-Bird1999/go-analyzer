@@ -193,6 +193,29 @@ func TestParseUnifiedRetainsExpectedPostChangeLines(t *testing.T) {
 	}
 }
 
+func TestParseUnifiedUnquotesGitQuotedUTF8Paths(t *testing.T) {
+	input := []byte("diff --git \"a/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\" \"b/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\"\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- \"a/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\"\n" +
+		"+++ \"b/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\"\n" +
+		"@@ -1,2 +1,2 @@\n" +
+		" title\n" +
+		"-old\n" +
+		"+new\n")
+
+	changes, err := ParseUnified(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v", changes)
+	}
+	want := "docs/design/SC1-3352/SC1-3352-接口迁移设计.md"
+	if changes[0].OldPath != want || changes[0].NewPath != want {
+		t.Fatalf("paths = old %q new %q, want %q", changes[0].OldPath, changes[0].NewPath, want)
+	}
+}
+
 func TestParseUnifiedRejectsEmptyInput(t *testing.T) {
 	if _, err := ParseUnified(nil); err == nil {
 		t.Fatal("expected empty diff to be rejected")
