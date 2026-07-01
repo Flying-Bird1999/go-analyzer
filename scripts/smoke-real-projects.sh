@@ -702,6 +702,9 @@ expected = {
     "real-admin-typed-const": {
         ("POST", "/admin/api/bff-web/uc/merchant/setting/get"),
     },
+    "real-sc2-channel-count": {
+        ("GET", "/admin/api/bff-web/sc/channel/count/:type"),
+    },
 }
 
 for name, want in expected.items():
@@ -809,6 +812,7 @@ PY
 
 SC1_BFF="$(resolve_sibling "sl-sc1-bff-service" "sc1-bff-service")"
 SC1_ADMIN_BFF="$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
+SC2_ADMIN_BFF="$(resolve_sibling "sl-sc2-admin-bff" "sl-sc2-admin-bff")"
 
 (cd "${ROOT_DIR}" && \
   GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" \
@@ -817,6 +821,7 @@ SC1_ADMIN_BFF="$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
 
 run_project "sl-sc1-bff-service" "${SC1_BFF}"
 run_project "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
+run_project "sl-sc2-admin-bff" "${SC2_ADMIN_BFF}"
 run_impact_fixture
 run_impact_case "deleted-route" "POST" "/internal/orders"
 run_impact_case "gomod-impact" "GET" "/api/checkIn"
@@ -990,6 +995,22 @@ write_real_file_diff \
 run_real_impact_case "real-admin-typed-const" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-typed-const.diff" "POST" "/admin/api/bff-web/uc/merchant/setting/get"
 
 write_real_file_diff \
+  "${SC2_ADMIN_BFF}" \
+  "controller/channel/base/channel_config.go" \
+  "	channelType := c.Param(\"type\")" \
+  "	channelType := c.Param(\"type\") + \"\"" \
+  "${OUT_DIR}/real-sc2-channel-count.diff"
+run_real_impact_case "real-sc2-channel-count" "${SC2_ADMIN_BFF}" "${OUT_DIR}/real-sc2-channel-count.diff" "GET" "/admin/api/bff-web/sc/channel/count/:type"
+
+write_real_file_diff \
+  "${SC2_ADMIN_BFF}" \
+  "pkg/errors/errors.go" \
+  "	if msg != \"\" {" \
+  "	if msg != \"\" && len(msg) > 0 {" \
+  "${OUT_DIR}/real-sc2-generic-error-wrapmsg.diff"
+run_real_impact_case "real-sc2-generic-error-wrapmsg" "${SC2_ADMIN_BFF}" "${OUT_DIR}/real-sc2-generic-error-wrapmsg.diff" "GET" "/admin/api/bff-web/sc/mc/conversation/inbox"
+
+write_real_file_diff \
   "${SC1_BFF}" \
   "remote/pulsar/consumer/mc/inbox.go" \
   '	Id             string  `json:"id"`' \
@@ -1028,6 +1049,19 @@ run_real_im_case \
   "${SC1_ADMIN_BFF}" \
   "${OUT_DIR}/real-admin-im-voucher.diff" \
   "ACTIVITY/VOUCHER_WINNER"
+
+write_real_file_diff \
+  "${SC2_ADMIN_BFF}" \
+  "service/im/im_do.go" \
+  '	Payload              string                 `json:"payload"`' \
+  '	AnalyzerProbe        string                 `json:"analyzerProbe,omitempty"`
+	Payload              string                 `json:"payload"`' \
+  "${OUT_DIR}/real-sc2-im-message.diff"
+run_real_im_case \
+  "real-sc2-im-message" \
+  "${SC2_ADMIN_BFF}" \
+  "${OUT_DIR}/real-sc2-im-message.diff" \
+  "mc/message"
 
 validate_known_real_endpoint_sets
 

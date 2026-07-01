@@ -36,7 +36,7 @@ func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 }
 
 func routeStringConstants(p *project.Project) map[string]map[string]string {
-	out := map[string]map[string]string{}
+	exprs := map[string]map[string]ast.Expr{}
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
 			for _, decl := range file.AST.Decls {
@@ -44,30 +44,86 @@ func routeStringConstants(p *project.Project) map[string]map[string]string {
 				if !ok || genDecl.Tok != token.CONST {
 					continue
 				}
+				var previousValues []ast.Expr
 				for _, rawSpec := range genDecl.Specs {
 					spec, ok := rawSpec.(*ast.ValueSpec)
-					if !ok || len(spec.Values) == 0 {
+					if !ok {
 						continue
 					}
+					values := spec.Values
+					if len(values) == 0 {
+						values = previousValues
+					} else {
+						previousValues = values
+					}
 					for i, name := range spec.Names {
-						valueIndex := i
-						if valueIndex >= len(spec.Values) {
-							valueIndex = len(spec.Values) - 1
-						}
-						value, ok := stringLiteral(spec.Values[valueIndex])
-						if !ok {
+						if len(values) == 0 {
 							continue
 						}
-						if out[pkg.Path] == nil {
-							out[pkg.Path] = map[string]string{}
+						valueIndex := i
+						if valueIndex >= len(values) {
+							valueIndex = len(values) - 1
 						}
-						out[pkg.Path][name.Name] = value
+						if exprs[pkg.Path] == nil {
+							exprs[pkg.Path] = map[string]ast.Expr{}
+						}
+						exprs[pkg.Path][name.Name] = values[valueIndex]
 					}
 				}
 			}
 		}
 	}
+	out := map[string]map[string]string{}
+	for pkgPath, constants := range exprs {
+		for name, expr := range constants {
+			value, ok := routeConstString(pkgPath, exprs, expr, map[string]bool{})
+			if !ok {
+				continue
+			}
+			if out[pkgPath] == nil {
+				out[pkgPath] = map[string]string{}
+			}
+			out[pkgPath][name] = value
+		}
+	}
 	return out
+}
+
+func routeConstString(pkgPath string, exprs map[string]map[string]ast.Expr, expr ast.Expr, seen map[string]bool) (string, bool) {
+	if value, ok := stringLiteral(expr); ok {
+		return value, true
+	}
+	switch x := expr.(type) {
+	case *ast.Ident:
+		key := pkgPath + "\x00" + x.Name
+		if seen[key] {
+			return "", false
+		}
+		next, ok := exprs[pkgPath][x.Name]
+		if !ok {
+			return "", false
+		}
+		nextSeen := make(map[string]bool, len(seen)+1)
+		for item, present := range seen {
+			nextSeen[item] = present
+		}
+		nextSeen[key] = true
+		return routeConstString(pkgPath, exprs, next, nextSeen)
+	case *ast.BinaryExpr:
+		if x.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := routeConstString(pkgPath, exprs, x.X, seen)
+		right, rightOK := routeConstString(pkgPath, exprs, x.Y, seen)
+		if !leftOK || !rightOK {
+			return "", false
+		}
+		return left + right, true
+	case *ast.ParenExpr:
+		return routeConstString(pkgPath, exprs, x.X, seen)
+	default:
+		return "", false
+	}
 }
 
 type routeFunction struct {
@@ -273,13 +329,13 @@ func collectStmt(
 			return
 		}
 		nextIndex := cursor.next + 1
-		if binding, ok := middlewareCall(p, file, routeFunc, groups, call, nextIndex); ok {
+		if binding, ok := middlewareCall(p, file, routeFunc, funcs, groups, call, nextIndex); ok {
 			cursor.Next()
 			store.Middleware = append(store.Middleware, binding)
 			return
 		}
 		nextIndex = cursor.next + 1
-		if route, ok := routeCall(p, file, routeFunc, store, groups, call, nextIndex); ok {
+		if route, ok := routeCall(p, file, routeFunc, store, funcs, groups, call, nextIndex); ok {
 			cursor.Next()
 			store.Routes = append(store.Routes, route)
 			return
@@ -335,7 +391,7 @@ func recordRouteFunctionCallContext(file *project.File, routeFunc facts.SymbolID
 		if i >= len(paramNames) {
 			continue
 		}
-		group, _, ok := groupForExpr(groups, arg)
+		group, _, ok := groupForExpr(file, funcs, groups, arg)
 		if !ok {
 			continue
 		}
@@ -673,21 +729,34 @@ func routeStringArg(file *project.File, stringConsts map[string]map[string]strin
 	if value, ok := stringLiteral(expr); ok {
 		return value, true
 	}
-	ident, ok := expr.(*ast.Ident)
-	if !ok {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		value, ok := stringConsts[file.Package.Path][x.Name]
+		return value, ok
+	case *ast.BinaryExpr:
+		if x.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := routeStringArg(file, stringConsts, x.X)
+		right, rightOK := routeStringArg(file, stringConsts, x.Y)
+		if !leftOK || !rightOK {
+			return "", false
+		}
+		return left + right, true
+	case *ast.ParenExpr:
+		return routeStringArg(file, stringConsts, x.X)
+	default:
 		return "", false
 	}
-	value, ok := stringConsts[file.Package.Path][ident.Name]
-	return value, ok
 }
 
-func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
+func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
 	parsed, ok := ParseRouteCall(call)
 	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
 	selector := call.Fun.(*ast.SelectorExpr)
-	group, groupWrappers, ok := groupForExpr(groups, selector.X)
+	group, groupWrappers, ok := groupForExpr(file, funcs, groups, selector.X)
 	if !ok {
 		return facts.RouteRegistrationFact{}, false
 	}
@@ -744,12 +813,12 @@ func isUnresolvedHandlerExpression(expr ast.Expr) bool {
 	}
 }
 
-func middlewareCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.MiddlewareBindingFact, bool) {
+func middlewareCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.MiddlewareBindingFact, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || selector.Sel.Name != "Use" || len(call.Args) == 0 {
 		return facts.MiddlewareBindingFact{}, false
 	}
-	group, _, ok := groupForExpr(groups, selector.X)
+	group, _, ok := groupForExpr(file, funcs, groups, selector.X)
 	if !ok {
 		return facts.MiddlewareBindingFact{}, false
 	}

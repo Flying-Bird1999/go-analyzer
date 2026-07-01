@@ -105,9 +105,21 @@ func TestHelpCommandListsCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"facts", "impact", "schema", "absolute paths"} {
+	for _, want := range []string{"facts", "impact", "schema", "HTTP endpoints", "IM events", "absolute paths"} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Fatalf("help output missing %q: %s", want, out)
+		}
+	}
+}
+
+func TestImpactHelpMentionsIMEvents(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"help", "impact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"HTTP endpoints", "IM events"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("impact help output missing %q: %s", want, out)
 		}
 	}
 }

@@ -56,14 +56,15 @@ MVP 暂不覆盖：
 
 ## 目标项目
 
-第一批分析对象是前端团队维护的两个 Go BFF：
+第一批分析对象是前端团队维护的三个 Go BFF：
 
 - `sl-sc1-admin-bff`
 - `sl-sc1-bff-service`
+- `sl-sc2-admin-bff`
 
-smoke 脚本同时兼容历史目录名 `sc1-admin-bff` / `sc1-bff-service`。
+smoke 脚本同时兼容 SC1 历史目录名 `sc1-admin-bff` / `sc1-bff-service`。
 
-两个项目都大致遵循：
+这些项目都大致遵循：
 
 ```text
 router -> controller -> service -> remote

@@ -15,6 +15,8 @@ type scopedValueType struct {
 }
 
 type scopedValueTypes struct {
+	// Parser-only scoped inference intentionally uses ast.Object when the parser provides it.
+	//nolint:staticcheck
 	byObject map[*ast.Object][]astindex.ValueType
 	byName   map[string][]scopedValueType
 }
@@ -25,6 +27,7 @@ func (s *scopedValueTypes) addAll(name *ast.Ident, declPos token.Pos, valueTypes
 	}
 	if name.Obj != nil {
 		if s.byObject == nil {
+			//nolint:staticcheck // Keep identity consistent with the byObject field.
 			s.byObject = map[*ast.Object][]astindex.ValueType{}
 		}
 		s.byObject[name.Obj] = valueTypes

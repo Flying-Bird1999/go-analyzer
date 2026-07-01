@@ -1281,7 +1281,7 @@ go run /absolute/path/to/go-analyzer/cmd/go-analyzer impact \
 - 不要用未应用到 working tree 的 head diff 配合旧源码，否则行号和 AST 不匹配。
 - 如果分析 deletion-only 变更，保留标准 hunk context 有助于 anchor 与 group 恢复。
 
-### 14.5 两个真实 BFF smoke
+### 14.5 三个真实 BFF smoke
 
 项目集合目录应为：
 
@@ -1289,7 +1289,8 @@ go run /absolute/path/to/go-analyzer/cmd/go-analyzer impact \
 workspace/
 ├── go-analyzer/
 ├── sl-sc1-bff-service/   # legacy 名 sc1-bff-service 也支持
-└── sl-sc1-admin-bff/     # legacy 名 sc1-admin-bff 也支持
+├── sl-sc1-admin-bff/     # legacy 名 sc1-admin-bff 也支持
+└── sl-sc2-admin-bff/
 ```
 
 执行：
@@ -1300,12 +1301,12 @@ bash scripts/smoke-real-projects.sh
 
 脚本会：
 
-1. 对两个真实项目运行 facts。
+1. 对三个真实项目运行 facts。
 2. 校验 JSON。
 3. 输出 symbol/annotation/route/route_link/diagnostic 数量，并校验每条 route 都有 handler 和 resolved path。
 4. 运行 type-impact、deleted-route、gomod-impact、middleware-selector。
 5. 验证每个专项 fixture 的 endpoint。
-6. 临时真实改动两个 BFF 的多个业务文件，通过目标项目 `git diff` 生成 patch。
+6. 临时真实改动三个 BFF 的多个业务文件，通过目标项目 `git diff` 生成 patch。
 7. 保持业务源码处于 post-change 状态连续分析两次，字节级比较 JSON，并精确校验 endpoint / IM event 集合后恢复源码。
 
 输出写入 `.analyzer-smoke/`，该目录被 git ignore。
@@ -1349,7 +1350,7 @@ PY
 | impact          | `internal/impact`                      | tree、cycle、route helper、deleted route、IM terminal |
 | pipeline E2E    | `internal/app/pipeline_test.go`        | diff -> endpoint / IM event 完整闭环 |
 | contract/golden | `internal/output`, `testdata/golden` | JSON shape 和稳定排序              |
-| real smoke      | `scripts/smoke-real-projects.sh`       | 两个真实 BFF + 四个 impact fixture + 21 组真实文件 diff |
+| real smoke      | `scripts/smoke-real-projects.sh`       | 三个真实 BFF + 四个 impact fixture + 24 组真实文件 diff |
 
 2026-07-01 验证快照：
 
@@ -1357,12 +1358,13 @@ PY
 | ----------------------- | ---------------------------------------------------------- |
 | `sl-sc1-bff-service`  | symbols=781, annotations=32, routes=32, diagnostics=0      |
 | `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=559, diagnostics=5   |
+| `sl-sc2-admin-bff`    | symbols=1408, annotations=98, routes=136, diagnostics=0    |
 | `type-impact`         | 1 endpoint (`POST /orders`)                              |
 | `deleted-route`       | 2 endpoints（删除 route `POST /internal/orders` + deletion anchor 命中的 `GET /health`） |
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
 | `middleware-selector` | 1 endpoint (`GET /orders`)                               |
 
-真实 BFF 文件 diff smoke 当前覆盖 21 个 case：
+真实 BFF 文件 diff smoke 当前覆盖 24 个 case：
 
 | Case | Endpoint |
 | ---- | -------- |
@@ -1384,14 +1386,12 @@ PY
 | `real-client-interface-dispatch` | `oaClient.GetMerchant` 精确命中 3 个 GET endpoint |
 | `real-admin-new-builtin` | `AuthRedis.GetRedirectData` -> `GET /admin/api/bff-web/auth/oauth/callback` |
 | `real-admin-typed-const` | `MerchantSettingCode.String` -> `POST /admin/api/bff-web/uc/merchant/setting/get` |
+| `real-sc2-channel-count` | SC2 常量拼接 route group + 括号包裹 handler -> `GET /admin/api/bff-web/sc/channel/count/:type` |
+| `real-sc2-generic-error-wrapmsg` | `NewGenericError() IGenericError` 收窄到 `*GenericError.WrapMsg`，真实传播到 109 个 endpoint |
 | `real-client-im-message` | `GetMessageItem` -> `inbox_msg`、`inbox_customer_msg`，不误报 `inbox_conv` |
 | `real-admin-im-lock` | `LockInventoryUpdateMsg` -> `POST/LOCK_INVENTORY_UPDATE` |
 | `real-admin-im-voucher` | 本地 converter 多返回值 payload -> `ACTIVITY/VOUCHER_WINNER` |
-
-此外手动使用同样的“先修改源码、再生成 diff、保持 post-change 快照分析”流程验证
-`sl-sc2-admin-bff` 的泛型 topic/msg wrapper：`McMessageRespImDO` 只命中
-`mc/message`。对应 JSON 保留在本地 `.analyzer-smoke/sc2-admin-im-message.impact.json`，
-但该绝对路径项目不纳入可移植 smoke 脚本。
+| `real-sc2-im-message` | SC2 泛型 topic/msg wrapper -> `mc/message` |
 
 ## 16. 当前能力边界
 
@@ -1404,8 +1404,10 @@ PY
 - controller HTTP annotation。
 - route/group/middleware/wrapper。
 - route handler 与 common package-var method。
+- 常量拼接 route group 前缀和括号包裹 handler expression。
 - package var、constructor、imported explicit type、struct field 的轻量 receiver 推断。
 - `new(T)`、显式 typed const、当前方法 receiver、显式类型局部变量、constructor 返回值局部变量的方法调用解析。
+- 声明返回项目内 interface、但函数体所有 return 都高置信度指向同一个项目 concrete type 的 constructor 返回值收窄。
 - loader 已加载源码中赋值集合唯一且全部可解析、且声明类型为项目内 interface 的 package-level dispatch。
 - 声明值类型为项目内 interface、且所有 value 都可解析为具体项目类型的 package-level static map dispatch。
 - 包级 var/const 初始化表达式中的 call/value/type 依赖。

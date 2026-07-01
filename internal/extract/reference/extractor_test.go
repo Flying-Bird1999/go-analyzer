@@ -609,6 +609,59 @@ func Handle() {
 	}
 }
 
+func TestExtractPackageInterfaceConstructorUsesConcreteReturnType(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/interface-constructor\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "errors"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "errors", "errors.go"), []byte(`package errors
+
+type Generic interface {
+	WrapMsg(msg string) Generic
+}
+
+type Concrete struct{}
+
+func (*Concrete) WrapMsg(msg string) Generic { return nil }
+
+func NewGenericError() Generic {
+	return &Concrete{}
+}
+
+var IllegalArgumentType = NewGenericError()
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "controller"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "controller", "controller.go"), []byte(`package controller
+
+import bizError "example.com/interface-constructor/errors"
+
+func Handle() {
+	bizError.IllegalArgumentType.WrapMsg("invalid")
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	assertReference(t, store,
+		"func:example.com/interface-constructor/controller::Handle",
+		"method:example.com/interface-constructor/errors:Concrete:WrapMsg",
+		facts.ReferenceKindCall,
+	)
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "symbol_reference_unresolved" {
+			t.Fatalf("constructor interface call should resolve without unresolved diagnostic: %#v", diagnostic)
+		}
+	}
+}
+
 func TestExtractReceiverMethodCallReference(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/receiver-call\n\ngo 1.24\n"), 0o644); err != nil {

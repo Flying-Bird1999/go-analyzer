@@ -4,9 +4,10 @@ import (
 	"go/ast"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-func groupForExpr(groups map[string]groupContext, expr ast.Expr) (groupContext, []facts.WrapperFact, bool) {
+func groupForExpr(file *project.File, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, expr ast.Expr) (groupContext, []facts.WrapperFact, bool) {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		group, ok := groups[x.Name]
@@ -19,7 +20,12 @@ func groupForExpr(groups map[string]groupContext, expr ast.Expr) (groupContext, 
 		if !isRouteGroupWrapper(name) {
 			return groupContext{}, nil, false
 		}
-		group, wrappers, ok := groupForExpr(groups, x.Args[0])
+		if callee, resolved := resolveRouteFunctionCall(file, x.Fun); resolved {
+			if target, projectFunction := funcs[callee]; projectFunction && !target.returnsGroup {
+				return groupContext{}, nil, false
+			}
+		}
+		group, wrappers, ok := groupForExpr(file, funcs, groups, x.Args[0])
 		if !ok {
 			return groupContext{}, nil, false
 		}

@@ -305,6 +305,38 @@ func Init(g *Group) {
 	}
 }
 
+func TestExtractRouteGroupPathFromConstConcatenation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/const-route-path\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+const BasePath = "/admin/api/bff-web/sc"
+const baseChannelPath = BasePath + "/channel"
+
+type Group struct{}
+
+func (g *Group) Group(path string) *Group { return g }
+func (g *Group) GET(path string, handler any) {}
+
+func Handler() {}
+
+func Init(g *Group) {
+	countGroup := g.Group(baseChannelPath + "/count")
+	countGroup.GET("/:type", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/:type")
+	if route.ResolvedPath != "/admin/api/bff-web/sc/channel/count/:type" {
+		t.Fatalf("resolved path = %q", route.ResolvedPath)
+	}
+}
+
 func TestUniqueRouteCallPrefixesDoesNotSeedIntermediateRouteFunctions(t *testing.T) {
 	contexts := []routeCallContext{
 		{
@@ -417,6 +449,64 @@ func Init(g *RouterGroup) {
 	store := extractFixture(t, root)
 	if len(store.Routes) != 0 {
 		t.Fatalf("non-group AddCount result was parsed as a route group: %#v", store.Routes)
+	}
+}
+
+func TestExtractRejectsInlineProjectAddFunctionReturningNonGroup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/non-group-inline-helper\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type RouterGroup struct{}
+type Counter struct{}
+
+func (Counter) GET(path string, handler any) {}
+
+func Handler() {}
+
+func AddCount(g *RouterGroup) Counter {
+	return Counter{}
+}
+
+func Init(g *RouterGroup) {
+	AddCount(g).GET("/not-a-route", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 0 {
+		t.Fatalf("inline non-group AddCount result was parsed as a route group: %#v", store.Routes)
+	}
+}
+
+func TestExtractUnwrapsParenthesizedHandler(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/parenthesized-handler\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) GET(path string, handler any) {}
+func ControllerWithResp(handler any) any { return handler }
+func Handler() {}
+
+func Init(g *Group) {
+	g.GET("/orders", ControllerWithResp((Handler)))
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/orders")
+	if route.HandlerRaw != "Handler" {
+		t.Fatalf("handler raw = %q", route.HandlerRaw)
 	}
 }
 

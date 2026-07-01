@@ -243,9 +243,52 @@ func (idx *Index) indexCallableReturnType(file *project.File, id facts.SymbolID,
 		return
 	}
 	valueType := valueTypeFromTypeExpr(file, decl.Type.Results.List[0].Type)
+	if valueType.TypeName != "" && idx.isInterfaceType(valueType) {
+		if concrete, ok := idx.singleConcreteReturnType(file, decl); ok {
+			valueType = concrete
+		}
+	}
 	if valueType.TypeName != "" {
 		idx.CallableReturnTypes[id] = valueType
 	}
+}
+
+func (idx *Index) singleConcreteReturnType(file *project.File, decl *ast.FuncDecl) (ValueType, bool) {
+	if decl.Body == nil {
+		return ValueType{}, false
+	}
+	var out ValueType
+	found := false
+	unknown := false
+	ast.Inspect(decl.Body, func(node ast.Node) bool {
+		switch x := node.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			if len(x.Results) == 0 {
+				unknown = true
+				return false
+			}
+			valueType := idx.concreteValueTypeFromExpr(file, x.Results[0])
+			if valueType.TypeName == "" || valueType.Confidence != facts.ConfidenceHigh || idx.isInterfaceType(valueType) {
+				unknown = true
+				return false
+			}
+			if found && valueTypeKey(out) != valueTypeKey(valueType) {
+				unknown = true
+				return false
+			}
+			out = valueType
+			found = true
+			return false
+		default:
+			return !unknown
+		}
+	})
+	if unknown || !found {
+		return ValueType{}, false
+	}
+	return out, true
 }
 
 func valueKind(tok token.Token) string {
@@ -508,6 +551,7 @@ func (idx *Index) ResolveMapIndexValueTypes(file *project.File, expr *ast.IndexE
 	return append([]ValueType(nil), valueTypes...), true
 }
 
+//nolint:staticcheck // Parser-only indexing intentionally uses ast.Object for local package value identity.
 func (idx *Index) PackageValueSymbol(object *ast.Object) (facts.SymbolID, bool) {
 	if object == nil {
 		return "", false

@@ -15,6 +15,9 @@ func unwrapHandlerDepth(expr ast.Expr, depth int) (string, []facts.WrapperFact) 
 	if depth > 16 {
 		return exprString(expr), nil
 	}
+	if paren, ok := expr.(*ast.ParenExpr); ok {
+		return unwrapHandlerDepth(paren.X, depth)
+	}
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
 		return exprString(expr), nil
@@ -52,6 +55,8 @@ func isHandlerLikeExpr(expr ast.Expr) bool {
 		return true
 	case *ast.CallExpr:
 		return len(x.Args) > 0
+	case *ast.ParenExpr:
+		return isHandlerLikeExpr(x.X)
 	default:
 		return false
 	}

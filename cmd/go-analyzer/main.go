@@ -137,7 +137,7 @@ Extract project facts as JSON.
 		return `Usage:
   go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
-Analyze impacted endpoints from a unified diff.
+Analyze impacted HTTP endpoints and IM events from a unified diff.
 `
 	case "schema":
 		return `Usage:
@@ -155,7 +155,7 @@ Print the JSON schema for a stable output contract.
 
 Commands:
   facts   Extract analyzer facts as JSON.
-  impact  Analyze impacted HTTP endpoints from a unified diff.
+  impact  Analyze impacted HTTP endpoints and IM events from a unified diff.
   schema  Print JSON schemas for output contracts.
 
 CLI path flags require absolute paths.

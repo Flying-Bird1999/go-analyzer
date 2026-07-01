@@ -1,9 +1,10 @@
 # Real Project Validation
 
-This document tracks smoke validation for the first two target BFF projects:
+This document tracks smoke validation for the first three target BFF projects:
 
 - `sl-sc1-bff-service`
 - `sl-sc1-admin-bff`
+- `sl-sc2-admin-bff`
 
 Run:
 
@@ -44,6 +45,7 @@ Local smoke run on 2026-07-01:
 | --- | ---: | ---: | ---: | ---: |
 | `sl-sc1-bff-service` | 781 | 32 | 32 | 0 |
 | `sl-sc1-admin-bff` | 5137 | 463 | 559 | 5 |
+| `sl-sc2-admin-bff` | 1408 | 98 | 136 | 0 |
 
 All five remaining diagnostics are `symbol_reference_unresolved` for
 `sc_redisx.SentinelClient.Eval/Scan`. Production `.go` files assign both
@@ -98,7 +100,7 @@ fixture conservatively includes the surviving route at the deletion anchor.
 
 ## Real BFF Impact Cases
 
-The smoke script validates twenty-one real-file diff cases across the two target BFF
+The smoke script validates twenty-four real-file diff cases across the three target BFF
 projects:
 
 | Case | Project file | Expected impact |
@@ -121,9 +123,12 @@ projects:
 | `real-client-interface-dispatch` | `sl-sc1-bff-service/remote/oa/oa.go` | 3 exact endpoints through both direct and service callers of `oaClient.GetMerchant` |
 | `real-admin-new-builtin` | `sl-sc1-admin-bff/pkg/auth/cache/auth_redis.go` | `GET /admin/api/bff-web/auth/oauth/callback` |
 | `real-admin-typed-const` | `sl-sc1-admin-bff/service/uc/merchant_setting_code.go` | `POST /admin/api/bff-web/uc/merchant/setting/get` |
+| `real-sc2-channel-count` | `sl-sc2-admin-bff/controller/channel/base/channel_config.go` | `GET /admin/api/bff-web/sc/channel/count/:type` through const-concatenated route groups and a parenthesized handler |
+| `real-sc2-generic-error-wrapmsg` | `sl-sc2-admin-bff/pkg/errors/errors.go` | 109 endpoints through `NewGenericError() IGenericError` narrowed to `*GenericError`, including `GET /admin/api/bff-web/sc/mc/conversation/inbox` |
 | `real-client-im-message` | `sl-sc1-bff-service/remote/pulsar/consumer/mc/inbox.go` | `inbox_msg` and `inbox_customer_msg`, excluding `inbox_conv` |
 | `real-admin-im-lock` | `sl-sc1-admin-bff/service/im/im.go` | `POST/LOCK_INVENTORY_UPDATE` |
 | `real-admin-im-voucher` | `sl-sc1-admin-bff/remote/pulsar/consumer/activity_convert.go` | `ACTIVITY/VOUCHER_WINNER` through a local multi-return converter |
+| `real-sc2-im-message` | `sl-sc2-admin-bff/service/im/im_do.go` | `mc/message` through the generic topic/msg wrapper |
 
 Controller handlers registered under both current and compatibility routes
 produce both endpoints; the exact sets are checked. The route-helper case
@@ -145,15 +150,17 @@ go.mod and logic case completes with 11 endpoints: `CheckIn` remains under
 `moduleSources`. The module source tree explicitly contains
 `ParseStringToFloat64 -> ConvertPrice -> endpoint`.
 
-The three checked-in IM smoke cases cover exact common-SDK argument matching,
+The checked-in IM smoke cases cover exact common-SDK argument matching,
 legacy `iota + String()`/closure wrappers, local converter return values, and
 same-sender payload separation. Each case runs twice against the post-change
 snapshot and compares output byte-for-byte.
 
-`sl-sc2-admin-bff` was additionally validated manually because it is outside the
-portable sibling-project layout. Changing `McMessageRespImDO` reaches only
-`mc/message` through its generic topic/msg wrapper. The local report is
-`.analyzer-smoke/sc2-admin-im-message.impact.json`.
+`sl-sc2-admin-bff` is now part of the portable sibling-project smoke. Its route
+case proves constant-concatenated group prefixes and parenthesized handlers are
+linked to the same endpoint. Its error case proves a project constructor that
+declares an interface return but always returns one concrete project type can
+propagate method changes without guessing. Its IM case proves the generic
+topic/msg wrapper reaches only `mc/message`.
 
 The multi-module case generates six real diff hunks in four files. It verifies
 independent module trees for `github.com/shopspring/decimal`,
