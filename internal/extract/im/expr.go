@@ -214,12 +214,7 @@ func (e *evaluator) eventValueSeen(file *project.File, expr ast.Expr, seen map[f
 }
 
 func (e *evaluator) enumStringValue(file *project.File, expr ast.Expr) (string, bool) {
-	ident, ok := expr.(*ast.Ident)
-	if !ok {
-		return "", false
-	}
-	id := astindex.ValueSymbolID("const", file.Package.Path, ident.Name)
-	decl, ok := e.consts[id]
+	id, decl, ok := e.enumConst(file, expr)
 	if !ok || decl.typeName == "" {
 		return "", false
 	}
@@ -236,6 +231,29 @@ func (e *evaluator) enumStringValue(file *project.File, expr ast.Expr) (string, 
 		return "", false
 	}
 	return table[index], true
+}
+
+func (e *evaluator) enumConst(file *project.File, expr ast.Expr) (facts.SymbolID, constDecl, bool) {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		id := astindex.ValueSymbolID("const", file.Package.Path, value.Name)
+		decl, ok := e.consts[id]
+		return id, decl, ok
+	case *ast.SelectorExpr:
+		pkg, ok := value.X.(*ast.Ident)
+		if !ok {
+			return "", constDecl{}, false
+		}
+		importPath := file.Imports[pkg.Name]
+		if importPath == "" {
+			return "", constDecl{}, false
+		}
+		id := astindex.ValueSymbolID("const", importPath, value.Sel.Name)
+		decl, ok := e.consts[id]
+		return id, decl, ok
+	default:
+		return "", constDecl{}, false
+	}
 }
 
 func (e *evaluator) integerValue(file *project.File, expr ast.Expr, iotaValue int64, seen map[facts.SymbolID]bool) (int64, bool) {
