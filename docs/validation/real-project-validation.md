@@ -51,9 +51,9 @@ The analyzer now honors the default Go build context when loading files, so
 files excluded by build constraints such as `//go:build ignore` and
 `//go:build race_test` are not included in these symbol counts.
 
-All five remaining diagnostics are `symbol_reference_unresolved` for
+All five remaining diagnostics are `symbol_reference_ambiguous_interface` for
 `sc_redisx.SentinelClient.Eval/Scan`. Production `.go` files assign both
-`RedisClusterClient` and `RedisClientMock`, so strict interface dispatch rejects
+`RedisClusterClient` and `RedisClientMock`, so strict interface dispatch reports
 the ambiguous binding instead of guessing. Unique package-level interface
 bindings, static map interface dispatch where every map value is known,
 `new(T)` package/local values, and methods on typed constants now resolve.

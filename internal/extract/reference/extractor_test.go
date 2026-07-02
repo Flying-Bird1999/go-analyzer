@@ -112,7 +112,7 @@ func Init() {
 			t.Fatalf("unknown interface binding emitted concrete call edge: %#v", ref)
 		}
 	}
-	assertReferenceDiagnostic(t, store, "symbol_reference_unresolved")
+	assertReferenceDiagnostic(t, store, "symbol_reference_unknown_interface_binding")
 }
 
 func TestExtractStrictInterfaceRejectsCrossPackageConcreteAssignment(t *testing.T) {
@@ -147,7 +147,7 @@ func Configure() {
 			t.Fatalf("cross-package ambiguous interface binding emitted call edge: %#v", ref)
 		}
 	}
-	assertReferenceDiagnostic(t, store, "symbol_reference_unresolved")
+	assertReferenceDiagnostic(t, store, "symbol_reference_ambiguous_interface")
 }
 
 func writeStrictInterfaceFixture(t *testing.T, assignmentSource string) string {

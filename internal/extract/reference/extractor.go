@@ -140,12 +140,12 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 	resolved, raw, ok := resolveCallCandidates(file, idx, scopedTypes, call)
 	if !ok || len(resolved) == 0 {
 		callee := unwrapGenericCallee(call.Fun)
-		if !ok && isUnresolvedProjectCall(file, idx, scopedTypes, callee) {
+		if code, message, diagnosticOK := unresolvedProjectCallDiagnostic(file, idx, scopedTypes, callee); !ok && diagnosticOK {
 			span := spanFor(p, file, callee.Pos(), callee.End())
 			diagnostics.AddFact(store, diagnostics.Diagnostic{
-				Code:           diagnostics.CodeSymbolReferenceUnresolved,
+				Code:           code,
 				Severity:       diagnostics.SeverityWarning,
-				Message:        fmt.Sprintf("project symbol reference %q could not be resolved", typeExprString(file, callee)),
+				Message:        message,
 				Span:           span,
 				RelatedFactIDs: []string{string(from)},
 			})
@@ -167,6 +167,58 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 			Span:       span,
 		})
 	}
+}
+
+func unresolvedProjectCallDiagnostic(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, expr ast.Expr) (diagnostics.Code, string, bool) {
+	if !isUnresolvedProjectCall(file, idx, scopedTypes, expr) {
+		return "", "", false
+	}
+	raw := typeExprString(file, expr)
+	if code, message, ok := interfaceBindingDiagnostic(file, idx, expr, raw); ok {
+		return code, message, true
+	}
+	return diagnostics.CodeSymbolReferenceUnresolved,
+		fmt.Sprintf("project symbol reference %q could not be resolved", raw),
+		true
+}
+
+func interfaceBindingDiagnostic(file *project.File, idx *astindex.Index, expr ast.Expr, raw string) (diagnostics.Code, string, bool) {
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return "", "", false
+	}
+	parts := selectorParts(selector)
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	packagePath := file.Package.Path
+	varName := parts[0]
+	if importPath := file.Imports[parts[0]]; importPath != "" {
+		if len(parts) < 3 {
+			return "", "", false
+		}
+		packagePath = importPath
+		varName = parts[1]
+	}
+	if !isProjectPackage(idx.Project.ModulePath, packagePath) {
+		return "", "", false
+	}
+	valueID := astindex.ValueSymbolID("var", packagePath, varName)
+	binding := idx.InterfaceBindings[valueID]
+	if binding == nil {
+		return "", "", false
+	}
+	if binding.HasUnknownBinding || len(binding.ConcreteTypes) == 0 {
+		return diagnostics.CodeSymbolReferenceUnknownInterfaceBinding,
+			fmt.Sprintf("project interface variable %q has unknown concrete assignments; method reference %q could not be resolved", valueID, raw),
+			true
+	}
+	if len(binding.ConcreteTypes) > 1 {
+		return diagnostics.CodeSymbolReferenceAmbiguousInterface,
+			fmt.Sprintf("project interface variable %q has %d concrete assignments; method reference %q is ambiguous", valueID, len(binding.ConcreteTypes), raw),
+			true
+	}
+	return "", "", false
 }
 
 func isUnresolvedProjectCall(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, expr ast.Expr) bool {

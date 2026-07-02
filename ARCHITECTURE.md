@@ -412,7 +412,7 @@ g.Use(provider.Default.Auth.Middleware)
 package-level constructor 优先使用项目内 callable 的真实首返回值类型；外部
 constructor 只用于确认依赖边界，不猜测一个可传播的项目内具体类型。
 
-包级接口变量采用严格赋值证据：索引 loader 实际加载的非测试源码中的直接赋值，只有至少存在一个具体候选、已发现赋值都能高置信度解析且最终只有一个具体类型时，才把接口调用连接到具体方法。多实现或未知 RHS 一律不猜测，后续接口调用保留 unresolved diagnostic。`_test.go` 不参与绑定；普通 `.go` 中的 mock 赋值仍视为真实候选。反射或项目源码之外的运行时注入不在这个闭世界模型内。
+包级接口变量采用严格赋值证据：索引 loader 实际加载的非测试源码中的直接赋值，只有至少存在一个具体候选、已发现赋值都能高置信度解析且最终只有一个具体类型时，才把接口调用连接到具体方法。多实现或未知 RHS 一律不猜测；多实现输出 `symbol_reference_ambiguous_interface`，未知 RHS 输出 `symbol_reference_unknown_interface_binding`，其他无法归因的项目内调用仍输出 `symbol_reference_unresolved`。`_test.go` 不参与绑定；普通 `.go` 中的 mock 赋值仍视为真实候选。反射或项目源码之外的运行时注入不在这个闭世界模型内。
 
 它不是 `go/types` 的替代品，只覆盖项目内、静态可解释的常见 BFF pattern；接口参数/字段、复杂控制流和运行时注入不在当前精度目标内。
 
@@ -821,6 +821,7 @@ facts 中可观察的典型情况：
 
 - route 动态 path。
 - handler/symbol/type 无法精确解析。
+- strict interface dispatch 发现多实现或未知赋值，因而拒绝猜测具体方法。
 - 单个非变更 Go 文件解析失败。
 
 impact 内部还会记录删除声明降级、go.mod diff 无法识别 module、module usage
