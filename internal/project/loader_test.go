@@ -122,3 +122,51 @@ func main() {}
 		t.Fatalf("build-ignored file should be skipped: %s", pkg.Files[0].Path)
 	}
 }
+
+func TestLoadWithOptionsHonorsExplicitBuildTags(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/build-context\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeLoaderTestFile(t, root, "default.go", `//go:build !customtag
+
+package buildcontext
+
+func DefaultOnly() {}
+`)
+	writeLoaderTestFile(t, root, "tagged.go", `//go:build customtag
+
+package buildcontext
+
+func TaggedOnly() {}
+`)
+
+	p, err := LoadWithOptions(root, LoadOptions{
+		BuildContext: BuildContextOptions{Tags: []string{"customtag"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkg := p.Packages["example.com/build-context"]
+	if pkg == nil || len(pkg.Files) != 1 {
+		t.Fatalf("loaded package = %#v", pkg)
+	}
+	if got := filepath.Base(pkg.Files[0].Path); got != "tagged.go" {
+		t.Fatalf("loaded file = %q", got)
+	}
+	if len(p.BuildContext.Tags) != 1 || p.BuildContext.Tags[0] != "customtag" {
+		t.Fatalf("project build context = %#v", p.BuildContext)
+	}
+}
+
+func writeLoaderTestFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/.analyzer-smoke"
 ANALYZER_BIN="${OUT_DIR}/go-analyzer"
+FACTS_BASELINE="${ROOT_DIR}/testdata/baselines/real-project-facts.json"
 ACTIVE_PROJECT=""
 ACTIVE_PATCH=""
 
@@ -105,12 +106,16 @@ run_project() {
   echo "analyzing ${name} at ${path}"
   "${ANALYZER_BIN}" facts --project "${path}" --format json > "${out}"
   python3 -m json.tool "${out}" > /dev/null
-  python3 - "$out" <<'PY'
+  python3 - "$out" "$FACTS_BASELINE" "$name" <<'PY'
 import json
 import sys
+from collections import Counter
 
-with open(sys.argv[1], "r", encoding="utf-8") as f:
+out, baseline_path, name = sys.argv[1:4]
+with open(out, "r", encoding="utf-8") as f:
     data = json.load(f)
+with open(baseline_path, "r", encoding="utf-8") as f:
+    baselines = json.load(f)
 routes = data.get("routes") or []
 route_to_handler = sum(1 for link in (data.get("links") or []) if link.get("kind") == "route_to_handler")
 routes_without_handler = sum(1 for route in routes if not route.get("handler_symbol"))
@@ -121,13 +126,30 @@ if routes_without_resolved_path:
     raise SystemExit(f"{routes_without_resolved_path} routes have no resolved_path")
 if route_to_handler != len(routes):
     raise SystemExit(f"route_to_handler links={route_to_handler}, routes={len(routes)}")
+diagnostics = Counter(diagnostic.get("code") for diagnostic in (data.get("diagnostics") or []))
+actual = {
+    "symbols": len(data.get("symbols") or []),
+    "annotations": len(data.get("annotations") or []),
+    "routes": len(routes),
+    "route_links": route_to_handler,
+    "diagnostics": dict(sorted(diagnostics.items())),
+}
+expected = baselines.get(name)
+if expected is None:
+    raise SystemExit(f"missing facts baseline for {name}")
+if actual != expected:
+    raise SystemExit(
+        f"{name} facts baseline mismatch:\n"
+        f"expected={json.dumps(expected, sort_keys=True)}\n"
+        f"actual={json.dumps(actual, sort_keys=True)}"
+    )
 print(
     "symbols={symbols} annotations={annotations} routes={routes} route_links={route_links} diagnostics={diagnostics}".format(
-        symbols=len(data.get("symbols") or []),
-        annotations=len(data.get("annotations") or []),
-        routes=len(routes),
-        route_links=route_to_handler,
-        diagnostics=len(data.get("diagnostics") or []),
+        symbols=actual["symbols"],
+        annotations=actual["annotations"],
+        routes=actual["routes"],
+        route_links=actual["route_links"],
+        diagnostics=actual["diagnostics"],
     )
 )
 PY

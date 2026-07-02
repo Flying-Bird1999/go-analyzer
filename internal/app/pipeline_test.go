@@ -37,6 +37,29 @@ func TestRunFactsOnMiniBFFReturnsProjectMetadata(t *testing.T) {
 	}
 }
 
+func TestRunFactsWithMetricsReportsPipelineStages(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
+	result, err := RunFactsWithMetrics(Options{ProjectPath: root, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Output) == 0 {
+		t.Fatal("output is empty")
+	}
+	stageNames := map[string]bool{}
+	for _, stage := range result.Metrics.Stages {
+		stageNames[stage.Name] = true
+		if stage.Duration <= 0 {
+			t.Fatalf("stage %s duration = %s", stage.Name, stage.Duration)
+		}
+	}
+	for _, want := range []string{"project_load", "ast_index", "reference_extract", "im_extract"} {
+		if !stageNames[want] {
+			t.Fatalf("stage %q missing: %#v", want, result.Metrics.Stages)
+		}
+	}
+}
+
 func TestRunFactsIncludesAnnotationFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "annotation-only")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})

@@ -12,6 +12,10 @@ import (
 )
 
 func Load(root string) (*Project, error) {
+	return LoadWithOptions(root, LoadOptions{})
+}
+
+func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -20,11 +24,13 @@ func Load(root string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildCtx := buildContext(opts.BuildContext)
 	p := &Project{
-		Root:        absRoot,
-		ModulePath:  modulePath,
-		Packages:    map[string]*Package{},
-		Diagnostics: []LoadDiagnostic{},
+		Root:         absRoot,
+		ModulePath:   modulePath,
+		BuildContext: effectiveBuildContext(buildCtx),
+		Packages:     map[string]*Package{},
+		Diagnostics:  []LoadDiagnostic{},
 	}
 	if err := filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -39,7 +45,7 @@ func Load(root string) (*Project, error) {
 		if isGoIgnoredName(d.Name()) || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if !matchesBuildContext(path) {
+		if !matchesBuildContext(buildCtx, path) {
 			return nil
 		}
 		return p.loadFile(path)
@@ -60,8 +66,48 @@ func shouldSkipDir(name string) bool {
 	return false
 }
 
-func matchesBuildContext(path string) bool {
-	matched, err := build.Default.MatchFile(filepath.Dir(path), filepath.Base(path))
+func buildContext(opts BuildContextOptions) build.Context {
+	ctx := build.Default
+	if opts.GOOS != "" {
+		ctx.GOOS = opts.GOOS
+	}
+	if opts.GOARCH != "" {
+		ctx.GOARCH = opts.GOARCH
+	}
+	if opts.Tags != nil {
+		ctx.BuildTags = normalizeBuildTags(opts.Tags)
+	}
+	if opts.CgoEnabled != nil {
+		ctx.CgoEnabled = *opts.CgoEnabled
+	}
+	return ctx
+}
+
+func effectiveBuildContext(ctx build.Context) BuildContext {
+	return BuildContext{
+		GOOS:       ctx.GOOS,
+		GOARCH:     ctx.GOARCH,
+		Tags:       normalizeBuildTags(ctx.BuildTags),
+		CgoEnabled: ctx.CgoEnabled,
+	}
+}
+
+func normalizeBuildTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
+}
+
+func matchesBuildContext(ctx build.Context, path string) bool {
+	matched, err := ctx.MatchFile(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return true
 	}

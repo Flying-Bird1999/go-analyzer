@@ -1,8 +1,16 @@
 package facts
 
 type ProjectFact struct {
-	Root       string `json:"root"`
-	ModulePath string `json:"module_path"`
+	Root         string           `json:"root"`
+	ModulePath   string           `json:"module_path"`
+	BuildContext BuildContextFact `json:"build_context"`
+}
+
+type BuildContextFact struct {
+	GOOS       string   `json:"goos"`
+	GOARCH     string   `json:"goarch"`
+	Tags       []string `json:"tags"`
+	CgoEnabled bool     `json:"cgo_enabled"`
 }
 
 type DiagnosticFact struct {
@@ -32,11 +40,19 @@ type Store struct {
 	Diagnostics     []DiagnosticFact        `json:"diagnostics"`
 }
 
-func NewStore(root, modulePath string) *Store {
+func NewStore(root, modulePath string, buildContext ...BuildContextFact) *Store {
+	effectiveBuildContext := BuildContextFact{Tags: []string{}}
+	if len(buildContext) > 0 {
+		effectiveBuildContext = buildContext[0]
+		if effectiveBuildContext.Tags == nil {
+			effectiveBuildContext.Tags = []string{}
+		}
+	}
 	return &Store{
 		Project: ProjectFact{
-			Root:       root,
-			ModulePath: modulePath,
+			Root:         root,
+			ModulePath:   modulePath,
+			BuildContext: effectiveBuildContext,
 		},
 		Symbols:         []SymbolFact{},
 		Annotations:     []AnnotationFact{},

@@ -11,6 +11,9 @@ go-analyzer schema --type impact
 
 CLI path flags require absolute paths. Output ordering is deterministic for
 stable project contents and diff input.
+`--goos`, `--goarch`, `--tags`, and `--cgo` override the Go build context used
+for build-constraint filtering. `--timings` writes stage timings to stderr only;
+it does not change JSON stdout.
 
 ## Facts Output
 
@@ -25,6 +28,10 @@ module dependencies, references, IM event facts, links, source spans, raw
 evidence and diagnostics. Diff-only transient facts (`changes`, `module_changes`, and
 `module_usages`) are internal to impact analysis and are not emitted by the
 `facts` command.
+
+`project.build_context` records the effective Go build context used for file
+loading. Route registrations and references include a normalized `evidence`
+array with expression kind, raw source text, span, and confidence.
 
 `im_events` records each discovered outbound IM send with its sender symbol,
 static event value when resolvable, payload/event/control dependencies,

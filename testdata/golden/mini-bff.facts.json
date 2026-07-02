@@ -6,12 +6,32 @@
   "middleware": [],
   "modules": [],
   "project": {
+    "build_context": {
+      "cgo_enabled": false,
+      "goarch": "normalized",
+      "goos": "normalized",
+      "tags": []
+    },
     "module_path": "example.com/mini-bff",
     "root": "testdata/fixtures/mini-bff"
   },
   "references": [
     {
       "confidence": "high",
+      "evidence": [
+        {
+          "confidence": "high",
+          "kind": "call_expr",
+          "raw": "service.CheckIn",
+          "span": {
+            "end_col": 19,
+            "end_line": 12,
+            "file": "controller/common.go",
+            "start_col": 2,
+            "start_line": 12
+          }
+        }
+      ],
       "from_symbol": "method:example.com/mini-bff/controller:CommonController:CheckIn",
       "id": "ref:call:method:example.com/mini-bff/controller:CommonController:CheckIn:func:example.com/mini-bff/service::CheckIn:controller/common.go:12:2:12:19",
       "kind": "call",
@@ -27,6 +47,20 @@
     },
     {
       "confidence": "high",
+      "evidence": [
+        {
+          "confidence": "high",
+          "kind": "type_expr",
+          "raw": "ctl.CommonController",
+          "span": {
+            "end_col": 26,
+            "end_line": 8,
+            "file": "router/router.go",
+            "start_col": 6,
+            "start_line": 8
+          }
+        }
+      ],
       "from_symbol": "func:example.com/mini-bff/router::Register",
       "id": "ref:type:func:example.com/mini-bff/router::Register:type:example.com/mini-bff/controller::CommonController:router/router.go:8:6:8:26",
       "kind": "type",
@@ -42,6 +76,20 @@
     },
     {
       "confidence": "high",
+      "evidence": [
+        {
+          "confidence": "high",
+          "kind": "type_expr",
+          "raw": "CommonController",
+          "span": {
+            "end_col": 25,
+            "end_line": 11,
+            "file": "controller/common.go",
+            "start_col": 9,
+            "start_line": 11
+          }
+        }
+      ],
       "from_symbol": "method:example.com/mini-bff/controller:CommonController:CheckIn",
       "id": "ref:type:method:example.com/mini-bff/controller:CommonController:CheckIn:type:example.com/mini-bff/controller::CommonController:controller/common.go:11:9:11:25",
       "kind": "type",
@@ -57,6 +105,20 @@
     },
     {
       "confidence": "high",
+      "evidence": [
+        {
+          "confidence": "high",
+          "kind": "type_expr",
+          "raw": "CommonController",
+          "span": {
+            "end_col": 30,
+            "end_line": 7,
+            "file": "controller/common.go",
+            "start_col": 14,
+            "start_line": 7
+          }
+        }
+      ],
       "from_symbol": "var:example.com/mini-bff/controller::Common",
       "id": "ref:type:var:example.com/mini-bff/controller::Common:type:example.com/mini-bff/controller::CommonController:controller/common.go:7:14:7:30",
       "kind": "type",
@@ -72,6 +134,20 @@
     },
     {
       "confidence": "high",
+      "evidence": [
+        {
+          "confidence": "high",
+          "kind": "value_expr",
+          "raw": "Version",
+          "span": {
+            "end_col": 16,
+            "end_line": 6,
+            "file": "service/common.go",
+            "start_col": 9,
+            "start_line": 6
+          }
+        }
+      ],
       "from_symbol": "func:example.com/mini-bff/service::CheckIn",
       "id": "ref:value:func:example.com/mini-bff/service::CheckIn:var:example.com/mini-bff/service::Version:service/common.go:6:9:6:16",
       "kind": "value",

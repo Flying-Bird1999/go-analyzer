@@ -3,11 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/app"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
 func main() {
@@ -49,20 +53,30 @@ func runFacts(args []string) error {
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "project path")
 	format := fs.String("format", "json", "output format")
+	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	buildFlags := registerBuildContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if err := validateAbsPath("project path", *projectPath); err != nil {
 		return err
 	}
-	out, err := app.RunFacts(app.Options{
-		ProjectPath: *projectPath,
-		Format:      *format,
+	buildContext, err := buildFlags.options()
+	if err != nil {
+		return err
+	}
+	result, err := app.RunFactsWithMetrics(app.Options{
+		ProjectPath:  *projectPath,
+		Format:       *format,
+		BuildContext: buildContext,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = os.Stdout.Write(out)
+	if *timings {
+		writeTimings(os.Stderr, result.Metrics)
+	}
+	_, err = os.Stdout.Write(result.Output)
 	return err
 }
 
@@ -73,6 +87,8 @@ func runImpact(args []string) error {
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
 	impactConfigPath := fs.String("impact-config", "", "optional absolute impact config path")
 	format := fs.String("format", "json", "output format")
+	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	buildFlags := registerBuildContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -87,17 +103,81 @@ func runImpact(args []string) error {
 			return err
 		}
 	}
-	out, err := app.RunImpact(app.ImpactOptions{
+	buildContext, err := buildFlags.options()
+	if err != nil {
+		return err
+	}
+	result, err := app.RunImpactWithMetrics(app.ImpactOptions{
 		ProjectPath:      *projectPath,
 		DiffPath:         *diffPath,
 		ImpactConfigPath: *impactConfigPath,
 		Format:           *format,
+		BuildContext:     buildContext,
 	})
 	if err != nil {
 		return err
 	}
-	_, err = os.Stdout.Write(out)
+	if *timings {
+		writeTimings(os.Stderr, result.Metrics)
+	}
+	_, err = os.Stdout.Write(result.Output)
 	return err
+}
+
+func writeTimings(w interface{ Write([]byte) (int, error) }, metrics app.PipelineMetrics) {
+	for _, stage := range metrics.Stages {
+		_, _ = fmt.Fprintf(w, "timing %s=%s\n", stage.Name, stage.Duration)
+	}
+}
+
+type buildContextFlags struct {
+	goos   *string
+	goarch *string
+	tags   *string
+	cgo    *string
+}
+
+func registerBuildContextFlags(fs *flag.FlagSet) buildContextFlags {
+	return buildContextFlags{
+		goos:   fs.String("goos", "", "Go build GOOS override"),
+		goarch: fs.String("goarch", "", "Go build GOARCH override"),
+		tags:   fs.String("tags", "", "comma or whitespace separated Go build tags"),
+		cgo:    fs.String("cgo", strconv.FormatBool(build.Default.CgoEnabled), "enable cgo while matching build constraints"),
+	}
+}
+
+func (f buildContextFlags) options() (project.BuildContextOptions, error) {
+	cgoEnabled, err := strconv.ParseBool(*f.cgo)
+	if err != nil {
+		return project.BuildContextOptions{}, fmt.Errorf("invalid cgo value %q: %w", *f.cgo, err)
+	}
+	return project.BuildContextOptions{
+		GOOS:       *f.goos,
+		GOARCH:     *f.goarch,
+		Tags:       parseBuildTags(*f.tags),
+		CgoEnabled: &cgoEnabled,
+	}, nil
+}
+
+func parseBuildTags(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	out := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" || seen[field] {
+			continue
+		}
+		seen[field] = true
+		out = append(out, field)
+	}
+	return out
 }
 
 func runSchema(args []string) error {
@@ -129,16 +209,18 @@ func usage(command string) string {
 	switch command {
 	case "facts":
 		return `用法:
-  go-analyzer facts --project /absolute/path/to/project [--format json]
+  go-analyzer facts --project /absolute/path/to/project [--format json] [--timings]
 
 提取项目 facts JSON，用于调试 symbol、route、annotation、reference、IM event 和 linker 结果。
+可选传入 --goos、--goarch、--tags、--cgo 来指定 Go build context。
 `
 	case "impact":
 		return `用法:
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
+  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
 
 基于已经应用到变更后源码的 unified diff，分析受影响的 HTTP 接口和出站 IM event。
 --impact-config 为可选配置，仅用于 module 版本变更过滤；未传时自动尝试读取项目内 .analyzer/go-impact.config.json。
+Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
 	case "schema":
 		return `用法:

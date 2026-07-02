@@ -17,11 +17,12 @@ const (
 )
 
 type ReferenceFact struct {
-	ID         string        `json:"id"`
-	Kind       ReferenceKind `json:"kind"`
-	FromSymbol SymbolID      `json:"from_symbol"`
-	ToSymbol   SymbolID      `json:"to_symbol,omitempty"`
-	ToRaw      string        `json:"to_raw,omitempty"`
-	Confidence Confidence    `json:"confidence"`
-	Span       SourceSpan    `json:"span"`
+	ID         string         `json:"id"`
+	Kind       ReferenceKind  `json:"kind"`
+	FromSymbol SymbolID       `json:"from_symbol"`
+	ToSymbol   SymbolID       `json:"to_symbol,omitempty"`
+	ToRaw      string         `json:"to_raw,omitempty"`
+	Confidence Confidence     `json:"confidence"`
+	Span       SourceSpan     `json:"span"`
+	Evidence   []EvidenceFact `json:"evidence,omitempty"`
 }

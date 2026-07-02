@@ -76,7 +76,9 @@ func object(properties map[string]any, required ...string) map[string]any {
 func factsDefinitions() map[string]any {
 	return selectDefinitions(
 		"annotation",
+		"build_context",
 		"diagnostic",
+		"evidence",
 		"im_event",
 		"im_event_dependency",
 		"im_event_evidence",
@@ -170,6 +172,12 @@ func commonDefinitions() map[string]any {
 			"relation": stringType(),
 			"span":     ref("source_span"),
 		}, "relation", "span"),
+		"evidence": object(map[string]any{
+			"kind":       stringType(),
+			"raw":        stringType(),
+			"span":       ref("source_span"),
+			"confidence": confidenceType(),
+		}, "kind", "span"),
 		"impact_node": object(map[string]any{
 			"id":         stringType(),
 			"kind":       stringType(),
@@ -225,9 +233,16 @@ func commonDefinitions() map[string]any {
 			"replace_version": stringType(),
 		}, "id", "path", "version", "indirect"),
 		"project": object(map[string]any{
-			"root":        stringType(),
-			"module_path": stringType(),
-		}, "root", "module_path"),
+			"root":          stringType(),
+			"module_path":   stringType(),
+			"build_context": ref("build_context"),
+		}, "root", "module_path", "build_context"),
+		"build_context": object(map[string]any{
+			"goos":        stringType(),
+			"goarch":      stringType(),
+			"tags":        arrayOf(stringType()),
+			"cgo_enabled": boolType(),
+		}, "goos", "goarch", "tags", "cgo_enabled"),
 		"reference": object(map[string]any{
 			"id":          stringType(),
 			"kind":        stringType(),
@@ -236,6 +251,7 @@ func commonDefinitions() map[string]any {
 			"to_raw":      stringType(),
 			"confidence":  confidenceType(),
 			"span":        ref("source_span"),
+			"evidence":    arrayOf(ref("evidence")),
 		}, "id", "kind", "from_symbol", "confidence", "span"),
 		"route": object(map[string]any{
 			"id":              stringType(),
@@ -252,6 +268,7 @@ func commonDefinitions() map[string]any {
 			"statement_index": numberType(),
 			"file":            stringType(),
 			"span":            ref("source_span"),
+			"evidence":        arrayOf(ref("evidence")),
 		}, "id", "method", "local_path", "group_id", "group_var", "handler_raw", "route_func", "statement_index", "file", "span"),
 		"route_group": object(map[string]any{
 			"id":               stringType(),

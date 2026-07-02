@@ -45,6 +45,12 @@ func TestExtractDirectRouteRegistration(t *testing.T) {
 	if route.HandlerRaw != "common.CheckIn" {
 		t.Fatalf("handler raw = %q", route.HandlerRaw)
 	}
+	if len(route.Evidence) != 1 {
+		t.Fatalf("route evidence = %#v", route.Evidence)
+	}
+	if route.Evidence[0].Kind != "route_call" || route.Evidence[0].Raw == "" {
+		t.Fatalf("route evidence = %#v", route.Evidence)
+	}
 }
 
 func TestExtractWrapperStackAndFinalHandler(t *testing.T) {

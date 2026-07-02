@@ -1,0 +1,25 @@
+{
+  "sl-sc1-bff-service": {
+    "symbols": 781,
+    "annotations": 32,
+    "routes": 32,
+    "route_links": 32,
+    "diagnostics": {}
+  },
+  "sl-sc1-admin-bff": {
+    "symbols": 5132,
+    "annotations": 463,
+    "routes": 559,
+    "route_links": 559,
+    "diagnostics": {
+      "symbol_reference_ambiguous_interface": 5
+    }
+  },
+  "sl-sc2-admin-bff": {
+    "symbols": 1397,
+    "annotations": 98,
+    "routes": 136,
+    "route_links": 136,
+    "diagnostics": {}
+  }
+}

@@ -850,6 +850,12 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		File:           filepath.ToSlash(mustRel(p.Root, file.Path)),
 		Span:           spanFor(p, file, call.Pos(), call.End()),
 	}
+	route.Evidence = []facts.EvidenceFact{{
+		Kind:       "route_call",
+		Raw:        exprString(call),
+		Span:       route.Span,
+		Confidence: facts.ConfidenceHigh,
+	}}
 	if parsed.PathRaw != "" {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:           diagnostics.CodeRouteDynamicPath,

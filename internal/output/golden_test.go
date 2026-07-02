@@ -54,6 +54,12 @@ func normalizeMiniBFFGolden(t *testing.T, input []byte) []byte {
 		t.Fatal("project object missing")
 	}
 	project["root"] = "testdata/fixtures/mini-bff"
+	project["build_context"] = map[string]any{
+		"goos":        "normalized",
+		"goarch":      "normalized",
+		"tags":        []any{},
+		"cgo_enabled": false,
+	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 	}
 	ignored := ignoredValuePositions(fn.Body)
 	callFuns := callFunPositions(fn.Body)
+	resolver := newResolver(file, idx, scopedValueTypes{})
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch x := node.(type) {
@@ -24,9 +25,9 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 			}
 			var targets []facts.SymbolID
 			if callFuns[x.Pos()] {
-				targets = resolveReceiverValueIDs(file, idx, x)
+				targets = resolver.ResolveReceiverValueIDs(x)
 			} else {
-				targets = resolveValueIDs(file, idx, x)
+				targets = resolver.ResolveValueIDs(x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
 			return false
@@ -34,42 +35,42 @@ func extractValueReferences(p *project.Project, file *project.File, idx *astinde
 			if ignored[x.Pos()] || callFuns[x.Pos()] || isLocalIdentifier(idx, x) {
 				return true
 			}
-			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x))
+			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
 		}
 		return true
 	})
 }
 
-func resolveValueIDs(file *project.File, idx *astindex.Index, expr ast.Expr) []facts.SymbolID {
+func (r resolver) ResolveValueIDs(expr ast.Expr) []facts.SymbolID {
 	switch x := expr.(type) {
 	case *ast.Ident:
-		if id, ok := idx.PackageValueSymbol(x.Obj); ok {
+		if id, ok := r.idx.PackageValueSymbol(x.Obj); ok {
 			return []facts.SymbolID{id}
 		}
-		if isLocalIdentifier(idx, x) {
+		if isLocalIdentifier(r.idx, x) {
 			return nil
 		}
-		return existingValueIDs(idx, file.Package.Path, x.Name)
+		return existingValueIDs(r.idx, r.file.Package.Path, x.Name)
 	case *ast.SelectorExpr:
 		parts := selectorParts(x)
 		if len(parts) == 2 {
-			if importPath := file.Imports[parts[0]]; importPath != "" {
-				return existingValueIDs(idx, importPath, parts[1])
+			if importPath := r.file.Imports[parts[0]]; importPath != "" {
+				return existingValueIDs(r.idx, importPath, parts[1])
 			}
-			if isLocalIdentifier(idx, selectorRootIdent(x)) {
+			if isLocalIdentifier(r.idx, selectorRootIdent(x)) {
 				return nil
 			}
-			return resolveLocalVarMethod(idx, file, parts)
+			return r.resolveLocalVarMethod(parts)
 		}
 		if len(parts) >= 3 {
-			importPath := file.Imports[parts[0]]
+			importPath := r.file.Imports[parts[0]]
 			if importPath == "" {
 				return nil
 			}
 			varID := astindex.ValueSymbolID("var", importPath, parts[1])
-			out := existingIDs(idx, varID)
-			if methodID, ok := idx.ResolveSelectorMethod(file, parts); ok {
-				out = appendExistingID(out, idx, methodID)
+			out := existingIDs(r.idx, varID)
+			if methodID, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
+				out = appendExistingID(out, r.idx, methodID)
 			}
 			return out
 		}
@@ -87,15 +88,15 @@ func isLocalIdentifier(idx *astindex.Index, ident *ast.Ident) bool {
 	return ident.Obj.Kind == ast.Var || ident.Obj.Kind == ast.Con
 }
 
-func resolveReceiverValueIDs(file *project.File, idx *astindex.Index, selector *ast.SelectorExpr) []facts.SymbolID {
+func (r resolver) ResolveReceiverValueIDs(selector *ast.SelectorExpr) []facts.SymbolID {
 	parts := selectorParts(selector)
 	if len(parts) == 3 {
-		if importPath := file.Imports[parts[0]]; importPath != "" {
-			return existingIDs(idx, astindex.ValueSymbolID("var", importPath, parts[1]))
+		if importPath := r.file.Imports[parts[0]]; importPath != "" {
+			return existingIDs(r.idx, astindex.ValueSymbolID("var", importPath, parts[1]))
 		}
 	}
 	if len(parts) == 2 {
-		return existingIDs(idx, astindex.ValueSymbolID("var", file.Package.Path, parts[0]))
+		return existingIDs(r.idx, astindex.ValueSymbolID("var", r.file.Package.Path, parts[0]))
 	}
 	return nil
 }
@@ -108,15 +109,15 @@ func existingValueIDs(idx *astindex.Index, pkgPath, name string) []facts.SymbolI
 	return out
 }
 
-func resolveLocalVarMethod(idx *astindex.Index, file *project.File, parts []string) []facts.SymbolID {
+func (r resolver) resolveLocalVarMethod(parts []string) []facts.SymbolID {
 	if len(parts) < 2 {
 		return nil
 	}
-	varID := astindex.ValueSymbolID("var", file.Package.Path, parts[0])
+	varID := astindex.ValueSymbolID("var", r.file.Package.Path, parts[0])
 	var out []facts.SymbolID
-	out = appendExistingID(out, idx, varID)
-	if methodID, ok := idx.ResolveSelectorMethod(file, parts); ok {
-		out = appendExistingID(out, idx, methodID)
+	out = appendExistingID(out, r.idx, varID)
+	if methodID, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
+		out = appendExistingID(out, r.idx, methodID)
 	}
 	return out
 }
@@ -147,14 +148,21 @@ func addValueReferenceFacts(p *project.Project, file *project.File, store *facts
 			continue
 		}
 		span := spanFor(p, file, expr.Pos(), expr.End())
+		raw := typeExprString(file, expr)
 		store.References = append(store.References, facts.ReferenceFact{
 			ID:         referenceID(from, target, facts.ReferenceKindValue, span),
 			Kind:       facts.ReferenceKindValue,
 			FromSymbol: from,
 			ToSymbol:   target,
-			ToRaw:      typeExprString(file, expr),
+			ToRaw:      raw,
 			Confidence: facts.ConfidenceHigh,
 			Span:       span,
+			Evidence: []facts.EvidenceFact{{
+				Kind:       "value_expr",
+				Raw:        raw,
+				Span:       span,
+				Confidence: facts.ConfidenceHigh,
+			}},
 		})
 	}
 }

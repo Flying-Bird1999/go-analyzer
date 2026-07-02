@@ -6,10 +6,29 @@ import (
 )
 
 type Project struct {
-	Root        string
-	ModulePath  string
-	Packages    map[string]*Package
-	Diagnostics []LoadDiagnostic
+	Root         string
+	ModulePath   string
+	BuildContext BuildContext
+	Packages     map[string]*Package
+	Diagnostics  []LoadDiagnostic
+}
+
+type LoadOptions struct {
+	BuildContext BuildContextOptions
+}
+
+type BuildContextOptions struct {
+	GOOS       string
+	GOARCH     string
+	Tags       []string
+	CgoEnabled *bool
+}
+
+type BuildContext struct {
+	GOOS       string
+	GOARCH     string
+	Tags       []string
+	CgoEnabled bool
 }
 
 type LoadDiagnostic struct {

@@ -22,6 +22,10 @@ the files. IM cases additionally validate exact event sets and zero unexpected
 HTTP endpoints. Lego BFF syntax and IM transports are recognized by built-in
 rules; no analyzer config is required for them.
 
+Facts counts and diagnostic code distributions are compared against
+`testdata/baselines/real-project-facts.json`; intentional analyzer behavior
+changes must update that baseline in the same review.
+
 ## Current Expectations
 
 The MVP validation target is stability rather than perfect precision:
@@ -30,7 +34,7 @@ The MVP validation target is stability rather than perfect precision:
 - Facts JSON should be parseable and every route should have both
   `handler_symbol` and `resolved_path`.
 - Annotation, route, symbol, and diagnostic counts should be recorded from each
-  smoke run.
+  smoke run and compared against the checked-in facts baseline.
 - Impact smoke should record changed source count, changed root count,
   recursive tree node count and endpoint count.
 - Real BFF impact smoke should assert exact impacted endpoint/IM event sets and deterministic output.

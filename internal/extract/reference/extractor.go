@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
-	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
@@ -100,6 +99,7 @@ func extractGenDeclTypeReferences(p *project.Project, file *project.File, idx *a
 func extractInitializerReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, expr ast.Expr) {
 	ignored := ignoredValuePositions(expr)
 	callFuns := callFunPositions(expr)
+	resolver := newResolver(file, idx, scopedValueTypes{})
 	ast.Inspect(expr, func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.CallExpr:
@@ -120,9 +120,9 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 			}
 			var targets []facts.SymbolID
 			if callFuns[x.Pos()] {
-				targets = resolveReceiverValueIDs(file, idx, x)
+				targets = resolver.ResolveReceiverValueIDs(x)
 			} else {
-				targets = resolveValueIDs(file, idx, x)
+				targets = resolver.ResolveValueIDs(x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
 			return false
@@ -130,17 +130,18 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 			if ignored[x.Pos()] || callFuns[x.Pos()] {
 				return true
 			}
-			addValueReferenceFacts(p, file, store, from, x, resolveValueIDs(file, idx, x))
+			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
 		}
 		return true
 	})
 }
 
 func addCallReference(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, scopedTypes scopedValueTypes, call *ast.CallExpr) {
-	resolved, raw, ok := resolveCallCandidates(file, idx, scopedTypes, call)
+	resolver := newResolver(file, idx, scopedTypes)
+	resolved, raw, ok := resolver.ResolveCall(call)
 	if !ok || len(resolved) == 0 {
 		callee := unwrapGenericCallee(call.Fun)
-		if code, message, diagnosticOK := unresolvedProjectCallDiagnostic(file, idx, scopedTypes, callee); !ok && diagnosticOK {
+		if code, message, diagnosticOK := resolver.UnresolvedProjectCallDiagnostic(callee); !ok && diagnosticOK {
 			span := spanFor(p, file, callee.Pos(), callee.End())
 			diagnostics.AddFact(store, diagnostics.Diagnostic{
 				Code:           code,
@@ -165,86 +166,14 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 			ToRaw:      raw,
 			Confidence: candidate.Confidence,
 			Span:       span,
+			Evidence: []facts.EvidenceFact{{
+				Kind:       "call_expr",
+				Raw:        raw,
+				Span:       span,
+				Confidence: candidate.Confidence,
+			}},
 		})
 	}
-}
-
-func unresolvedProjectCallDiagnostic(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, expr ast.Expr) (diagnostics.Code, string, bool) {
-	if !isUnresolvedProjectCall(file, idx, scopedTypes, expr) {
-		return "", "", false
-	}
-	raw := typeExprString(file, expr)
-	if code, message, ok := interfaceBindingDiagnostic(file, idx, expr, raw); ok {
-		return code, message, true
-	}
-	return diagnostics.CodeSymbolReferenceUnresolved,
-		fmt.Sprintf("project symbol reference %q could not be resolved", raw),
-		true
-}
-
-func interfaceBindingDiagnostic(file *project.File, idx *astindex.Index, expr ast.Expr, raw string) (diagnostics.Code, string, bool) {
-	selector, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return "", "", false
-	}
-	parts := selectorParts(selector)
-	if len(parts) < 2 {
-		return "", "", false
-	}
-	packagePath := file.Package.Path
-	varName := parts[0]
-	if importPath := file.Imports[parts[0]]; importPath != "" {
-		if len(parts) < 3 {
-			return "", "", false
-		}
-		packagePath = importPath
-		varName = parts[1]
-	}
-	if !isProjectPackage(idx.Project.ModulePath, packagePath) {
-		return "", "", false
-	}
-	valueID := astindex.ValueSymbolID("var", packagePath, varName)
-	binding := idx.InterfaceBindings[valueID]
-	if binding == nil {
-		return "", "", false
-	}
-	if binding.HasUnknownBinding || len(binding.ConcreteTypes) == 0 {
-		return diagnostics.CodeSymbolReferenceUnknownInterfaceBinding,
-			fmt.Sprintf("project interface variable %q has unknown concrete assignments; method reference %q could not be resolved", valueID, raw),
-			true
-	}
-	if len(binding.ConcreteTypes) > 1 {
-		return diagnostics.CodeSymbolReferenceAmbiguousInterface,
-			fmt.Sprintf("project interface variable %q has %d concrete assignments; method reference %q is ambiguous", valueID, len(binding.ConcreteTypes), raw),
-			true
-	}
-	return "", "", false
-}
-
-func isUnresolvedProjectCall(file *project.File, idx *astindex.Index, scopedTypes scopedValueTypes, expr ast.Expr) bool {
-	selector, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	parts := selectorParts(selector)
-	if len(parts) < 2 {
-		return false
-	}
-	importPath := file.Imports[parts[0]]
-	if !isProjectPackage(idx.Project.ModulePath, importPath) {
-		return false
-	}
-	if receiverType, ok := scopedTypes.resolve(selectorRootIdent(selector), selector.Pos()); ok {
-		return isProjectPackage(idx.Project.ModulePath, receiverType.PackagePath)
-	}
-	if receiverType, ok := idx.ResolveSelectorReceiverType(file, parts); ok {
-		return isProjectPackage(idx.Project.ModulePath, receiverType.PackagePath)
-	}
-	return true
-}
-
-func isProjectPackage(modulePath, packagePath string) bool {
-	return packagePath == modulePath || strings.HasPrefix(packagePath, modulePath+"/")
 }
 
 func valueDeclarationKind(tok token.Token) string {

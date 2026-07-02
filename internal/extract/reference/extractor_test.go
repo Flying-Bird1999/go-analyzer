@@ -1,6 +1,7 @@
 package reference
 
 import (
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +15,17 @@ import (
 func TestExtractFunctionCallReference(t *testing.T) {
 	store := extractReferenceFixture(t)
 
-	assertReference(t, store,
+	ref := findReference(t, store,
 		"func:example.com/reference-chain/controller::CheckIn",
 		"func:example.com/reference-chain/service::WebApiForwardGray",
 		facts.ReferenceKindCall,
 	)
+	if len(ref.Evidence) != 1 {
+		t.Fatalf("reference evidence = %#v", ref.Evidence)
+	}
+	if ref.Evidence[0].Kind != "call_expr" || ref.Evidence[0].Raw != "svc.WebApiForwardGray" {
+		t.Fatalf("reference evidence = %#v", ref.Evidence)
+	}
 }
 
 func TestExtractPackageFunctionValueCallReference(t *testing.T) {
@@ -113,6 +120,37 @@ func Init() {
 		}
 	}
 	assertReferenceDiagnostic(t, store, "symbol_reference_unknown_interface_binding")
+}
+
+func TestResolverExplainsUnknownInterfaceBinding(t *testing.T) {
+	root := writeStrictInterfaceFixture(t, `func buildClient() Client {
+	return new(client)
+}
+
+func Init() {
+	Client = buildClient()
+}
+`)
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := astindex.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := findReferenceTestFile(t, p, "controller/controller.go")
+	call := firstCallInFile(t, file)
+
+	resolver := newResolver(file, idx, scopedValueTypes{})
+	resolved, raw, ok := resolver.ResolveCall(call)
+	if ok || len(resolved) != 0 {
+		t.Fatalf("unknown interface binding resolved %q to %#v", raw, resolved)
+	}
+	code, _, diagnosticOK := resolver.UnresolvedProjectCallDiagnostic(unwrapGenericCallee(call.Fun))
+	if !diagnosticOK || code != "symbol_reference_unknown_interface_binding" {
+		t.Fatalf("diagnostic = %q ok=%v", code, diagnosticOK)
+	}
 }
 
 func TestExtractStrictInterfaceRejectsCrossPackageConcreteAssignment(t *testing.T) {
@@ -981,6 +1019,43 @@ func extractFixtureRoot(t *testing.T, root string) *facts.Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func findReferenceTestFile(t *testing.T, p *project.Project, rel string) *project.File {
+	t.Helper()
+	for _, pkg := range p.Packages {
+		for _, file := range pkg.Files {
+			fileRel, err := filepath.Rel(p.Root, file.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if filepath.ToSlash(fileRel) == rel {
+				return file
+			}
+		}
+	}
+	t.Fatalf("file %s not found", rel)
+	return nil
+}
+
+func firstCallInFile(t *testing.T, file *project.File) *ast.CallExpr {
+	t.Helper()
+	var out *ast.CallExpr
+	ast.Inspect(file.AST, func(node ast.Node) bool {
+		if out != nil {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if ok {
+			out = call
+			return false
+		}
+		return true
+	})
+	if out == nil {
+		t.Fatalf("call expression not found in %s", file.Path)
+	}
+	return out
 }
 
 func assertReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) {

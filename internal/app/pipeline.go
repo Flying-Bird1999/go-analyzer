@@ -25,63 +25,119 @@ import (
 )
 
 func RunFacts(opts Options) ([]byte, error) {
+	result, err := RunFactsWithMetrics(opts)
+	if err != nil {
+		return nil, err
+	}
+	return result.Output, nil
+}
+
+func RunFactsWithMetrics(opts Options) (RunResult, error) {
 	if opts.ProjectPath == "" {
-		return nil, errors.New("project path is required")
+		return RunResult{}, errors.New("project path is required")
 	}
 	if opts.Format == "" {
 		opts.Format = "json"
 	}
 	if opts.Format != "json" {
-		return nil, fmt.Errorf("unsupported format %q", opts.Format)
+		return RunResult{}, fmt.Errorf("unsupported format %q", opts.Format)
 	}
-	store, err := buildFactStore(opts.ProjectPath)
+	recorder := &pipelineRecorder{}
+	store, err := buildFactStore(opts.ProjectPath, opts.BuildContext, recorder)
 	if err != nil {
-		return nil, err
+		return RunResult{}, err
 	}
-	return output.RenderJSON(store)
+	var out []byte
+	if err := recorder.measure("facts_render", func() error {
+		var renderErr error
+		out, renderErr = output.RenderJSON(store)
+		return renderErr
+	}); err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{Output: out, Metrics: recorder.metrics()}, nil
 }
 
 func RunImpact(opts ImpactOptions) ([]byte, error) {
+	result, err := RunImpactWithMetrics(opts)
+	if err != nil {
+		return nil, err
+	}
+	return result.Output, nil
+}
+
+func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
 	if opts.ProjectPath == "" {
-		return nil, errors.New("project path is required")
+		return RunResult{}, errors.New("project path is required")
 	}
 	if opts.DiffPath == "" {
-		return nil, errors.New("diff path is required")
+		return RunResult{}, errors.New("diff path is required")
 	}
 	if opts.Format == "" {
 		opts.Format = "json"
 	}
 	if opts.Format != "json" {
-		return nil, fmt.Errorf("unsupported format %q", opts.Format)
+		return RunResult{}, fmt.Errorf("unsupported format %q", opts.Format)
 	}
+	recorder := &pipelineRecorder{}
 	cfg, err := config.LoadImpactConfig(opts.ProjectPath, opts.ImpactConfigPath)
 	if err != nil {
-		return nil, err
+		return RunResult{}, err
 	}
-	diffBytes, err := os.ReadFile(opts.DiffPath)
+	var diffBytes []byte
+	if err := recorder.measure("diff_read", func() error {
+		var readErr error
+		diffBytes, readErr = os.ReadFile(opts.DiffPath)
+		if readErr != nil {
+			return fmt.Errorf("read diff: %w", readErr)
+		}
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
+	var fileChanges []diff.FileChange
+	if err := recorder.measure("diff_parse", func() error {
+		var parseErr error
+		fileChanges, parseErr = diff.ParseUnified(diffBytes)
+		return parseErr
+	}); err != nil {
+		return RunResult{}, err
+	}
+	if err := recorder.measure("diff_validate", func() error {
+		return diff.ValidateApplied(opts.ProjectPath, fileChanges)
+	}); err != nil {
+		return RunResult{}, err
+	}
+	built, err := buildFacts(opts.ProjectPath, opts.BuildContext, recorder)
 	if err != nil {
-		return nil, fmt.Errorf("read diff: %w", err)
-	}
-	fileChanges, err := diff.ParseUnified(diffBytes)
-	if err != nil {
-		return nil, err
-	}
-	if err := diff.ValidateApplied(opts.ProjectPath, fileChanges); err != nil {
-		return nil, err
-	}
-	built, err := buildFacts(opts.ProjectPath)
-	if err != nil {
-		return nil, err
+		return RunResult{}, err
 	}
 	if err := validateChangedGoFiles(built.project, fileChanges); err != nil {
-		return nil, err
+		return RunResult{}, err
 	}
 	store := built.store
-	store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
-	impact.RecoverDeletedRoutes(fileChanges, built.index, store, "git_diff")
-	moduleChanges, err := gomod.DiffModulesFromFileChanges(fileChanges)
-	if err != nil {
-		return nil, fmt.Errorf("diff go.mod modules: %w", err)
+	if err := recorder.measure("diff_map", func() error {
+		store.Changes = append(store.Changes, diff.MapChanges(fileChanges, store, "git_diff")...)
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
+	if err := recorder.measure("deleted_route_recover", func() error {
+		impact.RecoverDeletedRoutes(fileChanges, built.index, store, "git_diff")
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
+	var moduleChanges []facts.ModuleChangeFact
+	if err := recorder.measure("gomod_diff", func() error {
+		var moduleErr error
+		moduleChanges, moduleErr = gomod.DiffModulesFromFileChanges(fileChanges)
+		if moduleErr != nil {
+			return fmt.Errorf("diff go.mod modules: %w", moduleErr)
+		}
+		return nil
+	}); err != nil {
+		return RunResult{}, err
 	}
 	moduleDiffResolved := len(moduleChanges) > 0
 	moduleChanges = cfg.FilterModuleChanges(moduleChanges)
@@ -94,16 +150,42 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 		})
 	}
 	store.ModuleChanges = append(store.ModuleChanges, moduleChanges...)
-	moduleUsages := gomod.MapModuleUsage(built.project, built.index, store, moduleChanges)
+	var moduleUsages []facts.ModuleUsageFact
+	if err := recorder.measure("module_usage_map", func() error {
+		moduleUsages = gomod.MapModuleUsage(built.project, built.index, store, moduleChanges)
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
 	store.ModuleUsages = append(store.ModuleUsages, moduleUsages...)
 	store.Changes = append(store.Changes, moduleUsageChanges(moduleUsages, store, "go_mod_diff")...)
-	result := impact.AnalyzeTrees(store)
-	doc := output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{
-		ModuleChanges:           store.ModuleChanges,
-		ModuleUsages:            store.ModuleUsages,
-		SuppressGoModFileSource: moduleDiffResolved,
-	})
-	return output.RenderImpactTreeJSON(doc)
+	var result impact.TreeResult
+	if err := recorder.measure("impact_analyze", func() error {
+		result = impact.AnalyzeTrees(store)
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
+	var doc output.ImpactDocument
+	if err := recorder.measure("impact_document_build", func() error {
+		doc = output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{
+			ModuleChanges:           store.ModuleChanges,
+			ModuleUsages:            store.ModuleUsages,
+			SuppressGoModFileSource: moduleDiffResolved,
+		})
+		return nil
+	}); err != nil {
+		return RunResult{}, err
+	}
+	var out []byte
+	if err := recorder.measure("impact_render", func() error {
+		var renderErr error
+		out, renderErr = output.RenderImpactTreeJSON(doc)
+		return renderErr
+	}); err != nil {
+		return RunResult{}, err
+	}
+	return RunResult{Output: out, Metrics: recorder.metrics()}, nil
 }
 
 type builtFacts struct {
@@ -112,31 +194,58 @@ type builtFacts struct {
 	store   *facts.Store
 }
 
-func buildFactStore(projectPath string) (*facts.Store, error) {
-	built, err := buildFacts(projectPath)
+func buildFactStore(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (*facts.Store, error) {
+	built, err := buildFacts(projectPath, buildContext, recorder)
 	if err != nil {
 		return nil, err
 	}
 	return built.store, nil
 }
 
-func buildFacts(projectPath string) (builtFacts, error) {
-	p, err := project.Load(projectPath)
-	if err != nil {
+func buildFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (builtFacts, error) {
+	var p *project.Project
+	if err := recorder.measure("project_load", func() error {
+		var loadErr error
+		p, loadErr = project.LoadWithOptions(projectPath, project.LoadOptions{BuildContext: buildContext})
+		return loadErr
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	idx, err := astindex.Build(p)
-	if err != nil {
+	var idx *astindex.Index
+	if err := recorder.measure("ast_index", func() error {
+		var indexErr error
+		idx, indexErr = astindex.Build(p)
+		return indexErr
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	store := facts.NewStore(p.Root, p.ModulePath)
-	modBytes, err := os.ReadFile(filepath.Join(p.Root, "go.mod"))
-	if err != nil {
-		return builtFacts{}, fmt.Errorf("read go.mod dependencies: %w", err)
+	store := facts.NewStore(p.Root, p.ModulePath, facts.BuildContextFact{
+		GOOS:       p.BuildContext.GOOS,
+		GOARCH:     p.BuildContext.GOARCH,
+		Tags:       append([]string(nil), p.BuildContext.Tags...),
+		CgoEnabled: p.BuildContext.CgoEnabled,
+	})
+	var modBytes []byte
+	if err := recorder.measure("gomod_read", func() error {
+		var readErr error
+		modBytes, readErr = os.ReadFile(filepath.Join(p.Root, "go.mod"))
+		if readErr != nil {
+			return fmt.Errorf("read go.mod dependencies: %w", readErr)
+		}
+		return nil
+	}); err != nil {
+		return builtFacts{}, err
 	}
-	modules, err := gomod.ExtractDependencies(modBytes)
-	if err != nil {
-		return builtFacts{}, fmt.Errorf("extract go.mod dependencies: %w", err)
+	var modules []facts.ModuleDependencyFact
+	if err := recorder.measure("gomod_extract", func() error {
+		var extractErr error
+		modules, extractErr = gomod.ExtractDependencies(modBytes)
+		if extractErr != nil {
+			return fmt.Errorf("extract go.mod dependencies: %w", extractErr)
+		}
+		return nil
+	}); err != nil {
+		return builtFacts{}, err
 	}
 	store.Modules = append(store.Modules, modules...)
 	for _, loadDiagnostic := range p.Diagnostics {
@@ -156,19 +265,29 @@ func buildFacts(projectPath string) (builtFacts, error) {
 	for _, id := range symbolIDs {
 		store.AddSymbol(idx.Symbols[id])
 	}
-	if err := annotation.Extract(p, idx, store); err != nil {
+	if err := recorder.measure("annotation_extract", func() error {
+		return annotation.Extract(p, idx, store)
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	if err := route.Extract(p, idx, store); err != nil {
+	if err := recorder.measure("route_extract", func() error {
+		return route.Extract(p, idx, store)
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	if err := link.Run(idx, store); err != nil {
+	if err := recorder.measure("link", func() error {
+		return link.Run(idx, store)
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	if err := reference.Extract(p, idx, store); err != nil {
+	if err := recorder.measure("reference_extract", func() error {
+		return reference.Extract(p, idx, store)
+	}); err != nil {
 		return builtFacts{}, err
 	}
-	if err := imextract.Extract(p, idx, store); err != nil {
+	if err := recorder.measure("im_extract", func() error {
+		return imextract.Extract(p, idx, store)
+	}); err != nil {
 		return builtFacts{}, err
 	}
 	return builtFacts{project: p, index: idx, store: store}, nil
