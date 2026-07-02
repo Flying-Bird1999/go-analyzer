@@ -37,6 +37,39 @@ func Init() {
 	}
 }
 
+func TestInterfaceBindingResolvesCompositeLiteralAssignmentInClosure(t *testing.T) {
+	idx, file := buildInterfaceBindingFixture(t, `package binding
+
+type Client interface {
+	Fetch()
+}
+
+type realClient struct{}
+
+func (*realClient) Fetch() {}
+
+var Default Client
+
+func Register(starter func() error) {}
+
+func Init() {
+	Register(func() error {
+		Default = &realClient{}
+		return nil
+	})
+}
+`)
+
+	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"})
+	if !ok {
+		t.Fatal("Default.Fetch was not resolved through composite literal closure assignment")
+	}
+	want := facts.SymbolID("method:example.com/interface-binding:realClient:Fetch")
+	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("Default.Fetch = %#v, want %s with high confidence", resolved, want)
+	}
+}
+
 func TestInterfaceBindingRejectsUnknownAssignment(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 

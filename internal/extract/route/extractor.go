@@ -768,6 +768,9 @@ func groupCall(
 	}
 	name := shortCallName(call)
 	if isRouteGroupFactory(name) || isRouteGroupWrapper(name) {
+		if unresolvedSelectorRouteFunction(file, funcs, call.Fun) {
+			return groupContext{}, "", false
+		}
 		if callee, resolved := resolveRouteFunctionCall(file, call.Fun); resolved {
 			if target, projectFunction := funcs[callee]; projectFunction && !target.returnsGroup {
 				return groupContext{}, "", false

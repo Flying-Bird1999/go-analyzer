@@ -1,6 +1,6 @@
 # go-analyzer 架构与开发指南
 
-> 文档状态：当前实现基线，更新于 2026-07-01。
+> 文档状态：当前实现基线，更新于 2026-07-02。
 > 适用读者：项目维护者、代码评审者、首次接手的开发者，以及需要继续迭代本项目的 agent。
 > 当前输出：facts JSON 与 impact JSON。
 
@@ -1346,8 +1346,8 @@ PY
 | Project/Fixture         | 结果                                                       |
 | ----------------------- | ---------------------------------------------------------- |
 | `sl-sc1-bff-service`  | symbols=781, annotations=32, routes=32, diagnostics=0      |
-| `sl-sc1-admin-bff`    | symbols=5137, annotations=463, routes=559, diagnostics=5   |
-| `sl-sc2-admin-bff`    | symbols=1408, annotations=98, routes=136, diagnostics=0    |
+| `sl-sc1-admin-bff`    | symbols=5132, annotations=463, routes=559, diagnostics=5   |
+| `sl-sc2-admin-bff`    | symbols=1397, annotations=98, routes=136, diagnostics=0    |
 | `type-impact`         | 1 endpoint (`POST /orders`)                              |
 | `deleted-route`       | 2 endpoints（删除 route `POST /internal/orders` + deletion anchor 命中的 `GET /health`） |
 | `gomod-impact`        | 1 endpoint (`GET /api/checkIn`)                          |
@@ -1434,7 +1434,7 @@ PY
 - 反射、运行时 DI、运行时 route 构造。
 - 任意控制流赋值下的完整 flow-sensitive local variable receiver type inference。
 - 配置驱动的 middleware exclude 分支和其他 path-sensitive 控制流。
-- build tags、不同 GOOS/GOARCH 的条件编译模型。
+- 自定义 build tags、不同 GOOS/GOARCH 的条件编译模型；当前仅按默认 `go/build` context 过滤文件。
 - `_test.go` 分析。
 - 任意控制流中的完整 route table 还原；当前 route 提取重点覆盖 route function 的顺序式注册。
 

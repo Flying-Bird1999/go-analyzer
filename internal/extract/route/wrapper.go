@@ -20,6 +20,9 @@ func groupForExpr(file *project.File, funcs map[facts.SymbolID]routeFunction, gr
 		if !isRouteGroupWrapper(name) {
 			return groupContext{}, nil, false
 		}
+		if unresolvedSelectorRouteFunction(file, funcs, x.Fun) {
+			return groupContext{}, nil, false
+		}
 		if callee, resolved := resolveRouteFunctionCall(file, x.Fun); resolved {
 			if target, projectFunction := funcs[callee]; projectFunction && !target.returnsGroup {
 				return groupContext{}, nil, false
@@ -36,4 +39,16 @@ func groupForExpr(file *project.File, funcs map[facts.SymbolID]routeFunction, gr
 	default:
 		return groupContext{}, nil, false
 	}
+}
+
+func unresolvedSelectorRouteFunction(file *project.File, funcs map[facts.SymbolID]routeFunction, expr ast.Expr) bool {
+	if _, ok := expr.(*ast.SelectorExpr); !ok {
+		return false
+	}
+	callee, resolved := resolveRouteFunctionCall(file, expr)
+	if !resolved {
+		return false
+	}
+	_, ok := funcs[callee]
+	return !ok
 }

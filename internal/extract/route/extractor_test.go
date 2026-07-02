@@ -523,6 +523,32 @@ func Init(g *RouterGroup) {
 	}
 }
 
+func TestExtractRejectsUnresolvedExternalAddWrapper(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/external-wrapper\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+import guard "example.com/external/guard"
+
+type RouterGroup struct{}
+
+func Handler() {}
+
+func Init(g *RouterGroup) {
+	guard.AddCount(g).GET("/not-a-route", Handler)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	if len(store.Routes) != 0 {
+		t.Fatalf("unresolved external AddCount result was parsed as a route group: %#v", store.Routes)
+	}
+}
+
 func TestExtractUnwrapsParenthesizedHandler(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/parenthesized-handler\n\ngo 1.24\n"), 0o644); err != nil {

@@ -88,3 +88,37 @@ func TestLoadSkipsGoIgnoredFilesAndDirectories(t *testing.T) {
 		t.Fatalf("loaded package = %#v", pkg)
 	}
 }
+
+func TestLoadSkipsFilesExcludedByBuildConstraints(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/build-tags\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "update_env.go"), []byte(`//go:build ignore
+// +build ignore
+
+package main
+
+func main() {}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := p.Packages["example.com/build-tags"]
+	if pkg == nil {
+		t.Fatalf("main package not loaded: %#v", p.Packages)
+	}
+	if len(pkg.Files) != 1 {
+		t.Fatalf("loaded files = %#v", pkg.Files)
+	}
+	if strings.HasSuffix(pkg.Files[0].Path, "update_env.go") {
+		t.Fatalf("build-ignored file should be skipped: %s", pkg.Files[0].Path)
+	}
+}

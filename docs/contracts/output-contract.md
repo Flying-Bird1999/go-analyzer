@@ -54,14 +54,14 @@ Top-level shape:
     "impactedIMCount": 1,
     "impactedIMEvents": ["order/changed"]
   },
-  "fileSources": [],
-  "moduleSources": []
+  "fileSources": []
 }
 ```
 
 - `summary` is the globally deduplicated endpoint and concrete IM event result.
 - `fileSources` contains ordinary source-file changes and their complete trees.
-- `moduleSources` contains semantic go.mod changes and their local usage trees.
+- `moduleSources` is optional. It contains semantic go.mod changes and their
+  local usage trees, and is omitted when there are no emitted module changes.
 
 ### `fileSources`
 

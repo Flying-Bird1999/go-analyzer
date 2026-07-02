@@ -170,6 +170,46 @@ func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
 	}
 }
 
+func TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Annotations = append(store.Annotations, facts.AnnotationFact{
+		ID:            "annotation:orders",
+		HandlerSymbol: "func:example.com/project/controller::Orders",
+		Span:          facts.SourceSpan{File: "controller/orders.go", StartLine: 3, EndLine: 3},
+	})
+	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
+		ID:        "route_group:orders",
+		RouteFunc: "func:example.com/project/router::Init",
+		Span:      facts.SourceSpan{File: "router/router.go", StartLine: 10, EndLine: 10},
+	})
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID:            "route:orders",
+		HandlerSymbol: "func:example.com/project/controller::Orders",
+		Span:          facts.SourceSpan{File: "router/router.go", StartLine: 11, EndLine: 11},
+	})
+	store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
+		ID:   "middleware:auth",
+		Span: facts.SourceSpan{File: "router/router.go", StartLine: 12, EndLine: 12},
+	})
+
+	got := MapChanges([]FileChange{
+		{NewPath: "controller/orders.go", Ranges: []LineRange{{StartLine: 3, EndLine: 3, Kind: RangeKindDeletionAnchor}}},
+		{NewPath: "router/router.go", Ranges: []LineRange{{StartLine: 10, EndLine: 12, Kind: RangeKindDeletionAnchor}}},
+	}, store, "git_diff")
+
+	for _, kind := range []facts.ChangeKind{
+		facts.ChangeKindAnnotationChanged,
+		facts.ChangeKindRouteGroupChanged,
+		facts.ChangeKindRouteChanged,
+		facts.ChangeKindMiddlewareChanged,
+	} {
+		change := findChangeKind(t, got, kind)
+		if change.Confidence != facts.ConfidenceMedium {
+			t.Fatalf("%s confidence = %s, want medium; changes=%#v", kind, change.Confidence, got)
+		}
+	}
+}
+
 func TestMapChangesDiagnosesUnresolvedDeletedSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 
@@ -218,12 +258,18 @@ func loadFactsForDiff(t *testing.T, root string) *facts.Store {
 
 func assertChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.ChangeKind) {
 	t.Helper()
+	_ = findChangeKind(t, changes, kind)
+}
+
+func findChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.ChangeKind) facts.ChangeFact {
+	t.Helper()
 	for _, change := range changes {
 		if change.Kind == kind {
-			return
+			return change
 		}
 	}
 	t.Fatalf("change kind %s not found: %#v", kind, changes)
+	return facts.ChangeFact{}
 }
 
 func assertChangeSymbol(t *testing.T, changes []facts.ChangeFact, symbol facts.SymbolID) {

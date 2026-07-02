@@ -39,13 +39,17 @@ The MVP validation target is stability rather than perfect precision:
 
 ## Latest Facts Smoke Snapshot
 
-Local smoke run on 2026-07-01:
+Local smoke run on 2026-07-02:
 
 | Project | Symbols | Annotations | Routes | Diagnostics |
 | --- | ---: | ---: | ---: | ---: |
 | `sl-sc1-bff-service` | 781 | 32 | 32 | 0 |
-| `sl-sc1-admin-bff` | 5137 | 463 | 559 | 5 |
-| `sl-sc2-admin-bff` | 1408 | 98 | 136 | 0 |
+| `sl-sc1-admin-bff` | 5132 | 463 | 559 | 5 |
+| `sl-sc2-admin-bff` | 1397 | 98 | 136 | 0 |
+
+The analyzer now honors the default Go build context when loading files, so
+files excluded by build constraints such as `//go:build ignore` and
+`//go:build race_test` are not included in these symbol counts.
 
 All five remaining diagnostics are `symbol_reference_unresolved` for
 `sc_redisx.SentinelClient.Eval/Scan`. Production `.go` files assign both
@@ -105,11 +109,11 @@ projects:
 
 | Case | Project file | Expected impact |
 | --- | --- | --- |
-| `real-admin-customer-empty-path` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `GET /admin/api/bff-web/mc/customer/:customerId` |
-| `real-admin-customer-wrapper` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | `PUT /admin/api/bff-web/mc/customer/:customerId` |
+| `real-admin-customer-empty-path` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | 2 endpoints: `GET /admin/api/bff-web/mc/customer/:customerId` and compatibility `GET /uc/customers/:customerId` |
+| `real-admin-customer-wrapper` | `sl-sc1-admin-bff/controller/mc/customer/customer.go` | 2 endpoints: `PUT /admin/api/bff-web/mc/customer/:customerId` and compatibility `PUT /uc/customers/:customerId` |
 | `real-admin-product-set-list` | `sl-sc1-admin-bff/controller/trade/product/product.go` | `GET /admin/api/bff-web/trade/product/product_set/list` |
 | `real-admin-user-info` | `sl-sc1-admin-bff/controller/user/user.go` | `GET /admin/api/bff-web/user/info` |
-| `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | `GET /admin/api/bff-app/live/sale/:salesId/statistics` |
+| `real-admin-app-live-statistics` | `sl-sc1-admin-bff/controller/app/live/live.go` | 2 endpoints: `GET /admin/api/bff-app/live/sale/:salesId/statistics` and compatibility `GET /api/posts/post/sales/statistics/:salesId` |
 | `real-admin-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 20 inline/assigned-group routes using `AddLiveWriteGuard` |
 | `real-admin-assigned-route-helper` | `sl-sc1-admin-bff/router/live/activity.go` | 37 activity/sale routes using inline or assigned `AddLiveReadGuard` groups |
 | `real-admin-returned-group-middleware` | `sl-sc1-admin-bff/middleware/mock/mock_auth.go` | 424 endpoints reached through `createAdminAuthGroup` return values and child router parameters |

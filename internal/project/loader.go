@@ -2,6 +2,7 @@ package project
 
 import (
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -38,6 +39,9 @@ func Load(root string) (*Project, error) {
 		if isGoIgnoredName(d.Name()) || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
+		if !matchesBuildContext(path) {
+			return nil
+		}
 		return p.loadFile(path)
 	}); err != nil {
 		return nil, err
@@ -54,6 +58,14 @@ func shouldSkipDir(name string) bool {
 		return true
 	}
 	return false
+}
+
+func matchesBuildContext(path string) bool {
+	matched, err := build.Default.MatchFile(filepath.Dir(path), filepath.Base(path))
+	if err != nil {
+		return true
+	}
+	return matched
 }
 
 func isGoIgnoredName(name string) bool {

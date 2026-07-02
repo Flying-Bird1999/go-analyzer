@@ -103,22 +103,22 @@ func mapRange(file string, r facts.ChangeRange, index changeIndex, source string
 func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int, confidence facts.Confidence) facts.ChangeFact {
 	for _, annotation := range index.annotations[file] {
 		if spanContains(annotation.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, confidence)
 		}
 	}
 	for _, group := range index.groups[file] {
 		if spanContains(group.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, confidence)
 		}
 	}
 	for _, route := range index.routes[file] {
 		if spanContains(route.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, confidence)
 		}
 	}
 	for _, binding := range index.middleware[file] {
 		if spanContains(binding.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, facts.ConfidenceHigh)
+			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, confidence)
 		}
 	}
 	var selected *facts.SymbolFact
