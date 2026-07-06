@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -355,6 +356,61 @@ func Receive(msg *serviceim.Message) {
 	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
 	messageID := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"POST/LOCK_INVENTORY_UPDATE"})
+}
+
+func TestSummaryIterationCapIsReportedAndTerminates(t *testing.T) {
+	// A multi-hop param-forwarding chain needs several propagation rounds to
+	// converge. Forcing maxIterations to 1 must stop early, set the capped
+	// flag, and surface an im_summary_iteration_capped diagnostic rather than
+	// looping unbounded.
+	p, idx, store := loadIMProject(t, map[string]string{
+		"chain/chain.go": `package chain
+
+import notifyim "gopkg.inshopline.com/sc1/commons/utils/bus/notify/im"
+
+func sink(ctx any, event string, payload any) {
+	notifyim.SendIm(ctx, "app", "group", event, payload)
+}
+
+func hopA(ctx any, event string, payload any) { sink(ctx, event, payload) }
+func hopB(ctx any, event string, payload any) { hopA(ctx, event, payload) }
+func hopC(ctx any, event string, payload any) { hopB(ctx, event, payload) }
+
+func Send(ctx any, payload any) { hopC(ctx, "CHAINED_EVENT", payload) }
+`,
+	})
+
+	engine := newSummaryEngine(p, idx)
+	engine.maxIterations = 1
+	events := engine.extract()
+	if !engine.iterationCapped {
+		t.Fatalf("expected iterationCapped to be set when maxIterations=1")
+	}
+
+	// The full run (default ceiling) must both converge and resolve the event,
+	// proving the cap is a defensive backstop, not a functional limit.
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+	sender := astindex.FunctionSymbolID("example.com/im-flow/chain", "Send")
+	_ = events
+	if _, ok := firstEventFor(store.IMEvents, sender); !ok {
+		t.Fatalf("full run did not resolve chained event for %s", sender)
+	}
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == string(diagnostics.CodeIMSummaryIterationCapped) {
+			t.Fatalf("full run should not hit the iteration cap: %v", diagnostic)
+		}
+	}
+}
+
+func firstEventFor(events []facts.IMEventFact, sender facts.SymbolID) (facts.IMEventFact, bool) {
+	for _, event := range events {
+		if event.SenderSymbol == sender {
+			return event, true
+		}
+	}
+	return facts.IMEventFact{}, false
 }
 
 func loadIMProject(t *testing.T, files map[string]string) (*project.Project, *astindex.Index, *facts.Store) {

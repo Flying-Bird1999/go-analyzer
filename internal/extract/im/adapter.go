@@ -20,17 +20,31 @@ var commonIMSDKFunctions = map[string]sinkArguments{
 	"SendImToUidAsync": {EventArg: 3, PayloadArg: 4},
 }
 
-func matchSDKCall(file *project.File, call *ast.CallExpr) (sinkArguments, bool) {
+// sdkCandidate reports whether call targets a known common IM SDK function by
+// exact import path and function name, regardless of the number of arguments
+// actually supplied. It is the identity check without the arity check.
+func sdkCandidate(file *project.File, call *ast.CallExpr) (string, sinkArguments, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return sinkArguments{}, false
+		return "", sinkArguments{}, false
 	}
 	pkg, ok := selector.X.(*ast.Ident)
 	if !ok || file.Imports[pkg.Name] != commonIMSDKPath {
-		return sinkArguments{}, false
+		return "", sinkArguments{}, false
 	}
 	args, ok := commonIMSDKFunctions[selector.Sel.Name]
-	if !ok || args.EventArg >= len(call.Args) || args.PayloadArg >= len(call.Args) {
+	if !ok {
+		return "", sinkArguments{}, false
+	}
+	return selector.Sel.Name, args, true
+}
+
+func matchSDKCall(file *project.File, call *ast.CallExpr) (sinkArguments, bool) {
+	_, args, ok := sdkCandidate(file, call)
+	if !ok {
+		return sinkArguments{}, false
+	}
+	if args.EventArg >= len(call.Args) || args.PayloadArg >= len(call.Args) {
 		return sinkArguments{}, false
 	}
 	return args, true

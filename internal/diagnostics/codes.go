@@ -16,6 +16,8 @@ const (
 	CodeSymbolReferenceUnknownInterfaceBinding Code = "symbol_reference_unknown_interface_binding"
 	CodeTypeReferenceUnresolved                Code = "type_reference_unresolved"
 	CodeDeletedSymbolUnresolved                Code = "deleted_symbol_unresolved"
+	CodeIMSDKArgumentMismatch                  Code = "im_sdk_argument_mismatch"
+	CodeIMSummaryIterationCapped               Code = "im_summary_iteration_capped"
 )
 
 type Severity string

@@ -14,6 +14,12 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// maxSummaryIterations bounds the fixed-point summary propagation loop. The
+// loop already converges via summaryKey de-duplication, so this is a defensive
+// backstop against a pathological call graph, not a functional limit; a healthy
+// project settles in a handful of passes far below this ceiling.
+const maxSummaryIterations = 1000
+
 type templateKind string
 
 const (
@@ -69,27 +75,30 @@ type reachability struct {
 }
 
 type summaryEngine struct {
-	project       *project.Project
-	index         *astindex.Index
-	eval          *evaluator
-	anchors       protocolAnchors
-	functions     map[facts.SymbolID]*functionInfo
-	reach         map[facts.SymbolID]reachability
-	summaries     map[facts.SymbolID][]functionSummary
-	summaryKeys   map[facts.SymbolID]map[string]bool
-	protocolValid bool
+	project         *project.Project
+	index           *astindex.Index
+	eval            *evaluator
+	anchors         protocolAnchors
+	functions       map[facts.SymbolID]*functionInfo
+	reach           map[facts.SymbolID]reachability
+	summaries       map[facts.SymbolID][]functionSummary
+	summaryKeys     map[facts.SymbolID]map[string]bool
+	protocolValid   bool
+	maxIterations   int
+	iterationCapped bool
 }
 
 func newSummaryEngine(p *project.Project, idx *astindex.Index) *summaryEngine {
 	engine := &summaryEngine{
-		project:     p,
-		index:       idx,
-		eval:        newEvaluator(p, idx),
-		anchors:     discoverProtocolAnchors(p, idx),
-		functions:   map[facts.SymbolID]*functionInfo{},
-		reach:       map[facts.SymbolID]reachability{},
-		summaries:   map[facts.SymbolID][]functionSummary{},
-		summaryKeys: map[facts.SymbolID]map[string]bool{},
+		project:       p,
+		index:         idx,
+		eval:          newEvaluator(p, idx),
+		anchors:       discoverProtocolAnchors(p, idx),
+		functions:     map[facts.SymbolID]*functionInfo{},
+		reach:         map[facts.SymbolID]reachability{},
+		summaries:     map[facts.SymbolID][]functionSummary{},
+		summaryKeys:   map[facts.SymbolID]map[string]bool{},
+		maxIterations: maxSummaryIterations,
 	}
 	engine.protocolValid = engine.anchors.Valid()
 	engine.indexFunctions()
@@ -106,7 +115,11 @@ func (e *summaryEngine) extract() []facts.IMEventFact {
 	}
 
 	changed := true
-	for changed {
+	for iteration := 0; changed; iteration++ {
+		if e.maxIterations > 0 && iteration >= e.maxIterations {
+			e.iterationCapped = true
+			break
+		}
 		changed = false
 		for _, id := range sortedFunctionIDs(e.functions) {
 			info := e.functions[id]

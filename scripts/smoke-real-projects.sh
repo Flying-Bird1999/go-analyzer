@@ -108,10 +108,21 @@ run_project() {
   python3 -m json.tool "${out}" > /dev/null
   python3 - "$out" "$FACTS_BASELINE" "$name" <<'PY'
 import json
+import os
 import sys
 from collections import Counter
 
 out, baseline_path, name = sys.argv[1:4]
+# SMOKE_STRICT=1 restores exact-equality gating (use when deliberately
+# refreshing the baseline). Otherwise raw counts tolerate normal BFF drift
+# within SMOKE_FACTS_TOLERANCE (fractional, default 5%). The hard extraction
+# invariants below are always enforced regardless of mode.
+strict = os.environ.get("SMOKE_STRICT", "") not in ("", "0", "false")
+try:
+    tolerance = float(os.environ.get("SMOKE_FACTS_TOLERANCE", "0.05"))
+except ValueError:
+    tolerance = 0.05
+
 with open(out, "r", encoding="utf-8") as f:
     data = json.load(f)
 with open(baseline_path, "r", encoding="utf-8") as f:
@@ -120,12 +131,15 @@ routes = data.get("routes") or []
 route_to_handler = sum(1 for link in (data.get("links") or []) if link.get("kind") == "route_to_handler")
 routes_without_handler = sum(1 for route in routes if not route.get("handler_symbol"))
 routes_without_resolved_path = sum(1 for route in routes if not route.get("resolved_path"))
+
+# --- Hard invariants: these are the real contract and never tolerate drift. ---
 if routes_without_handler:
     raise SystemExit(f"{routes_without_handler} routes have no handler_symbol")
 if routes_without_resolved_path:
     raise SystemExit(f"{routes_without_resolved_path} routes have no resolved_path")
 if route_to_handler != len(routes):
     raise SystemExit(f"route_to_handler links={route_to_handler}, routes={len(routes)}")
+
 diagnostics = Counter(diagnostic.get("code") for diagnostic in (data.get("diagnostics") or []))
 actual = {
     "symbols": len(data.get("symbols") or []),
@@ -137,12 +151,48 @@ actual = {
 expected = baselines.get(name)
 if expected is None:
     raise SystemExit(f"missing facts baseline for {name}")
-if actual != expected:
-    raise SystemExit(
-        f"{name} facts baseline mismatch:\n"
-        f"expected={json.dumps(expected, sort_keys=True)}\n"
-        f"actual={json.dumps(actual, sort_keys=True)}"
-    )
+
+if strict:
+    if actual != expected:
+        raise SystemExit(
+            f"{name} facts baseline mismatch (SMOKE_STRICT):\n"
+            f"expected={json.dumps(expected, sort_keys=True)}\n"
+            f"actual={json.dumps(actual, sort_keys=True)}"
+        )
+else:
+    # --- Diagnostics: no regression. New codes or higher counts fail;
+    # fewer diagnostics (a genuine improvement) are allowed. ---
+    expected_diag = expected.get("diagnostics", {})
+    actual_diag = actual["diagnostics"]
+    new_codes = sorted(set(actual_diag) - set(expected_diag))
+    if new_codes:
+        raise SystemExit(
+            f"{name} introduced new diagnostic codes {new_codes}; "
+            f"expected={json.dumps(expected_diag, sort_keys=True)} "
+            f"actual={json.dumps(actual_diag, sort_keys=True)}"
+        )
+    worse = {c: actual_diag[c] for c in actual_diag if actual_diag[c] > expected_diag.get(c, 0)}
+    if worse:
+        raise SystemExit(
+            f"{name} diagnostics regressed for {json.dumps(worse, sort_keys=True)}; "
+            f"expected={json.dumps(expected_diag, sort_keys=True)}"
+        )
+    # --- Raw counts: advisory. Fail only when drift exceeds tolerance. ---
+    for field in ("symbols", "annotations", "routes", "route_links"):
+        want = expected.get(field, 0)
+        got = actual[field]
+        if want <= 0:
+            continue
+        drift = abs(got - want) / want
+        if drift > tolerance:
+            raise SystemExit(
+                f"{name} {field}={got} drifted {drift:.1%} from baseline {want} "
+                f"(> SMOKE_FACTS_TOLERANCE {tolerance:.1%}); "
+                f"if intended, refresh the baseline and rerun with SMOKE_STRICT=1"
+            )
+        if got != want:
+            print(f"  note: {name} {field} drifted {got}<-{want} ({drift:.1%}, within tolerance)")
+
 print(
     "symbols={symbols} annotations={annotations} routes={routes} route_links={route_links} diagnostics={diagnostics}".format(
         symbols=actual["symbols"],

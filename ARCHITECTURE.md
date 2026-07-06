@@ -1308,6 +1308,8 @@ bash scripts/smoke-real-projects.sh
 
 输出写入 `.analyzer-smoke/`，该目录被 git ignore。
 
+facts 基线校验策略：提取不变量（每条 route 有 handler 和 resolved path、`route_links == routes`）始终强制，diagnostics 按“不回归”校验（出现新诊断码或已知诊断码数量增加即失败，减少视为改进放行）。symbol/annotation/route 等原始计数默认按容差校验，允许真实 BFF 正常演进带来的小幅漂移，仅当漂移超过 `SMOKE_FACTS_TOLERANCE`（小数，默认 `0.05`）才失败，容差内漂移打印提示不阻断。刻意刷新基线时用 `SMOKE_STRICT=1` 恢复精确相等校验，并同步更新 `testdata/baselines/real-project-facts.json`。
+
 ### 14.6 推荐排查命令
 
 检查目标 symbol：
