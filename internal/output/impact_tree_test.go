@@ -1,3 +1,5 @@
+// impact_tree_test.go 校验 BuildImpactDocument 与 RenderImpactTreeJSON 的来源聚合、
+// 去重、稳定排序与 review 证据保留行为。
 package output
 
 import (
@@ -11,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/impact"
 )
 
+// 场景：同文件多个 change root 按来源聚合，并去重端点。
 func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 	fileChanges := []diff.FileChange{{
 		NewPath: "model/model.go",
@@ -40,6 +43,7 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 	}
 }
 
+// 场景：颠倒 fileChanges 与 roots 输入顺序，最终 JSON 应字节级一致（确定性输出）。
 func TestRenderImpactTreeJSONIsDeterministic(t *testing.T) {
 	changeA := diff.FileChange{NewPath: "a.go", Raw: "diff --git a/a.go b/a.go\n"}
 	changeB := diff.FileChange{NewPath: "b.go", Raw: "diff --git a/b.go b/b.go\n"}
@@ -66,6 +70,7 @@ func TestRenderImpactTreeJSONIsDeterministic(t *testing.T) {
 	}
 }
 
+// 场景：无 endpoint / IM 事件的 root 仍保留在来源 symbols 中，但摘要与 IM 列表为非 nil 空数组。
 func TestBuildImpactDocumentKeepsRootWithNoEndpoint(t *testing.T) {
 	root := testRootImpact("change:orphan", "func:example.com/project::Orphan", "orphan.go", "Orphan", "", "")
 	root.Endpoints = nil
@@ -90,6 +95,7 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpoint(t *testing.T) {
 	}
 }
 
+// 场景：IM 事件按来源去重并汇入全局 summary，跨来源重复事件只计一次。
 func TestBuildImpactDocumentSummarizesIMEventsBySource(t *testing.T) {
 	rootA := testRootImpact("change:a", "func:example.com/project::A", "a.go", "A", "GET", "/a")
 	rootA.IMEvents = []impact.IMEventImpact{{Event: "inbox_msg"}, {Event: "inbox_customer_msg"}}
@@ -118,6 +124,7 @@ func TestBuildImpactDocumentSummarizesIMEventsBySource(t *testing.T) {
 	}
 }
 
+// 场景：普通文件来源与 go.mod 模块来源分离，模块来源按 usage 入口聚合传播树并强化 basis。
 func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	fileChanges := []diff.FileChange{
 		{NewPath: "controller/checkin.go", Raw: "diff --git a/controller/checkin.go b/controller/checkin.go\n"},
@@ -246,6 +253,7 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	}
 }
 
+// 场景：replace 变更的 before/after 替换目标 path/version 正确投影到 moduleSources。
 func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 	doc := BuildImpactDocument(
 		[]diff.FileChange{{NewPath: "go.mod"}},
@@ -275,6 +283,7 @@ func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 	}
 }
 
+// 场景：多个 root 共享的递归子树内嵌在各自所属来源的 symbols 下，无需顶层 nodes 字段。
 func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	shared := impact.Node{
 		ID:         "func:example.com/project/service::Shared",
@@ -342,6 +351,7 @@ func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	}
 }
 
+// 场景：对外 JSON 保留 raw/relation/level/confidence 等 review 证据，但省略 span/meta/nodes。
 func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 	root := rawTestRoot(
 		"change:a",
@@ -398,6 +408,7 @@ func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 	}
 }
 
+// 场景：递归子节点的 confidence 独立保留，不被父节点 confidence 覆盖。
 func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
 	root := rawTestRoot(
 		"change:a",
@@ -430,6 +441,7 @@ func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
 	}
 }
 
+// rawTestRoot 构造一个带单个子节点与端点的测试 RootImpact，使用真实 impact.Node。
 func rawTestRoot(changeID, rootID, file, name string, child impact.Node) impact.RootImpact {
 	return impact.RootImpact{
 		Change: facts.ChangeFact{
@@ -454,6 +466,7 @@ func rawTestRoot(changeID, rootID, file, name string, child impact.Node) impact.
 	}
 }
 
+// testRootImpact 构造一个简化的测试 RootImpact，根节点为 type，可附带端点。
 func testRootImpact(changeID, symbolID, file, name, method, path string) impact.RootImpact {
 	return impact.RootImpact{
 		Change: facts.ChangeFact{ID: changeID, File: file, SymbolID: facts.SymbolID(symbolID)},

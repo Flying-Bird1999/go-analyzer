@@ -1,3 +1,6 @@
+// loader_test.go 验证 project 加载器对目录扫描、构建约束过滤、构建标签以及
+// 解析失败诊断行为是否正确。
+
 package project
 
 import (
@@ -7,6 +10,7 @@ import (
 	"testing"
 )
 
+// 测试场景：加载 mini-bff fixture，应正确扫描 .go 文件、解析 alias import，并跳过 _test.go。
 func TestLoadProjectScansGoFilesAndImports(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	p, err := Load(root)
@@ -39,6 +43,7 @@ func TestLoadProjectScansGoFilesAndImports(t *testing.T) {
 	}
 }
 
+// 测试场景：单个普通源码解析失败时不应中断加载，需记录 package_load_failed 诊断并保留可解析文件。
 func TestLoadSkipsInvalidGoFileAndRecordsDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
@@ -64,6 +69,7 @@ func TestLoadSkipsInvalidGoFileAndRecordsDiagnostic(t *testing.T) {
 	}
 }
 
+// 测试场景：_ 或 . 前缀的文件与目录应被整体跳过，仅保留 normal .go 文件。
 func TestLoadSkipsGoIgnoredFilesAndDirectories(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ignored\n\ngo 1.24\n"), 0o644); err != nil {
@@ -89,6 +95,7 @@ func TestLoadSkipsGoIgnoredFilesAndDirectories(t *testing.T) {
 	}
 }
 
+// 测试场景：被 `//go:build ignore` 排除的文件不应被加载，正常文件保留。
 func TestLoadSkipsFilesExcludedByBuildConstraints(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/build-tags\n\ngo 1.24\n"), 0o644); err != nil {
@@ -123,6 +130,7 @@ func main() {}
 	}
 }
 
+// 测试场景：传入显式构建标签时，仅保留满足该标签的文件，并反映在 Project.BuildContext 上。
 func TestLoadWithOptionsHonorsExplicitBuildTags(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/build-context\n\ngo 1.24\n"), 0o644); err != nil {
@@ -160,6 +168,7 @@ func TaggedOnly() {}
 	}
 }
 
+// writeLoaderTestFile 是加载器测试中向临时目录写入测试源码文件的辅助函数。
 func writeLoaderTestFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(rel))

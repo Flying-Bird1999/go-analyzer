@@ -1,3 +1,11 @@
+// extractor.go 实现 route 提取的入口与主流程：遍历项目中所有路由函数，
+// 从 lego RouterGroup 注册语法提取路由组、路由、中间件、handler/路由组包装器，
+// 并通过参数传递与返回值建立跨函数的组流动（group flow）与前缀传播。
+//
+// Package route 从 lego RouterGroup 的注册语法（g.Group / g.GET / g.Use 以及项目内
+// Add*/Create*/New*/Build* 等 group helper）中提取路由组、路由、中间件、handler 包装器、
+// 路由组包装器，并通过路由函数之间的参数传递和直接返回值建立跨函数的 group flow，
+// 同时记录每条事件在源码中的语句序号以支持按声明顺序的影响范围分析。
 package route
 
 import (
@@ -14,6 +22,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// Extract 是 route 提取入口：扫描全部函数，提取路由组/路由/中间件事实，
+// 随后建立跨函数组流动并应用调用上下文传播的前缀。
 func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 	funcs := routeFunctions(p)
 	stringConsts := routeStringConstants(p)
@@ -35,6 +45,8 @@ func Extract(p *project.Project, _ *astindex.Index, store *facts.Store) error {
 	return nil
 }
 
+// routeStringConstants 收集每个包内可解析为字符串的字面量常量，
+// 用于在路由路径中使用 const 名称或常量拼接时还原真实路径。
 func routeStringConstants(p *project.Project) map[string]map[string]string {
 	exprs := map[string]map[string]ast.Expr{}
 	for _, pkg := range p.Packages {
@@ -89,6 +101,8 @@ func routeStringConstants(p *project.Project) map[string]map[string]string {
 	return out
 }
 
+// routeConstString 把一个常量表达式解析为字符串值，支持字面量、标识符引用（含 iota 风格的上一行继承）
+// 与字符串拼接，seen 用于防止递归引用造成死循环。
 func routeConstString(pkgPath string, exprs map[string]map[string]ast.Expr, expr ast.Expr, seen map[string]bool) (string, bool) {
 	if value, ok := stringLiteral(expr); ok {
 		return value, true
@@ -126,29 +140,35 @@ func routeConstString(pkgPath string, exprs map[string]map[string]ast.Expr, expr
 	}
 }
 
+// routeFunction 记录一个函数作为路由函数的元信息：是否返回路由组，以及直接返回了哪些组变量。
 type routeFunction struct {
-	fn                *ast.FuncDecl
-	returnsGroup      bool
-	returnedGroupVars []string
+	fn                *ast.FuncDecl // 函数声明
+	returnsGroup      bool          // 是否返回路由组类型
+	returnedGroupVars []string      // 函数体中直接 return 的组变量名（去重排序）
 }
 
+// routeCallContext 记录一次对路由函数的调用：调用者、被调用者及实参到形参的组传播信息。
 type routeCallContext struct {
-	caller facts.SymbolID
-	callee facts.SymbolID
-	params map[string]routeParamContext
+	caller facts.SymbolID               // 调用方路由函数符号
+	callee facts.SymbolID               // 被调用路由函数符号
+	params map[string]routeParamContext // 形参名到组上下文传播信息的映射
 }
 
+// routeParamContext 描述某个组实参传入时的前缀、调用方根组变量及组 ID。
 type routeParamContext struct {
-	prefix        string
-	callerRootVar string
-	groupID       string
+	prefix        string // 该实参在调用方累积的前缀
+	callerRootVar string // 对应的调用方根组变量名
+	groupID       string // 实参对应的组 ID（用于建立 group flow 边）
 }
 
+// routeReturnCallContext 记录"返回值直接来自路由组变量"形成的组流动：
+// 被调用函数返回的组流入调用方某个组变量。
 type routeReturnCallContext struct {
-	callee        facts.SymbolID
-	callerGroupID string
+	callee        facts.SymbolID // 被调用路由函数
+	callerGroupID string         // 调用方接收返回值的组 ID
 }
 
+// routeFunctions 收集项目中所有函数及其路由函数元信息，建立符号到 routeFunction 的映射。
 func routeFunctions(p *project.Project) map[facts.SymbolID]routeFunction {
 	out := map[facts.SymbolID]routeFunction{}
 	for _, pkg := range p.Packages {
@@ -169,6 +189,8 @@ func routeFunctions(p *project.Project) map[facts.SymbolID]routeFunction {
 	return out
 }
 
+// returnsRouterGroup 判断函数是否返回路由组：首个返回类型为 RouterGroup，
+// 或与首个参数（路由组指针）类型一致（即把传入的组返回出来）。
 func returnsRouterGroup(fn *ast.FuncDecl) bool {
 	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
 		return false
@@ -183,6 +205,8 @@ func returnsRouterGroup(fn *ast.FuncDecl) bool {
 		exprString(resultType) == exprString(fn.Type.Params.List[0].Type)
 }
 
+// returnedGroupVars 收集函数体（不进入闭包）中 return 语句直接返回的标识符名，
+// 用于识别"把组变量直接返回"形成的 group flow。结果去重并排序。
 func returnedGroupVars(fn *ast.FuncDecl) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -208,6 +232,7 @@ func returnedGroupVars(fn *ast.FuncDecl) []string {
 	return out
 }
 
+// rootGroups 为路由函数的根组参数构建初始组上下文：每个 RouterGroup 参数成为一个 root 组。
 func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupContext {
 	out := map[string]groupContext{}
 	if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
@@ -229,6 +254,7 @@ func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupCont
 	return out
 }
 
+// isRouterGroupType 判断类型表达式是否为 lego 的 RouterGroup（穿透指针、泛型索引）。
 func isRouterGroupType(expr ast.Expr) bool {
 	switch x := expr.(type) {
 	case *ast.Ident:
@@ -246,6 +272,7 @@ func isRouterGroupType(expr ast.Expr) bool {
 	}
 }
 
+// collectFunc 处理单个函数：初始化根组上下文后按语句序号遍历函数体，提取路由事件。
 func collectFunc(
 	p *project.Project,
 	pkg *project.Package,
@@ -265,15 +292,20 @@ func collectFunc(
 	}
 }
 
+// routeEventCursor 是路由事件（组/路由/中间件）的语句序号计数器，
+// 用于在分支/循环中仍能给出单调递增的全函数序号。
 type routeEventCursor struct {
 	next int
 }
 
+// Next 自增并返回下一个事件序号。
 func (c *routeEventCursor) Next() int {
 	c.next++
 	return c.next
 }
 
+// collectStmt 按语句类型分发提取逻辑，并为各控制流分支复制独立的组上下文，
+// 使分支内定义的组不会泄漏到兄弟分支。语句序号由共享游标维护以保证全局单调。
 func collectStmt(
 	p *project.Project,
 	file *project.File,
@@ -294,6 +326,7 @@ func collectStmt(
 			if !ok || i >= len(s.Rhs) {
 				continue
 			}
+			// 右侧是路由组调用（Group/工厂/包装器）：登记新组并记录其组调用中间件。
 			if parent, prefix, ok := groupCall(file, funcs, stringConsts, groups, s.Rhs[i]); ok {
 				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
@@ -309,6 +342,7 @@ func collectStmt(
 					Span:           spanFor(p, file, s.Pos(), s.End()),
 				})
 				recordRouteReturnCallContext(file, groupID, s.Rhs[i], funcs, returnCallContexts)
+				// Group 调用除路径外的额外参数视为该组的中间件绑定。
 				for _, raw := range groupMiddlewareArgs(s.Rhs[i]) {
 					middlewareIndex := cursor.Next()
 					store.Middleware = append(store.Middleware, facts.MiddlewareBindingFact{
@@ -402,6 +436,8 @@ func collectStmt(
 	}
 }
 
+// collectCall 处理一次调用表达式，按优先级判定为中间件绑定或路由注册，
+// 否则记录为路由函数调用上下文以供前缀传播。
 func collectCall(
 	p *project.Project,
 	file *project.File,
@@ -428,6 +464,7 @@ func collectCall(
 	recordRouteFunctionCallContext(file, routeFunc, funcs, groups, call, callContexts)
 }
 
+// routeFuncSymbolID 计算函数声明的符号 ID，区分普通函数与方法（带接收者）。
 func routeFuncSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return astindex.FunctionSymbolID(pkgPath, fn.Name.Name)
@@ -435,6 +472,7 @@ func routeFuncSymbolID(pkgPath string, fn *ast.FuncDecl) facts.SymbolID {
 	return astindex.MethodSymbolID(pkgPath, astindex.ReceiverTypeName(fn.Recv.List[0].Type), fn.Name.Name)
 }
 
+// copyGroups 浅拷贝组上下文表，供控制流分支隔离使用。
 func copyGroups(groups map[string]groupContext) map[string]groupContext {
 	out := make(map[string]groupContext, len(groups))
 	for name, group := range groups {
@@ -443,6 +481,8 @@ func copyGroups(groups map[string]groupContext) map[string]groupContext {
 	return out
 }
 
+// recordRouteFunctionCallContext 记录一次对项目内路由函数的调用：
+// 把每个解析为组的实参映射到被调用函数的形参名，用于后续前缀传播与 group flow 建立。
 func recordRouteFunctionCallContext(file *project.File, routeFunc facts.SymbolID, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, call *ast.CallExpr, callContexts *[]routeCallContext) {
 	callee, ok := resolveRouteFunctionCall(file, call.Fun)
 	if !ok {
@@ -480,6 +520,8 @@ func recordRouteFunctionCallContext(file *project.File, routeFunc facts.SymbolID
 	})
 }
 
+// recordRouteReturnCallContext 处理右侧是路由函数调用的赋值：
+// 若被调用函数返回路由组且存在直接返回的组变量，则记录一条返回值 group flow 上下文。
 func recordRouteReturnCallContext(
 	file *project.File,
 	callerGroupID string,
@@ -501,6 +543,9 @@ func recordRouteReturnCallContext(
 	})
 }
 
+// addRouteGroupFlows 基于调用上下文与返回上下文建立组流动边：
+// 实参→被调用函数 root 组，以及被调用函数返回的组→调用方接收组。
+// 结果去重并按 ID 排序后写入 store。
 func addRouteGroupFlows(
 	store *facts.Store,
 	funcs map[facts.SymbolID]routeFunction,
@@ -551,6 +596,8 @@ func addRouteGroupFlows(
 	})
 }
 
+// resolveRouteFunctionCall 把调用表达式解析为被调用函数的符号 ID，
+// 支持同包标识符与跨包选择器（通过文件导入表查包路径）。
 func resolveRouteFunctionCall(file *project.File, expr ast.Expr) (facts.SymbolID, bool) {
 	switch x := expr.(type) {
 	case *ast.Ident:
@@ -570,6 +617,8 @@ func resolveRouteFunctionCall(file *project.File, expr ast.Expr) (facts.SymbolID
 	}
 }
 
+// routeParamNamesByArgument 返回按实参位置对齐的形参名切片：
+// Go 中多名称共享一个类型字段会展开为多个位置，无名称字段对应 nil。
 func routeParamNamesByArgument(fn *ast.FuncDecl) [][]string {
 	if fn.Type.Params == nil {
 		return nil
@@ -587,6 +636,8 @@ func routeParamNamesByArgument(fn *ast.FuncDecl) [][]string {
 	return out
 }
 
+// applyRouteCallPrefixes 利用调用上下文传播得到的唯一前缀，回填路由函数内
+// 未能本地解析（依赖传入组）的路由完整路径。
 func applyRouteCallPrefixes(store *facts.Store, callContexts []routeCallContext) {
 	prefixes := uniqueRouteCallPrefixes(callContexts)
 	if len(prefixes) == 0 {
@@ -614,6 +665,9 @@ func applyRouteCallPrefixes(store *facts.Store, callContexts []routeCallContext)
 	}
 }
 
+// uniqueRouteCallPrefixes 通过不动点迭代传播每个 root 组的累积前缀：
+// 只有当一个 root 组在所有调用处收敛到唯一前缀时才回填，避免歧义。
+// 同时跳过那些本身也是别路由函数实参的"中间"组（hasIncoming），防止把中间层当作终点播种。
 func uniqueRouteCallPrefixes(callContexts []routeCallContext) map[facts.SymbolID]map[string]string {
 	hasIncoming := routeCallIncomingParams(callContexts)
 	prefixSets := map[facts.SymbolID]map[string]map[string]struct{}{}
@@ -659,6 +713,7 @@ func uniqueRouteCallPrefixes(callContexts []routeCallContext) map[facts.SymbolID
 	return out
 }
 
+// routeCallIncomingParams 统计每个路由函数的哪些参数是由调用方传入的组（即作为路由函数实参出现）。
 func routeCallIncomingParams(callContexts []routeCallContext) map[facts.SymbolID]map[string]bool {
 	out := map[facts.SymbolID]map[string]bool{}
 	for _, context := range callContexts {
@@ -672,6 +727,7 @@ func routeCallIncomingParams(callContexts []routeCallContext) map[facts.SymbolID
 	return out
 }
 
+// addRoutePrefix 向某路由函数某参数的前缀集合中添加一个前缀，返回是否为新加入。
 func addRoutePrefix(prefixSets map[facts.SymbolID]map[string]map[string]struct{}, routeFunc facts.SymbolID, param string, prefix string) bool {
 	if prefixSets[routeFunc] == nil {
 		prefixSets[routeFunc] = map[string]map[string]struct{}{}
@@ -686,6 +742,8 @@ func addRoutePrefix(prefixSets map[facts.SymbolID]map[string]map[string]struct{}
 	return true
 }
 
+// routeRootGroupVar 沿父组链回溯，找到路由所属的 root 组变量名，
+// 用于在 applyRouteCallPrefixes 中查表得到调用方传播来的前缀。
 func routeRootGroupVar(route facts.RouteRegistrationFact, groupsByID map[string]facts.RouteGroupFact) string {
 	if route.GroupID == "" {
 		return route.GroupVar
@@ -706,6 +764,7 @@ func routeRootGroupVar(route facts.RouteRegistrationFact, groupsByID map[string]
 	}
 }
 
+// joinContextPrefix 用调用方前缀拼接子路径；若 path 已经以该前缀开头则原样返回，避免重复。
 func joinContextPrefix(prefix, path string) string {
 	if prefix == "" {
 		return path
@@ -716,6 +775,8 @@ func joinContextPrefix(prefix, path string) string {
 	return joinPath(prefix, path)
 }
 
+// groupMiddlewareArgs 从 g.Group(path, mw1, mw2) 调用中取出路径之后的所有参数原始文本，
+// 视为该组的中间件绑定。
 func groupMiddlewareArgs(expr ast.Expr) []string {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) <= 1 {
@@ -732,6 +793,9 @@ func groupMiddlewareArgs(expr ast.Expr) []string {
 	return out
 }
 
+// groupCall 判定一个右侧表达式是否产生新的路由组，并返回其父组、累积前缀与是否成功：
+// 标识符返回其组；g.Group(path) 拼接父前缀；工厂/包装器调用按命名规则递归处理。
+// 对于项目内的工厂/包装器调用，会校验返回类型确为路由组，避免把普通业务函数误判为组。
 func groupCall(
 	file *project.File,
 	funcs map[facts.SymbolID]routeFunction,
@@ -795,6 +859,7 @@ func groupCall(
 	return groupCall(file, funcs, stringConsts, groups, call.Args[0])
 }
 
+// routeStringArg 解析路径参数为字符串：支持字面量、包内常量名、字符串拼接与括号包裹。
 func routeStringArg(file *project.File, stringConsts map[string]map[string]string, expr ast.Expr) (string, bool) {
 	if value, ok := stringLiteral(expr); ok {
 		return value, true
@@ -820,6 +885,9 @@ func routeStringArg(file *project.File, stringConsts map[string]map[string]strin
 	}
 }
 
+// routeCall 把一个 HTTP 方法调用构造为 RouteRegistrationFact：
+// 解析方法/路径/handler，拼接组前缀得到解析路径，合并组与 handler 包装器，
+// 并在路径动态或 handler 无法精确解析时发出诊断。
 func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, store *facts.Store, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.RouteRegistrationFact, bool) {
 	parsed, ok := ParseRouteCall(call)
 	if !ok {
@@ -877,6 +945,8 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 	return route, true
 }
 
+// isUnresolvedHandlerExpression 判断 handler 表达式是否无法精确解析：
+// 标识符/选择器可解析；纯调用但拆不出任何包装器视为不可解析；其他表达式同样视为不可解析。
 func isUnresolvedHandlerExpression(expr ast.Expr) bool {
 	switch x := expr.(type) {
 	case *ast.Ident, *ast.SelectorExpr:
@@ -889,6 +959,8 @@ func isUnresolvedHandlerExpression(expr ast.Expr) bool {
 	}
 }
 
+// middlewareCall 把 g.Use(mw...) 调用构造为 MiddlewareBindingFact，
+// 多个实参以逗号拼接为一条中间件记录。
 func middlewareCall(p *project.Project, file *project.File, routeFunc facts.SymbolID, funcs map[facts.SymbolID]routeFunction, groups map[string]groupContext, call *ast.CallExpr, statementIndex int) (facts.MiddlewareBindingFact, bool) {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || selector.Sel.Name != "Use" || len(call.Args) == 0 {
@@ -914,22 +986,27 @@ func middlewareCall(p *project.Project, file *project.File, routeFunc facts.Symb
 	}, true
 }
 
+// rootGroupID 构造路由函数某参数对应的 root 组 ID。
 func rootGroupID(routeFunc facts.SymbolID, name string) string {
 	return "route_group:" + string(routeFunc) + ":" + name + ":root"
 }
 
+// routeGroupID 构造一个普通路由组（带语句序号）的 ID。
 func routeGroupID(routeFunc facts.SymbolID, name string, statementIndex int) string {
 	return "route_group:" + string(routeFunc) + ":" + name + ":" + strconv.Itoa(statementIndex)
 }
 
+// routeID 构造一条路由注册事实的 ID。
 func routeID(routeFunc facts.SymbolID, method, localPath string, statementIndex int) string {
 	return "route:" + string(routeFunc) + ":" + method + ":" + localPath + ":" + strconv.Itoa(statementIndex)
 }
 
+// middlewareID 构造一条中间件绑定事实的 ID。
 func middlewareID(routeFunc facts.SymbolID, groupVar string, statementIndex int) string {
 	return "middleware:" + string(routeFunc) + ":" + groupVar + ":" + strconv.Itoa(statementIndex)
 }
 
+// spanFor 计算给定起止位置的源码 span，并把文件路径转为相对项目根的路径。
 func spanFor(p *project.Project, file *project.File, start, end token.Pos) facts.SourceSpan {
 	span := astindex.SourceSpanFor(file.FileSet, start, end)
 	if rel, err := filepath.Rel(p.Root, span.File); err == nil {
@@ -938,6 +1015,7 @@ func spanFor(p *project.Project, file *project.File, start, end token.Pos) facts
 	return span
 }
 
+// mustRel 把绝对路径转为相对项目根的路径，转换失败时原样返回。
 func mustRel(root, path string) string {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {

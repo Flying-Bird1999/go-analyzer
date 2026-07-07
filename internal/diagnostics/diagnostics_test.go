@@ -1,3 +1,4 @@
+// diagnostics_test.go 验证诊断收集器的去重与字段保留行为。
 package diagnostics
 
 import (
@@ -6,6 +7,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// TestCollectorDedupesDiagnostics 验证：同一位置上同码同消息的两条诊断会被去重为一条，
+// 且去重后仍保留 code、severity、span、related fact ids 等字段。
 func TestCollectorDedupesDiagnostics(t *testing.T) {
 	collector := NewCollector()
 	span := facts.SourceSpan{File: "router/router.go", StartLine: 10, EndLine: 10}
@@ -16,6 +19,7 @@ func TestCollectorDedupesDiagnostics(t *testing.T) {
 		Span:           span,
 		RelatedFactIDs: []string{"route:a"},
 	})
+	// 与上一条完全相同的诊断应被去重。
 	collector.Add(Diagnostic{
 		Code:           CodeRouteDynamicPath,
 		Severity:       SeverityWarning,

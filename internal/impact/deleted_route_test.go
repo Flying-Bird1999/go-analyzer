@@ -1,3 +1,4 @@
+// deleted_route_test.go 测试 RecoverDeletedRoutes 在删除块场景下的路由恢复、变更根与端点降级。
 package impact
 
 import (
@@ -7,6 +8,9 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint 验证从删除块恢复出路由后，
+// 会追加 route_deleted 变更根、补全 group prefix 与 handler link，并通过 method/path 降级端点
+// （deleted_route_endpoint，medium）出现在影响树中。
 func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
@@ -66,6 +70,8 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 	}
 }
 
+// TestRecoveredDeletedRouteUsesAnnotationWhenItExtendsRecoveredRoutePath 验证当恢复路由的注解
+// 在路由路径上扩展了父级前缀时，端点以注解的更长路径为准（不被截断成局部段）。
 func TestRecoveredDeletedRouteUsesAnnotationWhenItExtendsRecoveredRoutePath(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	handler := facts.SymbolID("func:example.com/project/controller/sms::SmsRecordPage")
@@ -113,6 +119,8 @@ func TestRecoveredDeletedRouteUsesAnnotationWhenItExtendsRecoveredRoutePath(t *t
 	}
 }
 
+// TestRecoverDeletedRoutesIgnoresNonGoFiles 验证非 Go 文件（如 .ts）的删除块不会被
+// 当作路由恢复来源，避免对前端文件产生噪音路由与变更根。
 func TestRecoverDeletedRoutesIgnoresNonGoFiles(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	changes := []diff.FileChange{{

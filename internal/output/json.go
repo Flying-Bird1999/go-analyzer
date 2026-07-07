@@ -1,3 +1,5 @@
+// json.go 实现 facts 命令的 JSON 投影：拷贝 Store 事实、按 ID 稳定排序各类数组，
+// 并把 nil 切片归一化为空数组，保证 facts 输出确定性。
 package output
 
 import (
@@ -7,6 +9,11 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// RenderJSON 把 facts.Store 序列化为缩进 JSON，末尾追加换行。
+//
+// 步骤：用 append(nil, src...) 拷贝每类事实避免污染 Store；按 ID 字典序稳定排序；
+// nil 切片转为空切片使 JSON 输出 "[]" 而非 null；最后 MarshalIndent 序列化。
+// 该函数是 facts 命令的对外契约实现，相同 Store 产出字节级一致输出。
 func RenderJSON(store *facts.Store) ([]byte, error) {
 	doc := Document{
 		Project:     store.Project,
@@ -21,6 +28,7 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 		Links:       append([]facts.LinkFact(nil), store.Links...),
 		Diagnostics: append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
+	// 各类事实按 ID 字典序排序，保证相同事实集合产生稳定输出，便于 golden 与 diff。
 	sort.Slice(doc.Symbols, func(i, j int) bool {
 		return doc.Symbols[i].ID < doc.Symbols[j].ID
 	})
@@ -59,6 +67,8 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
+// ensureNonNilSlices 把所有事实切片从 nil 归一化为空切片，
+// 使 JSON 输出为空数组而非 null，简化消费方解析。
 func ensureNonNilSlices(doc *Document) {
 	if doc.Symbols == nil {
 		doc.Symbols = []facts.SymbolFact{}

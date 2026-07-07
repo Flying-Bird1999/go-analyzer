@@ -1,3 +1,5 @@
+// module.go 实现从根目录 go.mod 中读取 module path 的最小解析逻辑。
+
 package project
 
 import (
@@ -8,6 +10,8 @@ import (
 	"strings"
 )
 
+// ReadModulePath 打开根目录下的 go.mod 并返回其中声明的 module path。
+// 仅做行级扫描以避免引入完整的 go.mod 解析依赖。
 func ReadModulePath(root string) (string, error) {
 	f, err := os.Open(filepath.Join(root, "go.mod"))
 	if err != nil {

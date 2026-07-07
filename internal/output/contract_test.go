@@ -1,3 +1,4 @@
+// contract_test.go 校验 facts / impact JSON Schema 的有效性、字段边界与退役定义清理。
 package output
 
 import (
@@ -6,6 +7,7 @@ import (
 	"testing"
 )
 
+// 场景：facts / impact schema 均为有效 JSON，且包含各自的核心顶层属性。
 func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -38,6 +40,7 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 	}
 }
 
+// 场景：两份 schema 均不再暴露已退役的历史 impact 定义（edge / node 等）。
 func TestSchemasDoNotExposeRetiredImpactDefinitions(t *testing.T) {
 	retired := []string{"edge", "endpoint_impact", "evidence_chain", "module_impact", "node"}
 	for _, name := range []string{"facts", "impact"} {
@@ -63,6 +66,7 @@ func TestSchemasDoNotExposeRetiredImpactDefinitions(t *testing.T) {
 	}
 }
 
+// 场景：每份 schema 只暴露与自身相关的 $defs，不串入对方专属定义。
 func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -94,6 +98,7 @@ func TestSchemasExposeOnlyRelevantDefinitions(t *testing.T) {
 	}
 }
 
+// 场景：impact schema 暴露递归 impact_node 与 file_source_impact.symbols，无需顶层 nodes。
 func TestImpactSchemaExposesRecursiveReviewableNodes(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
@@ -129,6 +134,7 @@ func TestImpactSchemaExposesRecursiveReviewableNodes(t *testing.T) {
 	}
 }
 
+// 场景：impact schema 暴露 moduleSources 而非已退役的 module_changes / module_usages 事实。
 func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
@@ -160,6 +166,7 @@ func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	}
 }
 
+// 场景：impact schema 的 summary 与 file_source_impact 均暴露 IM 事件摘要字段。
 func TestImpactSchemaExposesIMEventSummaries(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
@@ -184,6 +191,7 @@ func TestImpactSchemaExposesIMEventSummaries(t *testing.T) {
 	}
 }
 
+// 场景：facts schema 不暴露 diff-only 的瞬态事实（changes / module_changes / module_usages 等）。
 func TestFactsSchemaOmitsDiffOnlyTransientFacts(t *testing.T) {
 	got, err := SchemaJSON("facts")
 	if err != nil {
@@ -207,6 +215,7 @@ func TestFactsSchemaOmitsDiffOnlyTransientFacts(t *testing.T) {
 	}
 }
 
+// 场景：facts schema 暴露 im_events 属性及其依赖/证据 $defs。
 func TestFactsSchemaExposesIMEvents(t *testing.T) {
 	got, err := SchemaJSON("facts")
 	if err != nil {
@@ -228,6 +237,7 @@ func TestFactsSchemaExposesIMEvents(t *testing.T) {
 	}
 }
 
+// 场景：impact schema 不暴露 meta / impact_meta 等版本元数据。
 func TestImpactSchemaDoesNotExposeSchemaVersion(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
@@ -246,6 +256,7 @@ func TestImpactSchemaDoesNotExposeSchemaVersion(t *testing.T) {
 	}
 }
 
+// 场景：impact schema 不暴露 span / source_span 等调试证据。
 func TestImpactSchemaDoesNotExposeSpanOrDebugEvidence(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
@@ -258,6 +269,7 @@ func TestImpactSchemaDoesNotExposeSpanOrDebugEvidence(t *testing.T) {
 	}
 }
 
+// 场景：SchemaJSON 对未知 schema 名称返回错误。
 func TestSchemaJSONRejectsUnknownType(t *testing.T) {
 	_, err := SchemaJSON("unknown")
 	if err == nil {

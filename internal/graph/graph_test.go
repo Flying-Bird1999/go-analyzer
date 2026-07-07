@@ -1,3 +1,4 @@
+// graph_test.go 测试反向引用图与路由图的查询视图构造与命中逻辑。
 package graph
 
 import (
@@ -12,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestReverseGraphLookupByTarget 场景：按被依赖 symbol 查询反向引用，应返回唯一引用者。
 func TestReverseGraphLookupByTarget(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.References = append(store.References, facts.ReferenceFact{
@@ -32,6 +34,7 @@ func TestReverseGraphLookupByTarget(t *testing.T) {
 	}
 }
 
+// TestRouteGraphMiddlewareAffectsOnlyLaterRoutes 场景：中间件仅影响语句顺序在其之后注册的同组路由。
 func TestRouteGraphMiddlewareAffectsOnlyLaterRoutes(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Routes = append(store.Routes,
@@ -54,6 +57,7 @@ func TestRouteGraphMiddlewareAffectsOnlyLaterRoutes(t *testing.T) {
 	}
 }
 
+// TestRouteGraphScopesGroupsByRouteFunction 场景：相同 groupVar 但不同路由函数的组不应串扰，中间件只命中同函数的组路由。
 func TestRouteGraphScopesGroupsByRouteFunction(t *testing.T) {
 	store := extractAndLinkFixture(t, "group-scope")
 	graph := NewRouteGraph(store)
@@ -75,6 +79,7 @@ func TestRouteGraphScopesGroupsByRouteFunction(t *testing.T) {
 	}
 }
 
+// TestRouteGraphIncludesDescendantGroupRoutes 场景：查询父组路由时应递归包含后代组中注册的路由。
 func TestRouteGraphIncludesDescendantGroupRoutes(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.RouteGroups = append(store.RouteGroups,
@@ -93,6 +98,7 @@ func TestRouteGraphIncludesDescendantGroupRoutes(t *testing.T) {
 	}
 }
 
+// TestRouteGraphMiddlewareAffectsDescendantGroupRoutes 场景：父组上的中间件同样影响后代组中的路由。
 func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.RouteGroups = append(store.RouteGroups,
@@ -118,6 +124,7 @@ func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
 	}
 }
 
+// TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes 场景：跨函数 group flow 建立的父子关系下，父组中间件同样影响子组路由。
 func TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.RouteGroupFlows = append(store.RouteGroupFlows, facts.RouteGroupFlowFact{
@@ -145,6 +152,7 @@ func TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes(t *testing.T) {
 	}
 }
 
+// TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute 场景：依赖引用 span 落在某条路由 span 内时，只关联到该条路由而非同函数的其他路由。
 func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
@@ -175,6 +183,7 @@ func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T
 	}
 }
 
+// TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes 场景：依赖引用 span 落在 group 创建表达式内时，影响该 group（含后代组）的全部路由。
 func TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	routeFunc := facts.SymbolID("func:example.com/project/router::InitRouter")
@@ -217,6 +226,7 @@ func TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes(t *testing.T) 
 	}
 }
 
+// extractAndLinkFixture 加载 testdata fixture，执行路由抽取与 link，返回填充好的 Store。
 func extractAndLinkFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "testdata", "fixtures", fixture)

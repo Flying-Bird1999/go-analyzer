@@ -1,3 +1,4 @@
+// adapter_test.go 验证公共 IM SDK 适配器的精确匹配与签名漂移诊断。
 package im
 
 import (
@@ -7,6 +8,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 )
 
+// TestCommonSDKAdapterMatchesExactImportedSymbols 验证四个内置 SDK 函数在精确
+// import path 下能按 event=3/payload=4 的位置正确匹配。
 func TestCommonSDKAdapterMatchesExactImportedSymbols(t *testing.T) {
 	_, _, file := loadEvaluatorProject(t, `package sample
 
@@ -34,6 +37,8 @@ func send(ctx any, event string, payload any) {
 	}
 }
 
+// TestCommonSDKAdapterRejectsSameNameFromAnotherPackage 验证来自非 SDK import path
+// 的同名函数不会被误判为公共 SDK 调用。
 func TestCommonSDKAdapterRejectsSameNameFromAnotherPackage(t *testing.T) {
 	_, _, file := loadEvaluatorProject(t, `package sample
 
@@ -52,10 +57,11 @@ func send(ctx any, event string, payload any) {
 	}
 }
 
+// TestSDKArgumentMismatchEmitsDiagnostic 验证 SDK 函数实参不足以承载 event/payload
+// 位置时不会静默漏报，而是输出 im_sdk_argument_mismatch 诊断。
 func TestSDKArgumentMismatchEmitsDiagnostic(t *testing.T) {
-	// A known SDK function invoked with too few arguments to carry the
-	// expected event/payload positions must not be silently dropped; it
-	// should surface as an im_sdk_argument_mismatch diagnostic.
+	// 已知的 SDK 函数若实参过少、无法承载期望的 event/payload 位置，
+	// 不能被静默放过，应作为 im_sdk_argument_mismatch 诊断暴露出来。
 	p, idx, store := loadIMProject(t, map[string]string{
 		"sender/sender.go": `package sender
 
@@ -80,8 +86,10 @@ func Send(ctx any) {
 	}
 }
 
+// TestValidSDKCallEmitsNoArgumentMismatch 验证参数齐全的正常 SDK 调用不会触发
+// 签名漂移诊断。
 func TestValidSDKCallEmitsNoArgumentMismatch(t *testing.T) {
-	// A well-formed SDK call must not trigger the drift diagnostic.
+	// 形参齐全的正常 SDK 调用不应触发签名漂移诊断。
 	p, idx, store := loadIMProject(t, map[string]string{
 		"sender/sender.go": `package sender
 
@@ -102,6 +110,7 @@ func Send(ctx any, payload any) {
 	}
 }
 
+// callExpressions 收集函数体内的所有调用表达式，供测试断言使用。
 func callExpressions(fn *ast.FuncDecl) []*ast.CallExpr {
 	var out []*ast.CallExpr
 	ast.Inspect(fn.Body, func(node ast.Node) bool {

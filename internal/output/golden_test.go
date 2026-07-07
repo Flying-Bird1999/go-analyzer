@@ -1,3 +1,4 @@
+// golden_test.go 通过 mini-bff 与 type-impact 两个黄金样本，端到端锁定 facts 与 impact 的稳定 JSON 输出。
 package output_test
 
 import (
@@ -20,6 +21,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// 场景：mini-bff facts 输出与 golden 样本字节级一致（root 与 build context 做环境归一化）。
 func TestMiniBFFGolden(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	got, err := app.RunFacts(app.Options{ProjectPath: root, Format: "json"})
@@ -43,6 +45,8 @@ func TestMiniBFFGolden(t *testing.T) {
 	}
 }
 
+// normalizeMiniBFFGolden 把 project.root 与 build_context 归一化为稳定值，
+// 消除测试机环境差异，使 golden 比较只关注 facts 结构而非绝对路径/平台。
 func normalizeMiniBFFGolden(t *testing.T, input []byte) []byte {
 	t.Helper()
 	var doc map[string]any
@@ -67,6 +71,7 @@ func normalizeMiniBFFGolden(t *testing.T, input []byte) []byte {
 	return append(out, '\n')
 }
 
+// 场景：type-impact 的 struct 字段 tag 变更经完整传播树到端点，impact 输出与 golden 字节级一致。
 func TestTypeImpactTreeGolden(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "type-impact")
 	p, err := project.Load(root)

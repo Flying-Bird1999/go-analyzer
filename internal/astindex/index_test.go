@@ -1,3 +1,4 @@
+// index_test.go 测试声明符号索引与轻量 value-type 推断的核心行为。
 package astindex
 
 import (
@@ -9,6 +10,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestBuildIndexesDeclarationSymbols 验证 mini-bff fixture 下 func/method/type/var/const 五类声明都能建出符号 ID 且 span 携带源码文件。
 func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	p, err := project.Load(root)
@@ -40,6 +42,7 @@ func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	}
 }
 
+// TestBuildUsesCompleteDeclarationSpans 验证 type 与 var 声明的 span 覆盖完整声明体，而非仅首行。
 func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "declaration-spans")
 	p, err := project.Load(root)
@@ -62,6 +65,7 @@ func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 	}
 }
 
+// TestBuildIndexesNewBuiltinReceiverType 验证 new(T) 初始化的包级 var 能解析到 receiver 类型上的方法。
 func TestBuildIndexesNewBuiltinReceiverType(t *testing.T) {
 	idx, file := buildValueTypeFixture(t)
 
@@ -75,6 +79,7 @@ func TestBuildIndexesNewBuiltinReceiverType(t *testing.T) {
 	}
 }
 
+// TestBuildIndexesTypedConstReceiverType 验证显式 typed const 能解析到其基础类型上的方法。
 func TestBuildIndexesTypedConstReceiverType(t *testing.T) {
 	idx, file := buildValueTypeFixture(t)
 
@@ -88,6 +93,7 @@ func TestBuildIndexesTypedConstReceiverType(t *testing.T) {
 	}
 }
 
+// buildValueTypeFixture 构造一个包含 new(T) 与 typed const 的最小 fixture，并返回索引与对应文件供测试使用。
 func buildValueTypeFixture(t *testing.T) (*Index, *project.File) {
 	t.Helper()
 	root := t.TempDir()
@@ -126,6 +132,7 @@ const DefaultCode Code = "default"
 	return idx, pkg.Files[0]
 }
 
+// mustSymbol 断言索引中存在指定符号并返回该 SymbolFact，缺失则失败。
 func mustSymbol(t *testing.T, idx *Index, id facts.SymbolID) facts.SymbolFact {
 	t.Helper()
 	symbol, ok := idx.Symbols[id]

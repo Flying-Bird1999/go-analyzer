@@ -1,3 +1,5 @@
+// summary_test.go 验证摘要传播层的 payload/event 精确归属、wrapper 传播、
+// payload producer、协议 wrapper 发现和迭代上限等行为。
 package im
 
 import (
@@ -12,6 +14,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestExtractSDKCallsKeepsPayloadEventsSeparate 验证同一 sender 发送多个 event 时，
+// 每个 event 只命中真正使用其 payload 类型的依赖，不会因为共享 sender 产生误报。
 func TestExtractSDKCallsKeepsPayloadEventsSeparate(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"consumer.go": `package sample
@@ -51,6 +55,8 @@ func (Consumer) Receive(event Envelope) {
 	assertEventsForDependency(t, store.IMEvents, sender, conversation, []string{"inbox_conv"})
 }
 
+// TestExtractSDKCallsResolvesJSONXGenericPayload 验证 jsonx.Unmarshal[T] 泛型调用
+// 的结果类型能被正确解析为 payload 依赖。
 func TestExtractSDKCallsResolvesJSONXGenericPayload(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"consumer.go": `package sample
@@ -93,6 +99,8 @@ func (Consumer) Receive(data []byte) {
 	assertEventsForDependency(t, store.IMEvents, sender, conversation, []string{"inbox_conv"})
 }
 
+// TestExtractPropagatesBroadcastParamsWrapperToCaller 验证 BroadcastParams 风格的
+// 协议 wrapper 摘要能沿调用链传播到上游调用者，并把 payload 类型精确归属。
 func TestExtractPropagatesBroadcastParamsWrapperToCaller(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"remote/im/im.go": `package im
@@ -141,6 +149,8 @@ func Receive(source Source) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"POST/PRODUCT_CHANGE"})
 }
 
+// TestExtractTracksLocalPayloadProducer 验证本地 converter 函数（payload producer）
+// 会被记入 payload 依赖，支持"调用本地函数构造 payload"的常见模式。
 func TestExtractTracksLocalPayloadProducer(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"remote/im/im.go": `package im
@@ -188,6 +198,8 @@ func Receive(source *Source) {
 	assertEventsForDependency(t, store.IMEvents, senderID, producerID, []string{"ACTIVITY/VOUCHER_WINNER"})
 }
 
+// TestExtractKeepsSameEventFromDistinctPayloadProducers 验证同一 event 字符串由
+// 不同 payload producer 发送时，两个摘要都保留，能按 producer 区分。
 func TestExtractKeepsSameEventFromDistinctPayloadProducers(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"remote/im/im.go": `package im
@@ -233,6 +245,8 @@ func Receive(source *Source) {
 	assertEventsForDependency(t, store.IMEvents, senderID, secondID, []string{"message"})
 }
 
+// TestExtractDiscoversSC2TopicPayloadWrapper 验证 SC2 风格的 topic/msg wrapper
+// （data.Event(topic) + Body 字段 + Post 端点）能被自动发现并传播 payload。
 func TestExtractDiscoversSC2TopicPayloadWrapper(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"util/im/im.go": `package im
@@ -284,6 +298,9 @@ func Receive(msg *serviceim.Message) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
 }
 
+// TestExtractResolvesLegacyEnumAndClosureWrapper 验证 legacy iota + String() 枚举、
+// channel.String() + event.String() 拼接 event，以及闭包 wrapper payload 这三种
+// 组合模式能被正确解析并传播。
 func TestExtractResolvesLegacyEnumAndClosureWrapper(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"constant/im.go": `package constant
@@ -358,11 +375,12 @@ func Receive(msg *serviceim.Message) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"POST/LOCK_INVENTORY_UPDATE"})
 }
 
+// TestSummaryIterationCapIsReportedAndTerminates 验证多跳参数转发链在强制
+// maxIterations=1 时会提前终止、设置 capped 标记并输出诊断；而默认上限下能正常
+// 收敛并解析 event，证明上限只是防御性措施而非功能限制。
 func TestSummaryIterationCapIsReportedAndTerminates(t *testing.T) {
-	// A multi-hop param-forwarding chain needs several propagation rounds to
-	// converge. Forcing maxIterations to 1 must stop early, set the capped
-	// flag, and surface an im_summary_iteration_capped diagnostic rather than
-	// looping unbounded.
+	// 多跳参数转发链需要若干轮传播才能收敛。把 maxIterations 强制为 1 必须提前
+	// 停止、设置 capped 标记并输出 im_summary_iteration_capped 诊断，而不是无限循环。
 	p, idx, store := loadIMProject(t, map[string]string{
 		"chain/chain.go": `package chain
 
@@ -387,8 +405,8 @@ func Send(ctx any, payload any) { hopC(ctx, "CHAINED_EVENT", payload) }
 		t.Fatalf("expected iterationCapped to be set when maxIterations=1")
 	}
 
-	// The full run (default ceiling) must both converge and resolve the event,
-	// proving the cap is a defensive backstop, not a functional limit.
+	// 默认上限下的完整运行必须既能收敛又能解析 event，
+	// 证明上限只是防御性措施而非功能限制。
 	if err := Extract(p, idx, store); err != nil {
 		t.Fatal(err)
 	}
@@ -404,6 +422,7 @@ func Send(ctx any, payload any) { hopC(ctx, "CHAINED_EVENT", payload) }
 	}
 }
 
+// firstEventFor 在事件列表中查找指定 sender 的首个事件，存在则返回。
 func firstEventFor(events []facts.IMEventFact, sender facts.SymbolID) (facts.IMEventFact, bool) {
 	for _, event := range events {
 		if event.SenderSymbol == sender {
@@ -413,6 +432,9 @@ func firstEventFor(events []facts.IMEventFact, sender facts.SymbolID) (facts.IME
 	return facts.IMEventFact{}, false
 }
 
+// loadIMProject 构造一个多文件、多包的临时 IM 测试项目，
+// 返回 project/index/store 三元组，并预填声明符号到 store。
+// 供摘要传播相关的集成测试使用。
 func loadIMProject(t *testing.T, files map[string]string) (*project.Project, *astindex.Index, *facts.Store) {
 	t.Helper()
 	root := t.TempDir()
@@ -443,6 +465,8 @@ func loadIMProject(t *testing.T, files map[string]string) (*project.Project, *as
 	return p, idx, store
 }
 
+// assertEventsForDependency 断言在指定 sender 下，依赖了指定符号且已解析的事件集合
+// 等于 want（顺序无关）。用于精确验证 payload 依赖与 event 的归属关系。
 func assertEventsForDependency(
 	t *testing.T,
 	events []facts.IMEventFact,
@@ -470,6 +494,7 @@ func assertEventsForDependency(
 	}
 }
 
+// hasIMDependency 判断事件是否依赖了指定符号（任意 relation）。
 func hasIMDependency(event facts.IMEventFact, dependency facts.SymbolID) bool {
 	for _, candidate := range event.Dependencies {
 		if candidate.SymbolID == dependency {

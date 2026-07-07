@@ -1,3 +1,6 @@
+// parser_test.go 验证 unified diff 解析器：多文件变更、原始 patch 保留、删除块与锚点、
+// 期望行、git quoted 路径与空输入拒绝等行为。
+
 package diff
 
 import (
@@ -5,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestParseUnifiedDiffChangedNewFileRanges 验证多文件 diff 能解析出正确的路径、状态与新版本行范围。
 func TestParseUnifiedDiffChangedNewFileRanges(t *testing.T) {
 	input := []byte(`diff --git a/controller/common.go b/controller/common.go
 index 1111111..2222222 100644
@@ -54,6 +58,7 @@ index 3333333..4444444 100644
 	}
 }
 
+// TestParseUnifiedPreservesRawFilePatch 验证每个文件保留独立的原始 patch 文本，且不串入下一个文件的内容。
 func TestParseUnifiedPreservesRawFilePatch(t *testing.T) {
 	input := []byte(`diff --git a/controller/common.go b/controller/common.go
 index 1111111..2222222 100644
@@ -94,6 +99,7 @@ index 3333333..4444444 100644
 	}
 }
 
+// TestParseUnifiedCreatesDeletionOnlyAnchorOnNewSide 验证纯删除 hunk 在新版本侧生成 deletion_anchor 行范围。
 func TestParseUnifiedCreatesDeletionOnlyAnchorOnNewSide(t *testing.T) {
 	input := []byte(`diff --git a/model/order.go b/model/order.go
 index 1111111..2222222 100644
@@ -118,6 +124,7 @@ index 1111111..2222222 100644
 	}
 }
 
+// TestParseUnifiedPreservesDeletedBlocks 验证连续删除块的旧行号、新版本锚点行号与原文被完整保留。
 func TestParseUnifiedPreservesDeletedBlocks(t *testing.T) {
 	input := []byte("diff --git a/router/router.go b/router/router.go\n" +
 		"index 1111111..2222222 100644\n" +
@@ -160,6 +167,7 @@ func TestParseUnifiedPreservesDeletedBlocks(t *testing.T) {
 	}
 }
 
+// TestParseUnifiedRetainsExpectedPostChangeLines 验证解析保留了变更后期望出现的行内容，供 ValidateApplied 校验。
 func TestParseUnifiedRetainsExpectedPostChangeLines(t *testing.T) {
 	input := []byte("diff --git a/service/a.go b/service/a.go\n" +
 		"--- a/service/a.go\n" +
@@ -193,6 +201,7 @@ func TestParseUnifiedRetainsExpectedPostChangeLines(t *testing.T) {
 	}
 }
 
+// TestParseUnifiedUnquotesGitQuotedUTF8Paths 验证 git quoted（八进制转义）的 UTF-8 文件名能被还原。
 func TestParseUnifiedUnquotesGitQuotedUTF8Paths(t *testing.T) {
 	input := []byte("diff --git \"a/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\" \"b/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\"\n" +
 		"index 1111111..2222222 100644\n" +
@@ -216,12 +225,14 @@ func TestParseUnifiedUnquotesGitQuotedUTF8Paths(t *testing.T) {
 	}
 }
 
+// TestParseUnifiedRejectsEmptyInput 验证空 diff 直接报错。
 func TestParseUnifiedRejectsEmptyInput(t *testing.T) {
 	if _, err := ParseUnified(nil); err == nil {
 		t.Fatal("expected empty diff to be rejected")
 	}
 }
 
+// equalStrings 判断两个字符串切片是否逐元素相等，供删除块行断言使用。
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

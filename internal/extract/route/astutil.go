@@ -1,3 +1,5 @@
+// astutil.go 实现 route 提取所需的 AST 辅助函数：表达式转字符串、
+// 字符串字面量解析、选择器拆分、调用名提取、路径拼接。
 package route
 
 import (
@@ -9,6 +11,7 @@ import (
 	"strings"
 )
 
+// exprString 将任意 AST 表达式格式化为源码字符串，用于事实记录中的原始文本。
 func exprString(expr ast.Expr) string {
 	if expr == nil {
 		return ""
@@ -18,6 +21,7 @@ func exprString(expr ast.Expr) string {
 	return b.String()
 }
 
+// stringLiteral 尝试把表达式解析为字符串字面量，返回去引号后的值。
 func stringLiteral(expr ast.Expr) (string, bool) {
 	lit, ok := expr.(*ast.BasicLit)
 	if !ok || lit.Kind != token.STRING {
@@ -30,6 +34,7 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 	return v, true
 }
 
+// selectorParts 展开选择器表达式为按点分割的名称段，例如 a.b.c -> [a b c]。
 func selectorParts(expr ast.Expr) []string {
 	switch x := expr.(type) {
 	case *ast.Ident:
@@ -41,6 +46,7 @@ func selectorParts(expr ast.Expr) []string {
 	}
 }
 
+// callName 返回调用的全限定名（含包前缀的点分形式）；非标识符/选择器调用返回空串。
 func callName(call *ast.CallExpr) string {
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
@@ -53,6 +59,7 @@ func callName(call *ast.CallExpr) string {
 	}
 }
 
+// joinPath 按 URL 路径规则拼接前缀与子路径，保证以 "/" 开头并去除重复斜杠。
 func joinPath(prefix, path string) string {
 	if prefix == "" {
 		prefix = "/"

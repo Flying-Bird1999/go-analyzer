@@ -1,3 +1,4 @@
+// expr_test.go 验证静态求值器对 event 字符串、iota 字符串表、payload 类型解析的能力。
 package im
 
 import (
@@ -12,6 +13,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestEvaluatorResolvesStaticEvents 验证求值器能解析字面量、typed const、拼接和
+// 类型转换四种 event 取值，且对运行时取值返回 unresolved。
 func TestEvaluatorResolvesStaticEvents(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 
@@ -55,6 +58,8 @@ func runtimeEvent() string { return "runtime" }
 	}
 }
 
+// TestEvaluatorResolvesIotaStringTable 验证 iota + String() 风格的枚举字符串表
+// 能被正确解析（iota 从 0 开始）。
 func TestEvaluatorResolvesIotaStringTable(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 
@@ -88,6 +93,8 @@ var conversation = Conversation.String()
 	}
 }
 
+// TestEvaluatorResolvesOffsetIotaStringTable 验证 iota 带偏移量（iota + 1）时，
+// 字符串表通过占位元素仍能正确解析。
 func TestEvaluatorResolvesOffsetIotaStringTable(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 
@@ -122,6 +129,8 @@ var conversation = Conversation.String()
 	}
 }
 
+// TestEvaluatorResolvesStringMethodDeclaredBeforeTable 验证 String() 方法声明在
+// 字符串表之前时也能正确解析（索引建立不依赖声明先后顺序）。
 func TestEvaluatorResolvesStringMethodDeclaredBeforeTable(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 
@@ -149,6 +158,8 @@ var lock = LockInventory.String()
 	}
 }
 
+// TestEvaluatorResolvesSelectorPayloadType 验证 selector 字段访问能正确解析出
+// 字段类型，用于 payload 依赖分析。
 func TestEvaluatorResolvesSelectorPayloadType(t *testing.T) {
 	p, idx, file := loadEvaluatorProject(t, `package sample
 
@@ -183,6 +194,8 @@ func use(event Envelope) {
 	}
 }
 
+// loadEvaluatorProject 构造一个单文件的临时项目，返回 project/index/file 三元组，
+// 供求值器单元测试使用。
 func loadEvaluatorProject(t *testing.T, source string) (*project.Project, *astindex.Index, *project.File) {
 	t.Helper()
 	root := t.TempDir()
@@ -207,6 +220,8 @@ func loadEvaluatorProject(t *testing.T, source string) (*project.Project, *astin
 	return p, idx, pkg.Files[0]
 }
 
+// packageValueExpr 从文件中查找名为 name 的 package-level value 声明，返回其
+// 初始化表达式。求值器测试用它构造被求值的表达式。
 func packageValueExpr(t *testing.T, file *project.File, name string) ast.Expr {
 	t.Helper()
 	for _, decl := range file.AST.Decls {
@@ -235,6 +250,7 @@ func packageValueExpr(t *testing.T, file *project.File, name string) ast.Expr {
 	return nil
 }
 
+// functionDecl 从文件中查找名为 name 的函数声明。
 func functionDecl(t *testing.T, file *project.File, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, decl := range file.AST.Decls {
@@ -247,6 +263,7 @@ func functionDecl(t *testing.T, file *project.File, name string) *ast.FuncDecl {
 	return nil
 }
 
+// selectorExpressions 收集函数体内的所有 selector 表达式，供测试断言使用。
 func selectorExpressions(fn *ast.FuncDecl) []*ast.SelectorExpr {
 	var out []*ast.SelectorExpr
 	ast.Inspect(fn.Body, func(node ast.Node) bool {

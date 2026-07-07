@@ -1,3 +1,6 @@
+// mapper_test.go 验证 diff 行范围到语义根的映射：按领域事实优先级（注解→路由组→路由→中间件→最小包含符号）
+// 选择最精确的根、跨重叠符号拆分范围、删除锚点降级置信度，以及无法恢复删除符号时的诊断。
+
 package diff
 
 import (
@@ -11,6 +14,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestMapRangesToSemanticFacts 验证同一文件不同行能分别映射到注解、符号、路由、中间件四类语义根。
 func TestMapRangesToSemanticFacts(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
@@ -46,6 +50,7 @@ func TestMapRangesToSemanticFacts(t *testing.T) {
 	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
 }
 
+// TestMapRealRouteFixtureRange 验证基于 middleware-order 真实 fixture 的中间件行能正确映射。
 func TestMapRealRouteFixtureRange(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "middleware-order")
 	store := loadFactsForDiff(t, root)
@@ -60,6 +65,7 @@ func TestMapRealRouteFixtureRange(t *testing.T) {
 	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
 }
 
+// TestMapAnnotatedFunctionBodyToSymbolInsteadOfAnnotation 验证注解函数的函数体行映射到符号而非注解（注解 span 仅限注释行）。
 func TestMapAnnotatedFunctionBodyToSymbolInsteadOfAnnotation(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "annotation-only")
 	store := loadFactsForDiff(t, root)
@@ -77,6 +83,7 @@ func TestMapAnnotatedFunctionBodyToSymbolInsteadOfAnnotation(t *testing.T) {
 	}
 }
 
+// TestMapChangesSelectsSmallestContainingSymbol 验证多重包含时优先选行跨度最小的符号。
 func TestMapChangesSelectsSmallestContainingSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols,
@@ -104,6 +111,7 @@ func TestMapChangesSelectsSmallestContainingSymbol(t *testing.T) {
 	}
 }
 
+// TestMapChangesSplitsRangeAcrossOverlappingSymbols 验证跨两个相邻符号的范围会被拆分映射到各自符号。
 func TestMapChangesSplitsRangeAcrossOverlappingSymbols(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols,
@@ -128,6 +136,7 @@ func TestMapChangesSplitsRangeAcrossOverlappingSymbols(t *testing.T) {
 	assertChangeSymbol(t, got, "func:example.com/project/service::Second")
 }
 
+// TestMapChangesMapsRouteGroupBeforeEnclosingSymbol 验证路由组优先于包裹它的路由函数符号被命中。
 func TestMapChangesMapsRouteGroupBeforeEnclosingSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
@@ -149,6 +158,7 @@ func TestMapChangesMapsRouteGroupBeforeEnclosingSymbol(t *testing.T) {
 	}
 }
 
+// TestMapChangesUsesMediumConfidenceForDeletionAnchor 验证删除锚点命中的符号根使用 medium 置信度。
 func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
@@ -170,6 +180,7 @@ func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
 	}
 }
 
+// TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors 验证注解/路由组/路由/中间件的删除锚点均降级为 medium 置信度。
 func TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Annotations = append(store.Annotations, facts.AnnotationFact{
@@ -210,6 +221,7 @@ func TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors(t *testing.T)
 	}
 }
 
+// TestMapChangesDiagnosesUnresolvedDeletedSymbol 验证删除文件无法恢复符号时降级为 file 根并输出 deleted_symbol_unresolved 诊断。
 func TestMapChangesDiagnosesUnresolvedDeletedSymbol(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 
@@ -233,6 +245,7 @@ func TestMapChangesDiagnosesUnresolvedDeletedSymbol(t *testing.T) {
 	t.Fatalf("deleted symbol diagnostic not found: %#v", store.Diagnostics)
 }
 
+// loadFactsForDiff 加载 fixture 项目并构建到含符号/注解/路由的 facts.Store，供映射测试使用。
 func loadFactsForDiff(t *testing.T, root string) *facts.Store {
 	t.Helper()
 	p, err := project.Load(root)
@@ -256,11 +269,13 @@ func loadFactsForDiff(t *testing.T, root string) *facts.Store {
 	return store
 }
 
+// assertChangeKind 断言变更列表中存在指定 kind 的根。
 func assertChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.ChangeKind) {
 	t.Helper()
 	_ = findChangeKind(t, changes, kind)
 }
 
+// findChangeKind 在变更列表中查找指定 kind 的根，找不到则测试失败。
 func findChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.ChangeKind) facts.ChangeFact {
 	t.Helper()
 	for _, change := range changes {
@@ -272,6 +287,7 @@ func findChangeKind(t *testing.T, changes []facts.ChangeFact, kind facts.ChangeK
 	return facts.ChangeFact{}
 }
 
+// assertChangeSymbol 断言变更列表中存在指向指定符号的根。
 func assertChangeSymbol(t *testing.T, changes []facts.ChangeFact, symbol facts.SymbolID) {
 	t.Helper()
 	for _, change := range changes {

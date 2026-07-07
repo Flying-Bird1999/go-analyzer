@@ -1,3 +1,4 @@
+// extractor_test.go 校验 annotation 包的注解解析与提取逻辑。
 package annotation
 
 import (
@@ -12,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestParseAPIAnnotations 场景：同一函数多条注解应全部解析，且路径自动补齐 "/"。
 func TestParseAPIAnnotations(t *testing.T) {
 	src := `package p
 // @Get /ready
@@ -39,6 +41,7 @@ func CheckIn() {}
 	}
 }
 
+// TestParseAPIAnnotationsIgnoresNonHTTPMethods 场景：非内置 HTTP 方法前缀（如 @Search）应被忽略。
 func TestParseAPIAnnotationsIgnoresNonHTTPMethods(t *testing.T) {
 	src := `package p
 // @Search /ready
@@ -61,6 +64,7 @@ func CheckIn() {}
 	}
 }
 
+// TestExtractAnnotationFacts 场景：从 annotation-only fixture 提取注解事实，校验方法/路径、handler symbol 与精确到注释行的 span。
 func TestExtractAnnotationFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "annotation-only")
 	p, err := project.Load(root)

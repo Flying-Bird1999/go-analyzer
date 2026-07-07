@@ -1,3 +1,4 @@
+// extractor_test.go 校验 gomod 包的依赖提取、版本比较、diff 恢复与 usage 映射。
 package gomod
 
 import (
@@ -11,6 +12,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestExtractModuleDependencies 场景：从 fixture go.mod 提取依赖与 replace，校验版本、direct/indirect 与 replace 目标。
 func TestExtractModuleDependencies(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "fixtures", "gomod-change", "go.mod"))
 	if err != nil {
@@ -39,6 +41,7 @@ func TestExtractModuleDependencies(t *testing.T) {
 	}
 }
 
+// TestExtractModuleDependenciesSupportsReplaceBlock 场景：replace block 内多条规则应被正确解析并合并回依赖。
 func TestExtractModuleDependenciesSupportsReplaceBlock(t *testing.T) {
 	data := []byte(`module example.com/app
 
@@ -68,6 +71,7 @@ replace (
 	}
 }
 
+// TestCompareVersionUsesSemanticPrereleaseOrdering 场景：版本比较应按 semver 规则处理 prerelease、build metadata 与 pseudo version，而非字符串排序。
 func TestCompareVersionUsesSemanticPrereleaseOrdering(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -96,6 +100,7 @@ func TestCompareVersionUsesSemanticPrereleaseOrdering(t *testing.T) {
 	}
 }
 
+// TestDiffModulesFromFileChangesDetectsBlockRequireWithoutBlockHeader 场景：hunk 只覆盖 require block 内单行（context 不含 "require ("）时仍应识别为升级。
 func TestDiffModulesFromFileChangesDetectsBlockRequireWithoutBlockHeader(t *testing.T) {
 	fileChanges := []diff.FileChange{{
 		OldPath: "go.mod",
@@ -116,6 +121,7 @@ func TestDiffModulesFromFileChangesDetectsBlockRequireWithoutBlockHeader(t *test
 	assertModuleChange(t, changes, "example.com/jsonx", facts.ModuleChangeUpgraded)
 }
 
+// TestDiffModulesFromFileChangesDetectsReplaceOnlyHunk 场景：仅 replace 单行发生变化的 hunk 应识别为 replaced。
 func TestDiffModulesFromFileChangesDetectsReplaceOnlyHunk(t *testing.T) {
 	fileChanges := []diff.FileChange{{
 		OldPath: "go.mod",
@@ -136,6 +142,7 @@ func TestDiffModulesFromFileChangesDetectsReplaceOnlyHunk(t *testing.T) {
 	assertModuleChange(t, changes, "example.com/jsonx", facts.ModuleChangeReplaced)
 }
 
+// TestMapModuleUsagePrecise 场景：函数体直接使用 import alias 时应精确定位到 symbol（precise）。
 func TestMapModuleUsagePrecise(t *testing.T) {
 	store := mapUsageFixture(t, "gomod-precise")
 	usage := findUsage(t, store.ModuleUsages, "gopkg.inshopline.com/sc1/commons/utils")
@@ -147,6 +154,7 @@ func TestMapModuleUsagePrecise(t *testing.T) {
 	}
 }
 
+// TestMapModuleUsageFileFallback 场景：无法精确到 symbol 时降级到 importing file 内的声明，并写入 file_fallback 诊断。
 func TestMapModuleUsageFileFallback(t *testing.T) {
 	store := mapUsageFixture(t, "gomod-file-fallback")
 	usage := findUsage(t, store.ModuleUsages, "gopkg.inshopline.com/sc1/commons/utils")
@@ -159,6 +167,7 @@ func TestMapModuleUsageFileFallback(t *testing.T) {
 	assertGomodDiagnosticCode(t, store, "module_usage_file_fallback")
 }
 
+// TestMapModuleUsageUnreferenced 场景：本仓未 import 变更 module 时标记为 unreferenced，并写入 module_unreferenced 诊断。
 func TestMapModuleUsageUnreferenced(t *testing.T) {
 	store := mapUsageFixture(t, "gomod-unreferenced")
 	usage := findUsage(t, store.ModuleUsages, "gopkg.inshopline.com/sc1/commons/utils")
@@ -168,6 +177,7 @@ func TestMapModuleUsageUnreferenced(t *testing.T) {
 	assertGomodDiagnosticCode(t, store, "module_unreferenced")
 }
 
+// TestMapModuleUsageGenericReceiverIsPrecise 场景：泛型 receiver 方法体内使用 alias 时仍应精确定位到对应 method symbol。
 func TestMapModuleUsageGenericReceiverIsPrecise(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generic-usage\n\ngo 1.24\n"), 0o644); err != nil {

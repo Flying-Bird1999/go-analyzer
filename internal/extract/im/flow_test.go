@@ -1,3 +1,4 @@
+// flow_test.go 验证控制依赖传播、动态 event 保留和 wrapper 循环确定性等摘要传播行为。
 package im
 
 import (
@@ -7,6 +8,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// TestExtractRecordsExactControlDependencyPerEvent 验证同一 sender 内多个 event 的
+// 控制依赖是按各自 if 条件精确归属的，不会互相串味。
 func TestExtractRecordsExactControlDependencyPerEvent(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"consumer.go": `package sample
@@ -46,6 +49,8 @@ func Send(msg *Message) {
 	}
 }
 
+// TestExtractKeepsDynamicEventUnresolved 验证无法静态求值的 event 字符串被保留为
+// 未解析状态（Event 为空、Resolved 为 false），但仍记录 payload 依赖。
 func TestExtractKeepsDynamicEventUnresolved(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"consumer.go": `package sample
@@ -81,6 +86,8 @@ func Send(event string, msg *Message) {
 	t.Fatal("dynamic event fact not found")
 }
 
+// TestExtractStopsWrapperCyclesDeterministically 验证 wrapper 调用图存在环时，
+// 摘要传播能确定性地终止，且多次运行结果一致。
 func TestExtractStopsWrapperCyclesDeterministically(t *testing.T) {
 	p, idx, store := loadIMProject(t, map[string]string{
 		"consumer.go": `package sample
@@ -114,6 +121,7 @@ func Entry(msg *Message) { A("cycle_event", msg) }
 	assertEventsForDependency(t, store.IMEvents, sender, message, []string{"cycle_event"})
 }
 
+// findIMEvent 在事件列表中查找指定 sender 和 event 名的事件，找不到则失败。
 func findIMEvent(t *testing.T, events []facts.IMEventFact, sender facts.SymbolID, name string) facts.IMEventFact {
 	t.Helper()
 	for _, event := range events {

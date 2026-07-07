@@ -1,3 +1,4 @@
+// extractor_test.go 校验 reference 包对 call/type/value 三类引用边的提取与解析行为。
 package reference
 
 import (
@@ -12,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// 场景：controller 方法调用 service 函数，应产生 call 引用边并保留调用表达式证据。
 func TestExtractFunctionCallReference(t *testing.T) {
 	store := extractReferenceFixture(t)
 
@@ -28,6 +30,7 @@ func TestExtractFunctionCallReference(t *testing.T) {
 	}
 }
 
+// 场景：包级 var 被赋值为某函数值，再通过该变量发起调用，应分别产生 value 与 call 边。
 func TestExtractPackageFunctionValueCallReference(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/function-value\n\ngo 1.24\n"), 0o644); err != nil {
@@ -73,6 +76,7 @@ func Handle() {
 	)
 }
 
+// 场景：包级变量上的方法调用应解析为该方法符号并产生 call 边。
 func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	store := extractReferenceFixture(t)
 
@@ -83,6 +87,7 @@ func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	)
 }
 
+// 场景：接口变量有唯一具体实现时，其方法调用应高置信度解析到具体方法。
 func TestExtractStrictInterfaceCallReference(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func Init() {
 	Client = new(client)
@@ -100,6 +105,7 @@ func TestExtractStrictInterfaceCallReference(t *testing.T) {
 	}
 }
 
+// 场景：接口变量被多次赋值且包含无法静态确定的实现时，不应产生具体 call 边，只报未知绑定诊断。
 func TestExtractStrictInterfaceRejectsUnknownBinding(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func buildClient() Client {
 	return new(client)
@@ -122,6 +128,7 @@ func Init() {
 	assertReferenceDiagnostic(t, store, "symbol_reference_unknown_interface_binding")
 }
 
+// 场景：未知接口绑定的调用应解析失败，并由解析器给出 unknown_interface_binding 诊断。
 func TestResolverExplainsUnknownInterfaceBinding(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func buildClient() Client {
 	return new(client)
@@ -153,6 +160,7 @@ func Init() {
 	}
 }
 
+// 场景：接口变量在跨包被额外赋值导致具体实现多于一个时，应报歧义诊断而非产生 call 边。
 func TestExtractStrictInterfaceRejectsCrossPackageConcreteAssignment(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func Init() {
 	Client = new(client)
@@ -188,6 +196,8 @@ func Configure() {
 	assertReferenceDiagnostic(t, store, "symbol_reference_ambiguous_interface")
 }
 
+// writeStrictInterfaceFixture 构造 strict-interface 测试夹具：定义接口、唯一实现与可注入的赋值源，
+// 并组装 controller 调用 remote.ClientValue.Fetch 的最小场景。
 func writeStrictInterfaceFixture(t *testing.T, assignmentSource string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -231,6 +241,7 @@ func Handle() {
 	return root
 }
 
+// 场景：项目包变量持有外部 SDK 类型，调用其外部方法不应被误报为项目内未解析符号。
 func TestExternalMethodOnProjectPackageVarDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/external-client\n\ngo 1.24\n"), 0o644); err != nil {
@@ -274,6 +285,7 @@ func Handle() {
 	}
 }
 
+// 场景：导入包名被同名的函数参数遮蔽，调用外部类型方法不应误报为项目内未解析符号。
 func TestExternalMethodOnLocalShadowingProjectImportDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/import-shadow\n\ngo 1.24\n"), 0o644); err != nil {
@@ -309,6 +321,7 @@ func Handle(consumer sdk.Consumer) {
 	}
 }
 
+// 场景：导入包名被局部变量遮蔽且变量类型未知时，不应将其方法误解析为导入包的方法。
 func TestUnknownLocalShadowingProjectImportDoesNotResolvePackageMethod(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/unknown-import-shadow\n\ngo 1.24\n"), 0o644); err != nil {
@@ -362,6 +375,7 @@ func Handle() {
 	}
 }
 
+// 场景：map[string]interface 的元素调用方法时，应枚举静态可见的具体实现作为分发候选。
 func TestExtractMethodReferenceFromResolvableMapCandidate(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/map-candidates\n\ngo 1.24\n"), 0o644); err != nil {
@@ -398,6 +412,7 @@ func Handle() {
 	)
 }
 
+// 场景：对未导入项目包的本地参数（如内置 error）调用方法，不应误报为项目内未解析符号。
 func TestMethodOnLocalWithoutProjectImportDoesNotReportUnresolvedProjectSymbol(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-method\n\ngo 1.24\n"), 0o644); err != nil {
@@ -420,6 +435,7 @@ func Handle(err error) string {
 	}
 }
 
+// 场景：类型字段、方法签名中的参数/返回值、接收者类型都应产生 type 引用边。
 func TestExtractTypeReferences(t *testing.T) {
 	store := extractFixture(t, "type-impact")
 
@@ -445,6 +461,7 @@ func TestExtractTypeReferences(t *testing.T) {
 	)
 }
 
+// 场景：类型转换（如 OrderID(x)）应作为 type 引用，而不是 call 边。
 func TestTypeConversionIsNotExtractedAsCall(t *testing.T) {
 	store := extractFixture(t, "type-impact")
 	from := facts.SymbolID("method:example.com/type-impact/controller:OrderAPI:Create")
@@ -457,6 +474,7 @@ func TestTypeConversionIsNotExtractedAsCall(t *testing.T) {
 	}
 }
 
+// 场景：函数体引用本包 const 与 var，应产生 value 引用边。
 func TestExtractValueReferences(t *testing.T) {
 	store := extractFixture(t, "type-impact")
 	from := facts.SymbolID("func:example.com/type-impact/controller::Build")
@@ -473,6 +491,7 @@ func TestExtractValueReferences(t *testing.T) {
 	)
 }
 
+// 场景：引用 ID 由边类型、起止符号与源码位置共同决定，确保可去重且稳定。
 func TestReferenceIDUsesSemanticIdentityAndSourceLocation(t *testing.T) {
 	span := facts.SourceSpan{File: "service/service.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 12}
 	got := referenceID(
@@ -487,6 +506,7 @@ func TestReferenceIDUsesSemanticIdentityAndSourceLocation(t *testing.T) {
 	}
 }
 
+// 场景：存在未解析引用时不应中断已可解析引用的提取，且应同时上报未解析诊断。
 func TestExtractUnresolvedProjectReferencesDoesNotAbortResolvedReferences(t *testing.T) {
 	store := extractReferenceFixture(t)
 
@@ -499,6 +519,7 @@ func TestExtractUnresolvedProjectReferencesDoesNotAbortResolvedReferences(t *tes
 	assertReferenceDiagnostic(t, store, "type_reference_unresolved")
 }
 
+// 场景：泛型函数调用的被调者（call 边）与显式类型实参（type 边）应分别提取，互不干扰。
 func TestExtractGenericFunctionCallSeparatesCalleeAndTypeArguments(t *testing.T) {
 	store := extractReferenceFixture(t)
 	from := facts.SymbolID("func:example.com/reference-chain/controller::CheckIn")
@@ -520,6 +541,7 @@ func TestExtractGenericFunctionCallSeparatesCalleeAndTypeArguments(t *testing.T)
 	}
 }
 
+// 场景：包级变量在函数内被局部 := 遮蔽前已被引用，该引用应解析到包级变量。
 func TestExtractValueReferenceBeforeLocalShadowing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/shadow\n\ngo 1.24\n"), 0o644); err != nil {
@@ -546,6 +568,7 @@ func Build() int {
 	)
 }
 
+// 场景：嵌套块内遮蔽同名变量后，遮蔽前后的引用都应解析到包级变量，共产生两条 value 边。
 func TestExtractValueReferenceAfterNestedLocalShadowing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nested-value-shadow\n\ngo 1.24\n"), 0o644); err != nil {
@@ -581,6 +604,7 @@ func Build() int {
 	}
 }
 
+// 场景：嵌套块遮蔽同名变量类型时，内层调用应解析到内层类型方法，外层调用解析到外层类型方法。
 func TestExtractMethodCallUsesLexicalScopeAfterNestedShadowing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nested-type-shadow\n\ngo 1.24\n"), 0o644); err != nil {
@@ -612,6 +636,7 @@ func Handle() {
 	assertReference(t, store, from, "method:example.com/nested-type-shadow:outerClient:Run", facts.ReferenceKindCall)
 }
 
+// 场景：包级 var 由构造函数初始化时，对其方法的调用以中等置信度解析到构造函数返回类型的方法。
 func TestExtractConstructorInferredMethodCallUsesMediumConfidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/constructor-confidence\n\ngo 1.24\n"), 0o644); err != nil {
@@ -649,6 +674,7 @@ func Handle() {
 	}
 }
 
+// 场景：构造函数返回类型与名字暗示不同时，应以声明的返回类型为准解析方法，避免名字启发式误导。
 func TestExtractPackageConstructorUsesDeclaredReturnType(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/package-constructor\n\ngo 1.24\n"), 0o644); err != nil {
@@ -683,6 +709,7 @@ func Handle() {
 	}
 }
 
+// 场景：构造函数返回接口类型但实际返回具体类型时，方法调用应解析到具体类型方法且不报未解析。
 func TestExtractPackageInterfaceConstructorUsesConcreteReturnType(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/interface-constructor\n\ngo 1.24\n"), 0o644); err != nil {
@@ -736,6 +763,7 @@ func Handle() {
 	}
 }
 
+// 场景：同一接收者类型内部的方法互调应高置信度解析为目标方法。
 func TestExtractReceiverMethodCallReference(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/receiver-call\n\ngo 1.24\n"), 0o644); err != nil {
@@ -765,6 +793,7 @@ func (c *controllerHandler) convert() {}
 	}
 }
 
+// 场景：局部变量由构造函数初始化时，其方法调用以中等置信度解析到返回类型方法。
 func TestExtractConstructorLocalMethodCallUsesMediumConfidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-constructor\n\ngo 1.24\n"), 0o644); err != nil {
@@ -799,6 +828,7 @@ func (c *controllerHandler) executeFlow() {}
 	}
 }
 
+// 场景：局部变量由内置 new(T) 构造时，其方法调用以高置信度解析到 T 的方法。
 func TestExtractNewBuiltinLocalMethodCallUsesHighConfidence(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-new\n\ngo 1.24\n"), 0o644); err != nil {
@@ -829,6 +859,7 @@ func (c *controllerHandler) executeFlow() {}
 	}
 }
 
+// 场景：自定义基础类型的常量调用其方法，应以声明的具名类型解析方法且高置信度。
 func TestExtractTypedConstMethodCall(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/typed-const\n\ngo 1.24\n"), 0o644); err != nil {
@@ -860,6 +891,7 @@ func Handle() string {
 	}
 }
 
+// 场景：map[string]接口 的元素调用方法，应静态枚举所有具名实现并产生对应方法调用边。
 func TestExtractStaticMapInterfaceDispatchReferencesAllConcreteMethods(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/static-map-dispatch\n\ngo 1.24\n"), 0o644); err != nil {
@@ -904,6 +936,7 @@ func Handle(kind Kind) {
 	assertReference(t, store, from, "method:example.com/static-map-dispatch:secondAction:Run", facts.ReferenceKindCall)
 }
 
+// 场景：map 值中存在非组合字面量（未知实现）时，应拒绝静态分发，不产生部分方法调用边。
 func TestExtractStaticMapInterfaceDispatchRejectsUnknownMapValue(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/static-map-unknown\n\ngo 1.24\n"), 0o644); err != nil {
@@ -955,6 +988,7 @@ func Handle(kind Kind) {
 	}
 }
 
+// 场景：多返回值构造函数赋值（c, err := ...）仅对首参推断类型，不应为 err 错误地产生方法调用边。
 func TestExtractConstructorTupleOnlyInfersFirstLocal(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-constructor-tuple\n\ngo 1.24\n"), 0o644); err != nil {
@@ -993,17 +1027,20 @@ func (c *controllerHandler) executeFlow() {}
 	}
 }
 
+// extractReferenceFixture 加载 reference-chain 测试夹具并执行 Extract。
 func extractReferenceFixture(t *testing.T) *facts.Store {
 	t.Helper()
 	return extractFixture(t, "reference-chain")
 }
 
+// extractFixture 加载 testdata 下的指定夹具并执行 Extract。
 func extractFixture(t *testing.T, fixture string) *facts.Store {
 	t.Helper()
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", fixture)
 	return extractFixtureRoot(t, root)
 }
 
+// extractFixtureRoot 从给定根目录加载项目、构建索引并执行 Extract，返回 facts 存储。
 func extractFixtureRoot(t *testing.T, root string) *facts.Store {
 	t.Helper()
 	p, err := project.Load(root)
@@ -1021,6 +1058,7 @@ func extractFixtureRoot(t *testing.T, root string) *facts.Store {
 	return store
 }
 
+// findReferenceTestFile 在项目中按相对路径查找测试目标文件。
 func findReferenceTestFile(t *testing.T, p *project.Project, rel string) *project.File {
 	t.Helper()
 	for _, pkg := range p.Packages {
@@ -1038,6 +1076,7 @@ func findReferenceTestFile(t *testing.T, p *project.Project, rel string) *projec
 	return nil
 }
 
+// firstCallInFile 返回文件 AST 中首个出现的调用表达式。
 func firstCallInFile(t *testing.T, file *project.File) *ast.CallExpr {
 	t.Helper()
 	var out *ast.CallExpr
@@ -1058,11 +1097,13 @@ func firstCallInFile(t *testing.T, file *project.File) *ast.CallExpr {
 	return out
 }
 
+// assertReference 断言给定 from/to/kind 的引用边存在。
 func assertReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) {
 	t.Helper()
 	_ = findReference(t, store, from, to, kind)
 }
 
+// findReference 查找并返回指定 from/to/kind 的引用事实，不存在则失败。
 func findReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, kind facts.ReferenceKind) facts.ReferenceFact {
 	t.Helper()
 	for _, ref := range store.References {
@@ -1074,6 +1115,7 @@ func findReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, ki
 	return facts.ReferenceFact{}
 }
 
+// assertReferenceDiagnostic 断言存储中存在指定诊断码的引用相关诊断。
 func assertReferenceDiagnostic(t *testing.T, store *facts.Store, code string) {
 	t.Helper()
 	for _, diagnostic := range store.Diagnostics {

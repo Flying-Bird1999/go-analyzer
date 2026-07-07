@@ -1,3 +1,4 @@
+// interface_bindings_test.go 测试接口变量严格证据绑定的接受与拒绝场景。
 package astindex
 
 import (
@@ -9,6 +10,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestInterfaceBindingResolvesUniqueConcreteAssignment 验证：唯一具体类型赋值可解析到该具体方法，且置信度为 high。
 func TestInterfaceBindingResolvesUniqueConcreteAssignment(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 
@@ -37,6 +39,7 @@ func Init() {
 	}
 }
 
+// TestInterfaceBindingResolvesCompositeLiteralAssignmentInClosure 验证：闭包内的组合字面量赋值也算作绑定证据。
 func TestInterfaceBindingResolvesCompositeLiteralAssignmentInClosure(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 
@@ -70,6 +73,7 @@ func Init() {
 	}
 }
 
+// TestInterfaceBindingRejectsUnknownAssignment 验证：出现返回接口类型的 constructor 赋值时，绑定被拒绝。
 func TestInterfaceBindingRejectsUnknownAssignment(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 
@@ -98,6 +102,7 @@ func Init() {
 	}
 }
 
+// TestInterfaceBindingRejectsMultipleConcreteAssignments 验证：多实现赋值时绑定被拒绝，不猜测具体方法。
 func TestInterfaceBindingRejectsMultipleConcreteAssignments(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 
@@ -127,6 +132,7 @@ func Init(useOther bool) {
 	}
 }
 
+// TestInterfaceBindingIgnoresShadowingAssignments 验证：局部变量与参数对同名包级变量的遮蔽不会污染包级变量的绑定。
 func TestInterfaceBindingIgnoresShadowingAssignments(t *testing.T) {
 	idx, file := buildInterfaceBindingFixture(t, `package binding
 
@@ -166,6 +172,7 @@ func parameterShadow(Default Client) {
 	}
 }
 
+// TestInterfaceBindingRejectsCrossFileNewShadow 验证：跨文件定义的 new 函数会遮蔽内建 new，使 new(realClient) 不再被当作 builtin 构造。
 func TestInterfaceBindingRejectsCrossFileNewShadow(t *testing.T) {
 	idx, file := buildInterfaceBindingFiles(t, map[string]string{
 		"binding.go": `package binding
@@ -203,11 +210,13 @@ func newOtherClient() Client {
 	}
 }
 
+// buildInterfaceBindingFixture 用单文件源码构造接口绑定测试 fixture。
 func buildInterfaceBindingFixture(t *testing.T, source string) (*Index, *project.File) {
 	t.Helper()
 	return buildInterfaceBindingFiles(t, map[string]string{"binding.go": source})
 }
 
+// buildInterfaceBindingFiles 用多文件源码构造接口绑定测试 fixture，并返回索引与 binding.go 对应文件。
 func buildInterfaceBindingFiles(t *testing.T, sources map[string]string) (*Index, *project.File) {
 	t.Helper()
 	root := t.TempDir()

@@ -1,3 +1,4 @@
+// analyzer_test.go 测试 AnalyzeTrees 在符号传播、领域根、环路、IM 终端等场景下的影响树构造。
 package impact
 
 import (
@@ -6,6 +7,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// TestAnalyzeBuildsCompleteSymbolToEndpointTree 验证从 service 符号反向传播到 controller、
+// 再到路由与注解，最终命中完整 HTTP endpoint 的标准链路。
 func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
@@ -26,6 +29,8 @@ func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	}
 }
 
+// TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath 验证同一传播路径上既产生 HTTP endpoint，
+// 也产生已解析 IM 事件，且动态事件保留为 im_event_unresolved 终端但不计入 IM 摘要。
 func TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath(t *testing.T) {
 	store := referenceImpactStore()
 	store.IMEvents = append(store.IMEvents,
@@ -78,6 +83,8 @@ func TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath(t *testing.T) {
 	}
 }
 
+// TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol 验证当变更直接命中路由时，
+// 优先以路由领域根展开，而不是退化为 handler 符号传播。
 func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
@@ -95,6 +102,8 @@ func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	}
 }
 
+// TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint 验证注解领域根展开时，
+// 端点 method/path 以注册路由的完整路径为准（覆盖注解的局部 path）。
 func TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	handler := facts.SymbolID("func:example.com/project/controller/common::CheckIn")
@@ -142,6 +151,8 @@ func TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint(t *testing.T) {
 	}
 }
 
+// TestAnalyzeMarksCycles 验证当反向引用形成环路（service <-> controller）时，
+// 重复出现的节点被正确标记 Cycle 而不无限递归。
 func TestAnalyzeMarksCycles(t *testing.T) {
 	store := referenceImpactStore()
 	store.References = append(store.References, facts.ReferenceFact{
@@ -164,6 +175,8 @@ func TestAnalyzeMarksCycles(t *testing.T) {
 	}
 }
 
+// TestAnalyzeKeepsMultipleEndpointsAndSeparateRoots 验证多个变更根互不覆盖、各自独立展开，
+// 且同一根能同时命中多个端点。
 func TestAnalyzeKeepsMultipleEndpointsAndSeparateRoots(t *testing.T) {
 	store := referenceImpactStore()
 	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
@@ -195,6 +208,8 @@ func TestAnalyzeKeepsMultipleEndpointsAndSeparateRoots(t *testing.T) {
 	}
 }
 
+// TestAnalyzePropagatesMiddlewareSymbolToEndpoint 验证中间件符号变更能传播到挂载该中间件、
+// 且 statement order 靠后的路由，最终命中 HTTP endpoint。
 func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	middlewareSymbol := facts.SymbolID("method:example.com/project/auth:Auth:Middleware")
@@ -242,6 +257,8 @@ func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
 	}
 }
 
+// TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute 验证 inline 路由作用域依赖
+// （route 注册表达式 span 内引用的 helper）只影响它所在的那条路由，不会波及同函数的其他路由。
 func TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	guard := facts.SymbolID("func:example.com/project/router::Guard")
@@ -288,11 +305,14 @@ func TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute(t *testing.T) {
 	}
 }
 
+// 测试中复用的符号 ID 常量，分别表示 service 与 controller 层的 CheckIn 函数。
 const (
 	serviceSymbol    facts.SymbolID = "func:example.com/project/service::CheckIn"
 	controllerSymbol facts.SymbolID = "func:example.com/project/controller::CheckIn"
 )
 
+// referenceImpactStore 构造一个基础 store：service 被 controller 调用，
+// controller 注册为路由的 handler 并带有注解，是多数传播测试的起点。
 func referenceImpactStore() *facts.Store {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols,
@@ -323,6 +343,7 @@ func referenceImpactStore() *facts.Store {
 	return store
 }
 
+// mustTreeRoot 在结果中查找指定变更 ID 对应的根，找不到则 fail。
 func mustTreeRoot(t *testing.T, result TreeResult, changeID string) RootImpact {
 	t.Helper()
 	for _, root := range result.Roots {
@@ -334,6 +355,7 @@ func mustTreeRoot(t *testing.T, result TreeResult, changeID string) RootImpact {
 	return RootImpact{}
 }
 
+// firstEndpointPath 在树中深度优先找到第一条到 endpoint 的路径并返回路径上所有节点。
 func firstEndpointPath(t *testing.T, root Node) []Node {
 	t.Helper()
 	var visit func(Node, []Node) []Node
@@ -356,6 +378,7 @@ func firstEndpointPath(t *testing.T, root Node) []Node {
 	return got
 }
 
+// assertNodeKinds 校验节点路径上各节点的 Kind 依次匹配期望值。
 func assertNodeKinds(t *testing.T, nodes []Node, want ...string) {
 	t.Helper()
 	if len(nodes) != len(want) {
@@ -368,6 +391,7 @@ func assertNodeKinds(t *testing.T, nodes []Node, want ...string) {
 	}
 }
 
+// containsCycle 递归判断树中是否存在被标记 Cycle 的节点。
 func containsCycle(node Node) bool {
 	if node.Cycle {
 		return true
@@ -380,6 +404,7 @@ func containsCycle(node Node) bool {
 	return false
 }
 
+// containsNodeKind 递归判断树中是否包含指定 Kind 的节点。
 func containsNodeKind(node Node, kind string) bool {
 	if node.Kind == kind {
 		return true

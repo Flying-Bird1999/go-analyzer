@@ -1,3 +1,5 @@
+// config_test.go 验证 impact 配置的加载、严格字段校验以及模块变更过滤行为。
+
 package config
 
 import (
@@ -8,6 +10,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
+// 测试场景：项目内不存在默认配置文件时返回零值配置，且默认仍分析模块变更。
 func TestLoadImpactConfigReturnsDefaultWhenProjectConfigMissing(t *testing.T) {
 	cfg, err := LoadImpactConfig(t.TempDir(), "")
 	if err != nil {
@@ -18,6 +21,7 @@ func TestLoadImpactConfigReturnsDefaultWhenProjectConfigMissing(t *testing.T) {
 	}
 }
 
+// 测试场景：glob 模式应正确过滤掉匹配的模块变更，保留未命中的模块变更。
 func TestLoadImpactConfigFiltersIgnoredModuleChangeGlob(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -41,6 +45,7 @@ func TestLoadImpactConfigFiltersIgnoredModuleChangeGlob(t *testing.T) {
 	}
 }
 
+// 测试场景：显式 analyzeModuleChanges=false 时应整体关闭模块变更分析。
 func TestLoadImpactConfigCanDisableAllModuleChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -59,6 +64,7 @@ func TestLoadImpactConfigCanDisableAllModuleChanges(t *testing.T) {
 	}
 }
 
+// 测试场景：ignoredModuleChanges 中的非法 glob 模式应在加载阶段被拒绝。
 func TestLoadImpactConfigRejectsInvalidIgnoredModulePattern(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -72,6 +78,7 @@ func TestLoadImpactConfigRejectsInvalidIgnoredModulePattern(t *testing.T) {
 	}
 }
 
+// 测试场景：旧的 route schema 字段不在 impact 配置范围内，应被严格校验拒绝。
 func TestLoadImpactConfigRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")
 	if err := os.WriteFile(path, []byte(`{
@@ -87,6 +94,7 @@ func TestLoadImpactConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+// 测试场景：拼错的字段名应被严格校验拒绝，避免配置被静默忽略。
 func TestLoadImpactConfigRejectsMisspelledFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")
 	if err := os.WriteFile(path, []byte(`{

@@ -1,3 +1,5 @@
+// contract.go 实现 facts / impact 的 JSON Schema 构造与导出。
+// schema 文档以 map[string]any 描述，按需引用公共定义；SchemaJSON 把指定文档序列化为缩进 JSON。
 package output
 
 import (
@@ -5,6 +7,8 @@ import (
 	"fmt"
 )
 
+// schemaDocuments 内置 facts 与 impact 两份 JSON Schema 文档（JSON Schema 2020-12 draft）。
+// facts 描述完整项目事实快照；impact 描述对外可 review 的传播树。
 var schemaDocuments = map[string]map[string]any{
 	"facts": {
 		"$schema":              "https://json-schema.org/draft/2020-12/schema",
@@ -34,7 +38,8 @@ var schemaDocuments = map[string]map[string]any{
 		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"summary", "fileSources"},
+		// fileSources 必填；moduleSources 仅在形成模块变更时输出，因此不在 required 中。
+		"required": []string{"summary", "fileSources"},
 		"properties": map[string]any{
 			"summary":       ref("impact_summary"),
 			"fileSources":   arrayOf(ref("file_source_impact")),
@@ -44,6 +49,8 @@ var schemaDocuments = map[string]map[string]any{
 	},
 }
 
+// SchemaJSON 返回指定名称（facts / impact）的 JSON Schema 文档。
+// 未知名称返回错误，避免误导。序列化结果末尾追加换行，便于文件落地。
 func SchemaJSON(name string) ([]byte, error) {
 	doc, ok := schemaDocuments[name]
 	if !ok {
@@ -56,14 +63,18 @@ func SchemaJSON(name string) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
+// ref 构造指向当前文档 $defs 下指定名称的 $ref 片段。
 func ref(name string) map[string]any {
 	return map[string]any{"$ref": "#/$defs/" + name}
 }
 
+// arrayOf 把任意 schema 片段包装为 array 类型，items 引用该片段。
 func arrayOf(item any) map[string]any {
 	return map[string]any{"type": "array", "items": item}
 }
 
+// object 构造一个 additionalProperties=false 的 object schema，并列出 required 字段。
+// required 字段在 JSON 输出时必须存在，未列出的 properties 字段为可选。
 func object(properties map[string]any, required ...string) map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -73,6 +84,8 @@ func object(properties map[string]any, required ...string) map[string]any {
 	}
 }
 
+// factsDefinitions 选择 facts schema 需要的公共定义，仅暴露项目事实相关的 $defs。
+// 不包含 impact 专用定义（如 impact_node）与 diff-only 的瞬态事实（如 change / module_change）。
 func factsDefinitions() map[string]any {
 	return selectDefinitions(
 		"annotation",
@@ -95,6 +108,8 @@ func factsDefinitions() map[string]any {
 	)
 }
 
+// impactDefinitions 选择 impact schema 需要的公共定义，仅暴露对外 review 树相关的 $defs。
+// 不包含 facts 项目事实定义，也不暴露已退役的 edge / endpoint_impact 等历史定义。
 func impactDefinitions() map[string]any {
 	return selectDefinitions(
 		"endpoint_summary",
@@ -106,6 +121,8 @@ func impactDefinitions() map[string]any {
 	)
 }
 
+// selectDefinitions 从 commonDefinitions 中挑选指定名称的子集。
+// 通过显式白名单避免向某份 schema 暴露不属于它的定义，保证契约边界清晰。
 func selectDefinitions(names ...string) map[string]any {
 	all := commonDefinitions()
 	selected := make(map[string]any, len(names))
@@ -115,6 +132,9 @@ func selectDefinitions(names ...string) map[string]any {
 	return selected
 }
 
+// commonDefinitions 返回 facts / impact schema 共享的全部类型定义。
+// 每个定义描述一类 JSON 对象的字段集与 required 列表，factsDefinitions / impactDefinitions
+// 通过 selectDefinitions 选择各自需要的子集，从而精确控制每份 schema 暴露的字段边界。
 func commonDefinitions() map[string]any {
 	return map[string]any{
 		"annotation": object(map[string]any{
@@ -178,6 +198,7 @@ func commonDefinitions() map[string]any {
 			"span":       ref("source_span"),
 			"confidence": confidenceType(),
 		}, "kind", "span"),
+		// impact_node 是 impact 传播树的递归节点定义；children 自引用 impact_node，实现完整传播链路。
 		"impact_node": object(map[string]any{
 			"id":         stringType(),
 			"kind":       stringType(),
@@ -302,18 +323,22 @@ func commonDefinitions() map[string]any {
 	}
 }
 
+// stringType 返回 JSON Schema 的 string 类型片段。
 func stringType() map[string]any {
 	return map[string]any{"type": "string"}
 }
 
+// confidenceType 返回 confidence 枚举类型，限定 high / medium / low 三档。
 func confidenceType() map[string]any {
 	return map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}}
 }
 
+// numberType 返回 integer 类型片段，用于 line / col / level / count 等数值字段。
 func numberType() map[string]any {
 	return map[string]any{"type": "integer"}
 }
 
+// boolType 返回 boolean 类型片段，用于 cycle / resolved / indirect 等布尔字段。
 func boolType() map[string]any {
 	return map[string]any{"type": "boolean"}
 }

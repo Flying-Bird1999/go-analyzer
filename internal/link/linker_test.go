@@ -1,3 +1,6 @@
+// linker_test.go 验证 handler 与 middleware 符号解析，以及 Run 建立的 route-handler-annotation
+// 与 middleware 符号关联，覆盖普通函数、包级 var 方法、constructor 初始化、struct field 等常见 BFF 写法。
+
 package link
 
 import (
@@ -12,6 +15,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestResolveFunctionHandlerSymbol 验证普通函数型 handler 能解析到 func 符号。
 func TestResolveFunctionHandlerSymbol(t *testing.T) {
 	p, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "controller-wrapper"))
 	_ = p
@@ -25,6 +29,7 @@ func TestResolveFunctionHandlerSymbol(t *testing.T) {
 	}
 }
 
+// TestResolvePackageVarMethodHandlerSymbol 验证包级变量上的方法（handler-method-var fixture）能解析到 method 符号。
 func TestResolvePackageVarMethodHandlerSymbol(t *testing.T) {
 	_, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "handler-method-var"))
 	got, ok := ResolveHandlerSymbol(idx, store.Routes[0])
@@ -37,6 +42,7 @@ func TestResolvePackageVarMethodHandlerSymbol(t *testing.T) {
 	}
 }
 
+// TestResolveLocalPackageVarMethodHandlerSymbol 验证同包内包级变量上的方法（Var.Method）能解析到 method 符号。
 func TestResolveLocalPackageVarMethodHandlerSymbol(t *testing.T) {
 	root := t.TempDir()
 	writeLinkTestFile(t, root, "go.mod", "module example.com/local-handler\n\ngo 1.24\n")
@@ -71,6 +77,7 @@ func Init(g *RouterGroup) {
 	}
 }
 
+// TestRunLinksRouteHandlerAndAnnotation 验证 Run 写回 route 的 handler 符号，并生成 route_to_handler 与 handler_to_annotation 关联。
 func TestRunLinksRouteHandlerAndAnnotation(t *testing.T) {
 	_, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "route-annotation-link"))
 
@@ -96,6 +103,7 @@ func TestRunLinksRouteHandlerAndAnnotation(t *testing.T) {
 	}
 }
 
+// TestRunLinksMiddlewareSymbols 验证 Run 能把多种中间件原始表达式解析为符号。
 func TestRunLinksMiddlewareSymbols(t *testing.T) {
 	_, idx, store := loadAndExtract(t, filepath.Join("..", "..", "testdata", "fixtures", "middleware-order"))
 
@@ -108,6 +116,7 @@ func TestRunLinksMiddlewareSymbols(t *testing.T) {
 	assertMiddlewareSymbol(t, store, "Audit()", "func:example.com/middleware-order/router::Audit")
 }
 
+// TestRunLinksConstructorInitializedPackageVarMiddlewareSymbol 验证 constructor 初始化的包级 var 的方法（auth.Default.Middleware）能解析为 method 符号。
 func TestRunLinksConstructorInitializedPackageVarMiddlewareSymbol(t *testing.T) {
 	root := t.TempDir()
 	writeLinkTestFile(t, root, "go.mod", "module example.com/constructor-middleware\n\ngo 1.24\n")
@@ -148,6 +157,7 @@ func InitRouter(g *RouterGroup) {
 	assertMiddlewareSymbol(t, store, "auth.Default.Middleware", "method:example.com/constructor-middleware/auth:Auth:Middleware")
 }
 
+// TestRunLinksPackageVarWithImportedExplicitTypeMiddlewareSymbol 验证显式导入类型的包级 var（provider.Default，类型为 auth.Auth）的方法能跨包解析。
 func TestRunLinksPackageVarWithImportedExplicitTypeMiddlewareSymbol(t *testing.T) {
 	root := t.TempDir()
 	writeLinkTestFile(t, root, "go.mod", "module example.com/imported-type-middleware\n\ngo 1.24\n")
@@ -188,6 +198,7 @@ func InitRouter(g *RouterGroup) {
 	assertMiddlewareSymbol(t, store, "provider.Default.Middleware", "method:example.com/imported-type-middleware/auth:Auth:Middleware")
 }
 
+// TestRunLinksPackageVarStructFieldMiddlewareSymbol 验证包级 var 的多层 struct field（provider.Default.Auth.Middleware）能解析为 method 符号。
 func TestRunLinksPackageVarStructFieldMiddlewareSymbol(t *testing.T) {
 	root := t.TempDir()
 	writeLinkTestFile(t, root, "go.mod", "module example.com/struct-field-middleware\n\ngo 1.24\n")
@@ -232,6 +243,7 @@ func InitRouter(g *RouterGroup) {
 	assertMiddlewareSymbol(t, store, "provider.Default.Auth.Middleware", "method:example.com/struct-field-middleware/auth:Auth:Middleware")
 }
 
+// assertMiddlewareSymbol 断言指定原始表达式的中间件绑定解析到期望符号。
 func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want facts.SymbolID) {
 	t.Helper()
 	for _, binding := range store.Middleware {
@@ -248,6 +260,7 @@ func assertMiddlewareSymbol(t *testing.T, store *facts.Store, raw string, want f
 	t.Fatalf("middleware %q not found: %#v", raw, store.Middleware)
 }
 
+// loadAndExtract 加载 fixture 并构建到含符号/注解/路由的 facts.Store，供 linker 测试使用。
 func loadAndExtract(t *testing.T, root string) (*project.Project, *astindex.Index, *facts.Store) {
 	t.Helper()
 	p, err := project.Load(root)
@@ -271,6 +284,7 @@ func loadAndExtract(t *testing.T, root string) (*project.Project, *astindex.Inde
 	return p, idx, store
 }
 
+// writeLinkTestFile 在测试临时目录下写入指定相对路径的文件，自动创建父目录。
 func writeLinkTestFile(t *testing.T, root, name, body string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

@@ -1,3 +1,4 @@
+// protocol_test.go 验证协议发现层对 broadcast:// 与 /broadcast/send 双锚点的识别与拒绝。
 package im
 
 import (
@@ -9,6 +10,8 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestDiscoverLocalProtocolRequiresSchemeAndEndpoint 验证项目同时包含 scheme 和
+// endpoint 两个锚点时，协议识别成立并各返回一个符号。
 func TestDiscoverLocalProtocolRequiresSchemeAndEndpoint(t *testing.T) {
 	p, idx := loadProtocolProject(t, map[string]string{
 		"transport.go": `package sample
@@ -35,6 +38,8 @@ func Post(path string, body any) {}
 	}
 }
 
+// TestDiscoverLocalProtocolRejectsPartialMatches 验证只有 endpoint、只有 scheme、
+// 或两者都没有时协议识别都不成立，避免部分匹配误判。
 func TestDiscoverLocalProtocolRejectsPartialMatches(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -71,6 +76,7 @@ func SendIM(event string, body any) {}
 	}
 }
 
+// loadProtocolProject 构造一个临时协议测试项目，返回 project/index 二元组。
 func loadProtocolProject(t *testing.T, files map[string]string) (*project.Project, *astindex.Index) {
 	t.Helper()
 	root := t.TempDir()

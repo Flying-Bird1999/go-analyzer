@@ -1,3 +1,6 @@
+// pipeline_test.go 验证 RunFacts / RunImpact 的端到端契约：facts 快照内容、impact 到端点/IM 的映射、
+// 删除路由恢复、go.mod 模块传播与配置过滤、以及快照不一致或语法错误时的失败行为。
+
 package app
 
 import (
@@ -11,6 +14,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 )
 
+// TestRunFactsRequiresProjectPath 验证 project path 为空时 RunFacts 直接报错。
 func TestRunFactsRequiresProjectPath(t *testing.T) {
 	_, err := RunFacts(Options{Format: "json"})
 	if err == nil {
@@ -18,6 +22,7 @@ func TestRunFactsRequiresProjectPath(t *testing.T) {
 	}
 }
 
+// TestRunFactsOnMiniBFFReturnsProjectMetadata 验证 mini-bff fixture 能输出正确的 module path 与符号。
 func TestRunFactsOnMiniBFFReturnsProjectMetadata(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
@@ -37,6 +42,7 @@ func TestRunFactsOnMiniBFFReturnsProjectMetadata(t *testing.T) {
 	}
 }
 
+// TestRunFactsWithMetricsReportsPipelineStages 验证 WithMetrics 记录关键阶段名且每阶段耗时不为零。
 func TestRunFactsWithMetricsReportsPipelineStages(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	result, err := RunFactsWithMetrics(Options{ProjectPath: root, Format: "json"})
@@ -60,6 +66,7 @@ func TestRunFactsWithMetricsReportsPipelineStages(t *testing.T) {
 	}
 }
 
+// TestRunFactsIncludesAnnotationFacts 验证 annotation-only fixture 抽出两条 HTTP 注解。
 func TestRunFactsIncludesAnnotationFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "annotation-only")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
@@ -76,6 +83,7 @@ func TestRunFactsIncludesAnnotationFacts(t *testing.T) {
 	}
 }
 
+// TestRunFactsIncludesRouteFacts 验证 controller-wrapper fixture 抽出路由组与路由。
 func TestRunFactsIncludesRouteFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "controller-wrapper")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
@@ -95,6 +103,7 @@ func TestRunFactsIncludesRouteFacts(t *testing.T) {
 	}
 }
 
+// TestRunFactsIncludesLinksAndReferences 验证 utility-fanout fixture 抽出 handler 符号、route-handler 关联与引用边。
 func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
@@ -120,6 +129,7 @@ func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	}
 }
 
+// TestRunFactsIncludesModuleDependencyFacts 验证 gomod-change fixture 抽出依赖与 replace 信息。
 func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "gomod-change")
 	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
@@ -142,6 +152,7 @@ func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
 	t.Fatalf("replaced gin module not found: %#v", doc.Modules)
 }
 
+// TestRunImpactKeepsReviewEvidenceAndOmitsSpans 验证 impact 保留原始 diff 与传播树(raw/symbols)，但省略 span 证据。
 func TestRunImpactKeepsReviewEvidenceAndOmitsSpans(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "type-impact"))
 	if err != nil {
@@ -174,6 +185,7 @@ func TestRunImpactKeepsReviewEvidenceAndOmitsSpans(t *testing.T) {
 	}
 }
 
+// TestRunImpactMapsDiffToEndpoint 验证普通函数体改动经反向引用传播到 HTTP 端点。
 func TestRunImpactMapsDiffToEndpoint(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout"))
 	if err != nil {
@@ -205,6 +217,7 @@ index 1111111..2222222 100644
 	assertEndpointSummary(t, doc, "GET", "/api/bff-web/common/checkIn")
 }
 
+// TestRunImpactMapsStructChangeToEndpointTree 验证 struct 字段 json tag 改动归属到 type 符号并传播到端点。
 func TestRunImpactMapsStructChangeToEndpointTree(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "type-impact"))
 	if err != nil {
@@ -237,6 +250,7 @@ func TestRunImpactMapsStructChangeToEndpointTree(t *testing.T) {
 	assertEndpointSummary(t, doc, "POST", "/orders")
 }
 
+// TestRunImpactMapsStructChangeToEndpointAndExactIMEvent 验证 payload 改动精确命中静态 IM event，动态 event 保留为 unresolved 但不计入摘要。
 func TestRunImpactMapsStructChangeToEndpointAndExactIMEvent(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/im-impact\n\ngo 1.24\n")
@@ -308,6 +322,7 @@ func Init(g *RouterGroup) { g.POST("/messages", controller.Create) }
 	}
 }
 
+// TestRunImpactMapsGoModDiffToEndpoint 验证 go.mod 版本升级经本仓 usage 传播到端点，且解析成功的模块变更不泄露进 fileSources。
 func TestRunImpactMapsGoModDiffToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", `module example.com/gomod-impact
@@ -385,6 +400,7 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/api/checkIn")
 }
 
+// TestRunImpactIgnoresConfiguredModuleChanges 验证 ignoredModuleChanges 通配过滤掉匹配的模块传播。
 func TestRunImpactIgnoresConfiguredModuleChanges(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", `module example.com/gomod-ignore
@@ -456,6 +472,7 @@ func InitRouter(g *RouterGroup) {
 	}
 }
 
+// TestRunImpactOmitsUnresolvedGoModDiagnostics 验证无法解析的 go.mod 变更不在公开 impact 输出 diagnostics。
 func TestRunImpactOmitsUnresolvedGoModDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/gomod-unresolved\n\ngo 1.24\n")
@@ -485,6 +502,7 @@ func TestRunImpactOmitsUnresolvedGoModDiagnostics(t *testing.T) {
 	}
 }
 
+// TestRunImpactMapsMiddlewareMethodDiffToEndpoint 验证中间件方法改动传播到其后注册的路由端点。
 func TestRunImpactMapsMiddlewareMethodDiffToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/middleware-impact\n\ngo 1.24\n")
@@ -545,6 +563,7 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/x")
 }
 
+// TestRunImpactMapsSecondRouteGroupParameterToEndpoint 验证注册在第二个 route group 参数上的路由被正确命中。
 func TestRunImpactMapsSecondRouteGroupParameterToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/route-param\n\ngo 1.24\n")
@@ -614,6 +633,7 @@ func Health() {}
 	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/auth/revokeToken/:clientId")
 }
 
+// TestRunImpactMapsPackageInitializerHelperToRouteMiddleware 验证包级初始化的中间件 helper 传播到使用它的路由。
 func TestRunImpactMapsPackageInitializerHelperToRouteMiddleware(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/package-init\n\ngo 1.24\n")
@@ -673,6 +693,7 @@ func InitActivityRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/live/activity/:id/start")
 }
 
+// TestRunImpactMapsStaticMapInterfaceDispatchToEndpoint 验证包级静态 map 的接口分发能解析到唯一具体实现。
 func TestRunImpactMapsStaticMapInterfaceDispatchToEndpoint(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/static-map-impact\n\ngo 1.24\n")
@@ -758,6 +779,7 @@ func InitRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-web/mc/syncConversation")
 }
 
+// TestRunImpactUsesRouteGroupPrefixPassedToChildRouteFunction 验证 group 前缀经子路由函数参数传播并拼出完整端点。
 func TestRunImpactUsesRouteGroupPrefixPassedToChildRouteFunction(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/child-route-prefix\n\ngo 1.24\n")
@@ -831,6 +853,7 @@ func InitConversationRouter(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "POST", "/admin/api/bff-app/mc/conversation/status/report")
 }
 
+// TestRunImpactRecoversMultilineDeletedRouteAndHandlerAnnotation 验证多行删除的 route 注册能恢复并解析到注解端点。
 func TestRunImpactRecoversMultilineDeletedRouteAndHandlerAnnotation(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/deleted-route\n\ngo 1.24\n")
@@ -882,6 +905,7 @@ func Init(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "POST", "/internal/orders")
 }
 
+// TestRunImpactRecoversDeletedHandlerAnnotationAndRoute 验证被删除的 handler 注解+路由能恢复，并替换掉文件级 fallback 根。
 func TestRunImpactRecoversDeletedHandlerAnnotationAndRoute(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/deleted-handler\n\ngo 1.24\n")
@@ -935,6 +959,7 @@ func Init(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/internal/users/:id")
 }
 
+// TestRunImpactUsesRouteEndpointWhenAnnotationDisagrees 验证注解与路由路径冲突时，以可完整解析的路由端点为准。
 func TestRunImpactUsesRouteEndpointWhenAnnotationDisagrees(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/route-authority\n\ngo 1.24\n")
@@ -988,6 +1013,7 @@ func Init(g *RouterGroup) {
 	}
 }
 
+// TestRunImpactKeepsAnnotationWhenItAddsMissingParentPrefix 验证注解补全了路由缺失的父前缀时，以注解端点为准。
 func TestRunImpactKeepsAnnotationWhenItAddsMissingParentPrefix(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/parent-prefix\n\ngo 1.24\n")
@@ -1041,6 +1067,7 @@ func Init(adminWebGroup *RouterGroup) {
 	}
 }
 
+// TestRunImpactUsesOldPathGroupRouteWhenAnnotationDisagrees 验证 oldPathGroup 兼容旧路径时，以路由端点为准而非注解。
 func TestRunImpactUsesOldPathGroupRouteWhenAnnotationDisagrees(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/oldpath-authority\n\ngo 1.24\n")
@@ -1091,6 +1118,7 @@ func Init(oldPathGroup *RouterGroup) {
 	}
 }
 
+// TestRunImpactOmitsUnrelatedProjectLoadDiagnostics 验证未变更文件的解析失败诊断不会污染公开 impact 输出。
 func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/partial\n\ngo 1.24\n"), 0o644); err != nil {
@@ -1129,6 +1157,7 @@ func TestRunImpactOmitsUnrelatedProjectLoadDiagnostics(t *testing.T) {
 	}
 }
 
+// TestRunImpactRejectsDiffThatIsNotApplied 验证 diff 未应用到变更后源码时直接失败。
 func TestRunImpactRejectsDiffThatIsNotApplied(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/mismatch\n\ngo 1.24\n")
@@ -1152,6 +1181,7 @@ func TestRunImpactRejectsDiffThatIsNotApplied(t *testing.T) {
 	}
 }
 
+// TestRunImpactPropagatesReturnedGroupMiddlewareToChildRouter 验证以返回值形式传递的 group 中间件能传播到子 router 的路由。
 func TestRunImpactPropagatesReturnedGroupMiddlewareToChildRouter(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/returned-group\n\ngo 1.24\n")
@@ -1220,6 +1250,7 @@ func Init(g *RouterGroup) {
 	assertEndpointSummary(t, doc, "GET", "/orders")
 }
 
+// TestRunImpactRejectsParseErrorInChangedFile 验证变更文件存在语法错误时 impact 直接失败而非静默输出。
 func TestRunImpactRejectsParseErrorInChangedFile(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/broken\n\ngo 1.24\n")
@@ -1243,6 +1274,7 @@ func TestRunImpactRejectsParseErrorInChangedFile(t *testing.T) {
 	}
 }
 
+// writeTestFile 在测试临时目录下写入指定相对路径的文件，自动创建父目录。
 func writeTestFile(t *testing.T, root, name, body string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))
@@ -1254,6 +1286,7 @@ func writeTestFile(t *testing.T, root, name, body string) {
 	}
 }
 
+// assertSourceRoot 断言某个 sourceFile 的 symbols 中存在指定的 root ID。
 func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootID string) {
 	t.Helper()
 	for _, source := range doc.FileSources {
@@ -1268,6 +1301,7 @@ func assertSourceRoot(t *testing.T, doc output.ImpactDocument, sourceFile, rootI
 	t.Fatalf("source file %q not found: %#v", sourceFile, doc.FileSources)
 }
 
+// assertEndpointSummary 断言 impact summary 中包含指定 method/path 的受影响端点。
 func assertEndpointSummary(t *testing.T, doc output.ImpactDocument, method, path string) {
 	t.Helper()
 	for _, endpoint := range doc.Summary.ImpactedEndpoints {
@@ -1278,6 +1312,7 @@ func assertEndpointSummary(t *testing.T, doc output.ImpactDocument, method, path
 	t.Fatalf("endpoint %s %s not found: %#v", method, path, doc.Summary)
 }
 
+// impactDocumentContainsKind 递归检查 impact 文档的传播树中是否存在指定 kind 的节点。
 func impactDocumentContainsKind(doc output.ImpactDocument, kind string) bool {
 	var contains func(output.ImpactNode) bool
 	contains = func(node output.ImpactNode) bool {

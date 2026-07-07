@@ -1,3 +1,4 @@
+// json_test.go 校验 RenderJSON 的确定性、稳定排序与 IM 事件输出。
 package output
 
 import (
@@ -12,6 +13,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// 场景：同一 Store 两次渲染 JSON 字节级一致，且 symbols 按 ID 字典序排序。
 func TestRenderJSONIsDeterministicAndSorted(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
 	p, err := project.Load(root)
@@ -59,6 +61,7 @@ func TestRenderJSONIsDeterministicAndSorted(t *testing.T) {
 	}
 }
 
+// 场景：references 与 links 按 ID 字典序排序，与输入顺序无关。
 func TestRenderJSONSortsReferencesAndLinks(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.References = append(store.References,
@@ -87,6 +90,7 @@ func TestRenderJSONSortsReferencesAndLinks(t *testing.T) {
 	}
 }
 
+// 场景：im_events 按 ID 字典序排序输出。
 func TestRenderJSONIncludesSortedIMEvents(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.IMEvents = append(store.IMEvents,
