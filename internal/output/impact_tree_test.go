@@ -43,6 +43,73 @@ func TestBuildImpactDocumentGroupsRootsBySourceFile(t *testing.T) {
 	}
 }
 
+// 场景：顶层 endpointSourcesSummary 可以从 fileSources 的递归树反查 endpoint 来源文件、root symbol 与最短链。
+func TestBuildImpactDocumentAddsEndpointSourcesSummaryForFileSources(t *testing.T) {
+	fileChanges := []diff.FileChange{{
+		NewPath: "service/order.go",
+		Raw:     "diff --git a/service/order.go b/service/order.go\n",
+	}}
+	root := impact.RootImpact{
+		Change: facts.ChangeFact{
+			File:     "service/order.go",
+			SymbolID: "func:example.com/app/service::UpdateOrder",
+		},
+		Root: impact.Node{
+			ID:         "func:example.com/app/service::UpdateOrder",
+			Kind:       "func",
+			Name:       "UpdateOrder",
+			File:       "service/order.go",
+			Confidence: facts.ConfidenceHigh,
+			Children: []impact.Node{{
+				ID:         "func:example.com/app/controller::UpdateOrder",
+				Kind:       "func",
+				Name:       "UpdateOrder",
+				File:       "controller/order.go",
+				Relation:   "call",
+				Confidence: facts.ConfidenceHigh,
+				Children: []impact.Node{{
+					ID:         "endpoint:POST:/orders",
+					Kind:       "endpoint",
+					Name:       "POST /orders",
+					File:       "router/order.go",
+					Relation:   "route_endpoint",
+					Confidence: facts.ConfidenceHigh,
+					Method:     "POST",
+					Path:       "/orders",
+				}},
+			}},
+		},
+		Endpoints: []impact.EndpointImpact{{Method: "POST", Path: "/orders"}},
+	}
+
+	doc := BuildImpactDocument(fileChanges, impact.TreeResult{Roots: []impact.RootImpact{root}}, ImpactDocumentOptions{})
+
+	if len(doc.EndpointSourcesSummary) != 1 {
+		t.Fatalf("endpointSourcesSummary = %#v", doc.EndpointSourcesSummary)
+	}
+	got := doc.EndpointSourcesSummary[0]
+	if got.Method != "POST" || got.Path != "/orders" {
+		t.Fatalf("endpoint summary = %#v", got)
+	}
+	if len(got.Sources) != 1 {
+		t.Fatalf("sources = %#v", got.Sources)
+	}
+	source := got.Sources[0]
+	if source.SourceType != "file" || source.SourceFile != "service/order.go" {
+		t.Fatalf("source = %#v", source)
+	}
+	if len(source.RootSymbols) != 1 || source.RootSymbols[0].ID != "func:example.com/app/service::UpdateOrder" {
+		t.Fatalf("root symbols = %#v", source.RootSymbols)
+	}
+	wantChain := []string{"func UpdateOrder", "func UpdateOrder", "POST /orders"}
+	if len(source.Chains) != 1 || !reflect.DeepEqual(source.Chains[0], wantChain) {
+		t.Fatalf("chains = %#v, want %#v", source.Chains, wantChain)
+	}
+	if source.Confidence != facts.ConfidenceHigh {
+		t.Fatalf("confidence = %q", source.Confidence)
+	}
+}
+
 // 场景：颠倒 fileChanges 与 roots 输入顺序，最终 JSON 应字节级一致（确定性输出）。
 func TestRenderImpactTreeJSONIsDeterministic(t *testing.T) {
 	changeA := diff.FileChange{NewPath: "a.go", Raw: "diff --git a/a.go b/a.go\n"}
@@ -92,6 +159,9 @@ func TestBuildImpactDocumentKeepsRootWithNoEndpoint(t *testing.T) {
 	}
 	if doc.FileSources[0].ImpactedIMEvents == nil {
 		t.Fatal("source IM events must be a non-nil empty array")
+	}
+	if doc.EndpointSourcesSummary == nil || len(doc.EndpointSourcesSummary) != 0 {
+		t.Fatalf("endpointSourcesSummary must be a non-nil empty array: %#v", doc.EndpointSourcesSummary)
 	}
 }
 
@@ -250,6 +320,99 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	if bytes.Contains(payload, []byte(`"module_changes"`)) ||
 		bytes.Contains(payload, []byte(`"module_usages"`)) {
 		t.Fatalf("retired module fact arrays remain in impact output: %s", payload)
+	}
+}
+
+// 场景：moduleSources 中的 usage 入口也会汇总到 endpointSourcesSummary，并携带 module 版本元数据。
+func TestBuildImpactDocumentAddsEndpointSourcesSummaryForModuleSources(t *testing.T) {
+	moduleChange := facts.ModuleChangeFact{
+		Path:       "example.com/lib",
+		Kind:       facts.ModuleChangeUpgraded,
+		OldVersion: "v1.0.0",
+		NewVersion: "v1.1.0",
+	}
+	moduleUsage := facts.ModuleUsageFact{
+		ID:         "module_usage:example.com/lib:service/payment.go",
+		ModulePath: "example.com/lib",
+		File:       "service/payment.go",
+		SymbolID:   "func:example.com/app/service::Pay",
+		Basis:      facts.ModuleUsagePrecise,
+		Confidence: facts.ConfidenceMedium,
+	}
+	root := impact.RootImpact{
+		Change: facts.ChangeFact{
+			File:         moduleUsage.File,
+			SymbolID:     moduleUsage.SymbolID,
+			Source:       "go_mod_diff",
+			SourceFactID: moduleUsage.ID,
+			Confidence:   facts.ConfidenceMedium,
+		},
+		Root: impact.Node{
+			ID:         string(moduleUsage.SymbolID),
+			Kind:       "func",
+			Name:       "Pay",
+			File:       "service/payment.go",
+			Confidence: facts.ConfidenceMedium,
+			Children: []impact.Node{{
+				ID:         "endpoint:POST:/pay",
+				Kind:       "endpoint",
+				Name:       "POST /pay",
+				Relation:   "route_endpoint",
+				Confidence: facts.ConfidenceMedium,
+				Method:     "POST",
+				Path:       "/pay",
+			}},
+		},
+		Endpoints: []impact.EndpointImpact{{Method: "POST", Path: "/pay"}},
+	}
+
+	doc := BuildImpactDocument(nil, impact.TreeResult{Roots: []impact.RootImpact{root}}, ImpactDocumentOptions{
+		ModuleChanges: []facts.ModuleChangeFact{moduleChange},
+		ModuleUsages:  []facts.ModuleUsageFact{moduleUsage},
+	})
+
+	if len(doc.EndpointSourcesSummary) != 1 || len(doc.EndpointSourcesSummary[0].Sources) != 1 {
+		t.Fatalf("endpointSourcesSummary = %#v", doc.EndpointSourcesSummary)
+	}
+	got := doc.EndpointSourcesSummary[0].Sources[0]
+	if got.SourceType != "module" || got.ModulePath != "example.com/lib" || got.SourceFile != "service/payment.go" {
+		t.Fatalf("module endpoint source = %#v", got)
+	}
+	if got.ChangeType != facts.ModuleChangeUpgraded || got.VersionBefore != "v1.0.0" || got.VersionAfter != "v1.1.0" {
+		t.Fatalf("module metadata = %#v", got)
+	}
+	if got.Confidence != facts.ConfidenceMedium {
+		t.Fatalf("confidence = %q", got.Confidence)
+	}
+}
+
+// 场景：JSON 顶层字段顺序把 endpointSourcesSummary 放在 fileSources/moduleSources 之后，便于人工阅读。
+func TestRenderImpactTreeJSONPlacesEndpointSourcesSummaryLast(t *testing.T) {
+	doc := ImpactDocument{
+		Summary: ImpactSummary{ImpactedEndpoints: []EndpointSummary{{Method: "GET", Path: "/x"}}},
+		FileSources: []FileSourceImpact{{
+			SourceFile:        "a.go",
+			Symbols:           map[string]ImpactNode{},
+			ImpactedEndpoints: []EndpointSummary{{Method: "GET", Path: "/x"}},
+			ImpactedIMEvents:  []string{},
+		}},
+		ModuleSources: []ModuleSourceImpact{{
+			ModulePath: "example.com/lib",
+			ChangeType: facts.ModuleChangeUpgraded,
+			Basis:      string(facts.ModuleUsagePrecise),
+		}},
+		EndpointSourcesSummary: []EndpointSourceSummary{{Method: "GET", Path: "/x"}},
+	}
+	payload, err := RenderImpactTreeJSON(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(payload)
+	fileIdx := strings.Index(text, `"fileSources"`)
+	moduleIdx := strings.Index(text, `"moduleSources"`)
+	summaryIdx := strings.Index(text, `"endpointSourcesSummary"`)
+	if !(fileIdx >= 0 && moduleIdx > fileIdx && summaryIdx > moduleIdx) {
+		t.Fatalf("unexpected field order: %s", text)
 	}
 }
 

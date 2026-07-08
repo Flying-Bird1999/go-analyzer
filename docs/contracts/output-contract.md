@@ -61,7 +61,8 @@ Top-level shape:
     "impactedIMCount": 1,
     "impactedIMEvents": ["order/changed"]
   },
-  "fileSources": []
+  "fileSources": [],
+  "endpointSourcesSummary": []
 }
 ```
 
@@ -69,6 +70,9 @@ Top-level shape:
 - `fileSources` contains ordinary source-file changes and their complete trees.
 - `moduleSources` is optional. It contains semantic go.mod changes and their
   local usage trees, and is omitted when there are no emitted module changes.
+- `endpointSourcesSummary` is a lightweight endpoint-to-source projection placed
+  last in the rendered JSON. It is always present and is an empty array when no
+  endpoint is impacted.
 
 ### `fileSources`
 
@@ -140,6 +144,54 @@ Resolved dependency changes are separate from ordinary source changes:
 - a resolved go.mod change is not repeated as a file fallback source.
 - module changes ignored by optional impact config are omitted from
   `moduleSources` and from the top-level `summary`.
+
+### `endpointSourcesSummary`
+
+`endpointSourcesSummary` lets consumers answer why an endpoint appears without
+manually joining all source trees:
+
+```json
+{
+  "method": "GET",
+  "path": "/api/bff-web/live/view/:salesId/redirect",
+  "sources": [
+    {
+      "sourceType": "file",
+      "sourceFile": "remote/oa/oa.go",
+      "rootSymbols": [
+        {
+          "id": "type:example.com/app/remote/oa::OAClient",
+          "kind": "type",
+          "name": "OAClient",
+          "file": "remote/oa/oa.go"
+        }
+      ],
+      "chains": [
+        [
+          "type OAClient",
+          "var Client",
+          "func GetMerchantInfo",
+          "func LiveViewRedirect",
+          "GET /api/bff-web/live/view/:salesId/redirect"
+        ]
+      ],
+      "confidence": "high"
+    }
+  ]
+}
+```
+
+- `sources[]` contains ordinary file sources and module usage sources that reach
+  the endpoint.
+- `sourceType` is `file` or `module`. Module sources also include `modulePath`,
+  `changeType`, `versionBefore`, and `versionAfter`.
+- `rootSymbols[]` lists changed roots from that source that can reach the
+  endpoint.
+- `chains[]` contains at most one shortest human-readable chain per root symbol.
+- `confidence` is the weakest confidence on the selected chains.
+- Full recursive evidence remains in `fileSources[].symbols` and
+  `moduleSources[].sourceFiles[].symbols`; this summary intentionally avoids
+  copying the full tree.
 
 ### Recursive Impact Nodes
 

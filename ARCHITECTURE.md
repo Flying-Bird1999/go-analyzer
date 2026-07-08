@@ -1107,11 +1107,13 @@ go run ./cmd/go-analyzer impact \
     "impactedIMCount": 0,
     "impactedIMEvents": []
   },
-  "fileSources": []
+  "fileSources": [],
+  "endpointSourcesSummary": []
 }
 ```
 
 `moduleSources` 是可选字段；只有 go.mod diff 成功形成 module change 时才输出。
+`endpointSourcesSummary` 固定作为顶层最后一个字段输出；没有受影响接口时为空数组。
 
 每个 `fileSources[]` 保留：
 
@@ -1132,6 +1134,17 @@ go run ./cmd/go-analyzer impact \
 - replace 变化时的可选 `replacementBefore` / `replacementAfter`。
 - `basis`：模块传播入口的依据。
 - `sourceFiles`：实际引用该 module 的本仓文件、递归传播树、接口和 IM event 摘要，不重复 go.mod diff。
+
+`endpointSourcesSummary[]` 是面向平台与人工 review 的轻量反查视图，按 endpoint
+汇总影响来源：
+
+- `method`、`path`：受影响接口。
+- `sources[]`：触发该接口的来源，`sourceType` 为 `file` 或 `module`。
+- file source 带 `sourceFile`；module source 带 `modulePath`、`changeType`、
+  `versionBefore`、`versionAfter`，并保留命中的本仓 `sourceFile`。
+- `rootSymbols[]`：该来源内能到达接口的 changed root。
+- `chains[]`：每个 root 到 endpoint 的最短人读链路摘要，只用于快速解释原因。
+- `confidence`：所选链路上的最弱静态证据强度。
 
 每个 source 的 `symbols` 都保留从 changed root 到 endpoint / IM event 的完整
 `children` 递归链路，消费者不需要再与顶层图做 join。已解析 IM 终端的 kind 是

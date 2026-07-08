@@ -4,6 +4,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"testing"
 )
 
@@ -162,6 +163,36 @@ func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	for _, retired := range []string{"module_change", "module_usage"} {
 		if _, ok := defs[retired]; ok {
 			t.Fatalf("retired impact definition %q remains", retired)
+		}
+	}
+}
+
+// 场景：impact schema 暴露 endpointSourcesSummary 及其轻量来源摘要定义。
+func TestImpactSchemaExposesEndpointSourcesSummary(t *testing.T) {
+	got, err := SchemaJSON("impact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	properties := doc["properties"].(map[string]any)
+	if _, ok := properties["endpointSourcesSummary"]; !ok {
+		t.Fatalf("endpointSourcesSummary property missing: %#v", properties)
+	}
+	requiredValues := doc["required"].([]any)
+	required := make([]string, 0, len(requiredValues))
+	for _, value := range requiredValues {
+		required = append(required, value.(string))
+	}
+	if !slices.Contains(required, "endpointSourcesSummary") {
+		t.Fatalf("endpointSourcesSummary missing from required: %#v", required)
+	}
+	defs := doc["$defs"].(map[string]any)
+	for _, name := range []string{"endpoint_source_summary", "endpoint_impact_source", "endpoint_root_symbol_summary"} {
+		if _, ok := defs[name]; !ok {
+			t.Fatalf("%s definition missing: %#v", name, defs)
 		}
 	}
 }

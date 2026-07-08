@@ -138,5 +138,36 @@
       ],
       "impactedIMEvents": []
     }
+  ],
+  "endpointSourcesSummary": [
+    {
+      "method": "POST",
+      "path": "/orders",
+      "sources": [
+        {
+          "sourceType": "file",
+          "sourceFile": "model/model.go",
+          "rootSymbols": [
+            {
+              "id": "type:example.com/type-impact/model::Address",
+              "kind": "type",
+              "name": "Address",
+              "file": "model/model.go"
+            }
+          ],
+          "chains": [
+            [
+              "type Address",
+              "type CreateOrderRequest",
+              "method Create",
+              "route POST /orders",
+              "annotation POST /orders",
+              "POST /orders"
+            ]
+          ],
+          "confidence": "high"
+        }
+      ]
+    }
   ]
 }

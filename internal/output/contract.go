@@ -38,12 +38,13 @@ var schemaDocuments = map[string]map[string]any{
 		"title":                "go-analyzer reviewable impact tree",
 		"type":                 "object",
 		"additionalProperties": false,
-		// fileSources 必填；moduleSources 仅在形成模块变更时输出，因此不在 required 中。
-		"required": []string{"summary", "fileSources"},
+		// fileSources 与 endpointSourcesSummary 必填；moduleSources 仅在形成模块变更时输出，因此不在 required 中。
+		"required": []string{"summary", "fileSources", "endpointSourcesSummary"},
 		"properties": map[string]any{
-			"summary":       ref("impact_summary"),
-			"fileSources":   arrayOf(ref("file_source_impact")),
-			"moduleSources": arrayOf(ref("module_source_impact")),
+			"summary":                ref("impact_summary"),
+			"fileSources":            arrayOf(ref("file_source_impact")),
+			"moduleSources":          arrayOf(ref("module_source_impact")),
+			"endpointSourcesSummary": arrayOf(ref("endpoint_source_summary")),
 		},
 		"$defs": impactDefinitions(),
 	},
@@ -112,6 +113,9 @@ func factsDefinitions() map[string]any {
 // 不包含 facts 项目事实定义，也不暴露已退役的 edge / endpoint_impact 等历史定义。
 func impactDefinitions() map[string]any {
 	return selectDefinitions(
+		"endpoint_impact_source",
+		"endpoint_root_symbol_summary",
+		"endpoint_source_summary",
 		"endpoint_summary",
 		"file_source_impact",
 		"impact_node",
@@ -158,6 +162,28 @@ func commonDefinitions() map[string]any {
 			"method": stringType(),
 			"path":   stringType(),
 		}, "method", "path"),
+		"endpoint_root_symbol_summary": object(map[string]any{
+			"id":   stringType(),
+			"kind": stringType(),
+			"name": stringType(),
+			"file": stringType(),
+		}, "id", "kind"),
+		"endpoint_impact_source": object(map[string]any{
+			"sourceType":    stringType(),
+			"sourceFile":    stringType(),
+			"modulePath":    stringType(),
+			"changeType":    stringType(),
+			"versionBefore": stringType(),
+			"versionAfter":  stringType(),
+			"rootSymbols":   arrayOf(ref("endpoint_root_symbol_summary")),
+			"chains":        arrayOf(arrayOf(stringType())),
+			"confidence":    confidenceType(),
+		}, "sourceType", "rootSymbols", "chains", "confidence"),
+		"endpoint_source_summary": object(map[string]any{
+			"method":  stringType(),
+			"path":    stringType(),
+			"sources": arrayOf(ref("endpoint_impact_source")),
+		}, "method", "path", "sources"),
 		"file_source_impact": object(map[string]any{
 			"sourceFile":        stringType(),
 			"diff":              stringType(),

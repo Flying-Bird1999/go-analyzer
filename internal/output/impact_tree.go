@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -40,6 +41,8 @@ type ImpactDocument struct {
 	FileSources []FileSourceImpact `json:"fileSources"`
 	// ModuleSources 仅在形成 go.mod 模块变更时输出，避免 go.mod 噪音混入 fileSources。
 	ModuleSources []ModuleSourceImpact `json:"moduleSources,omitempty"`
+	// EndpointSourcesSummary 是 endpoint -> 变更来源的轻量反查摘要，完整证据仍保留在 sources 的 symbols 树中。
+	EndpointSourcesSummary []EndpointSourceSummary `json:"endpointSourcesSummary"`
 }
 
 // FileSourceImpact 描述单个变更来源（通常是源码文件）对应的影响范围。
@@ -94,6 +97,50 @@ type EndpointSummary struct {
 	Method string `json:"method"`
 	// Path 是完整 HTTP path。
 	Path string `json:"path"`
+}
+
+// EndpointSourceSummary 描述一个 endpoint 被哪些变更来源影响。
+type EndpointSourceSummary struct {
+	// Method 是 HTTP method，例如 GET、POST。
+	Method string `json:"method"`
+	// Path 是完整 HTTP path。
+	Path string `json:"path"`
+	// Sources 是影响该 endpoint 的变更来源摘要。
+	Sources []EndpointImpactSource `json:"sources"`
+}
+
+// EndpointImpactSource 描述单个变更来源到 endpoint 的轻量证据摘要。
+type EndpointImpactSource struct {
+	// SourceType 是来源类型：file 表示普通源码 diff，module 表示 go.mod module 语义变更。
+	SourceType string `json:"sourceType"`
+	// SourceFile 是触发传播的项目相对文件路径。
+	SourceFile string `json:"sourceFile,omitempty"`
+	// ModulePath 是 module 来源的变更模块 path。
+	ModulePath string `json:"modulePath,omitempty"`
+	// ChangeType 是 module 来源的变更类型。
+	ChangeType facts.ModuleChangeKind `json:"changeType,omitempty"`
+	// VersionBefore 是 module 变更前版本。
+	VersionBefore string `json:"versionBefore,omitempty"`
+	// VersionAfter 是 module 变更后版本。
+	VersionAfter string `json:"versionAfter,omitempty"`
+	// RootSymbols 是该来源中能到达 endpoint 的 changed roots。
+	RootSymbols []EndpointRootSymbolSummary `json:"rootSymbols"`
+	// Chains 是每个 root 到 endpoint 的最短人读链路摘要。
+	Chains [][]string `json:"chains"`
+	// Confidence 是所选链路中的最弱证据强度。
+	Confidence facts.Confidence `json:"confidence"`
+}
+
+// EndpointRootSymbolSummary 是 endpoint source 中 changed root 的轻量信息。
+type EndpointRootSymbolSummary struct {
+	// ID 是 root 的稳定 symbol/fact ID。
+	ID string `json:"id"`
+	// Kind 是 root 节点类型。
+	Kind string `json:"kind"`
+	// Name 是 root 的人读名称。
+	Name string `json:"name,omitempty"`
+	// File 是 root 所在的项目相对路径。
+	File string `json:"file,omitempty"`
 }
 
 // ImpactSummary 是全局去重后的轻量结果，面向默认消费场景。
@@ -233,11 +280,13 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 		}
 	}
 
-	return normalizeImpactDocument(ImpactDocument{
+	doc := normalizeImpactDocument(ImpactDocument{
 		Summary:       buildImpactSummary(globalEndpoints, globalIMEvents),
 		FileSources:   finalizeFileSources(files),
 		ModuleSources: finalizeModuleSources(moduleSources),
 	})
+	doc.EndpointSourcesSummary = buildEndpointSourcesSummary(doc)
+	return normalizeImpactDocument(doc)
 }
 
 // changedFile 返回变更后文件相对项目根目录的 slash 路径。
@@ -509,6 +558,272 @@ func buildImpactSummary(endpoints map[string]EndpointSummary, imEvents map[strin
 	return out
 }
 
+// buildEndpointSourcesSummary 从已归一化的来源树构造 endpoint -> sources 轻量反查摘要。
+func buildEndpointSourcesSummary(doc ImpactDocument) []EndpointSourceSummary {
+	builders := map[string]*endpointSourceSummaryBuilder{}
+	for _, source := range doc.FileSources {
+		addEndpointSourceFile(builders, source, endpointSourceMetadata{
+			sourceType: "file",
+			sourceFile: source.SourceFile,
+		})
+	}
+	for _, module := range doc.ModuleSources {
+		for _, source := range module.SourceFiles {
+			addEndpointSourceFile(builders, source, endpointSourceMetadata{
+				sourceType:    "module",
+				sourceFile:    source.SourceFile,
+				modulePath:    module.ModulePath,
+				changeType:    module.ChangeType,
+				versionBefore: module.VersionBefore,
+				versionAfter:  module.VersionAfter,
+			})
+		}
+	}
+	out := make([]EndpointSourceSummary, 0, len(builders))
+	for _, builder := range builders {
+		for _, source := range builder.sources {
+			normalizeEndpointImpactSource(&source)
+			builder.summary.Sources = append(builder.summary.Sources, source)
+		}
+		sortEndpointImpactSources(builder.summary.Sources)
+		out = append(out, builder.summary)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Method != out[j].Method {
+			return out[i].Method < out[j].Method
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
+}
+
+type endpointSourceSummaryBuilder struct {
+	summary EndpointSourceSummary
+	sources map[string]EndpointImpactSource
+}
+
+type endpointSourceMetadata struct {
+	sourceType    string
+	sourceFile    string
+	modulePath    string
+	changeType    facts.ModuleChangeKind
+	versionBefore string
+	versionAfter  string
+}
+
+func addEndpointSourceFile(builders map[string]*endpointSourceSummaryBuilder, source FileSourceImpact, metadata endpointSourceMetadata) {
+	for _, endpoint := range source.ImpactedEndpoints {
+		if endpoint.Method == "" || endpoint.Path == "" {
+			continue
+		}
+		endpointID := endpointKey(endpoint)
+		builder := builders[endpointID]
+		if builder == nil {
+			builder = &endpointSourceSummaryBuilder{
+				summary: EndpointSourceSummary{
+					Method:  endpoint.Method,
+					Path:    endpoint.Path,
+					Sources: []EndpointImpactSource{},
+				},
+				sources: map[string]EndpointImpactSource{},
+			}
+			builders[endpointID] = builder
+		}
+		sourceKey := endpointImpactSourceKey(metadata)
+		impactSource := builder.sources[sourceKey]
+		if impactSource.SourceType == "" {
+			impactSource = EndpointImpactSource{
+				SourceType:    metadata.sourceType,
+				SourceFile:    metadata.sourceFile,
+				ModulePath:    metadata.modulePath,
+				ChangeType:    metadata.changeType,
+				VersionBefore: metadata.versionBefore,
+				VersionAfter:  metadata.versionAfter,
+				RootSymbols:   []EndpointRootSymbolSummary{},
+				Chains:        [][]string{},
+				Confidence:    facts.ConfidenceLow,
+			}
+		}
+		foundChain := false
+		for _, root := range source.Symbols {
+			path, ok := shortestEndpointPath(root, endpoint)
+			if !ok {
+				continue
+			}
+			foundChain = true
+			impactSource.RootSymbols = append(impactSource.RootSymbols, rootSymbolSummary(root))
+			impactSource.Chains = append(impactSource.Chains, chainLabels(path))
+			pathConfidence := weakestConfidence(path)
+			if impactSource.Confidence == "" || len(impactSource.Chains) == 1 {
+				impactSource.Confidence = pathConfidence
+			} else {
+				impactSource.Confidence = weakerConfidence(impactSource.Confidence, pathConfidence)
+			}
+		}
+		if !foundChain && impactSource.Confidence == "" {
+			impactSource.Confidence = facts.ConfidenceLow
+		}
+		builder.sources[sourceKey] = impactSource
+	}
+}
+
+func endpointImpactSourceKey(metadata endpointSourceMetadata) string {
+	return strings.Join([]string{
+		metadata.sourceType,
+		metadata.sourceFile,
+		metadata.modulePath,
+		string(metadata.changeType),
+		metadata.versionBefore,
+		metadata.versionAfter,
+	}, "\x00")
+}
+
+func shortestEndpointPath(root ImpactNode, endpoint EndpointSummary) ([]ImpactNode, bool) {
+	var best []ImpactNode
+	var walk func(ImpactNode, []ImpactNode)
+	walk = func(node ImpactNode, path []ImpactNode) {
+		current := append(path, node)
+		if node.Kind == "endpoint" && node.Method == endpoint.Method && node.Path == endpoint.Path {
+			if best == nil || len(current) < len(best) {
+				best = append([]ImpactNode(nil), current...)
+			}
+			return
+		}
+		if best != nil && len(current) >= len(best) {
+			return
+		}
+		for _, child := range node.Children {
+			walk(child, current)
+		}
+	}
+	walk(root, nil)
+	return best, best != nil
+}
+
+func rootSymbolSummary(root ImpactNode) EndpointRootSymbolSummary {
+	return EndpointRootSymbolSummary{
+		ID:   root.ID,
+		Kind: root.Kind,
+		Name: root.Name,
+		File: root.File,
+	}
+}
+
+func chainLabels(path []ImpactNode) []string {
+	out := make([]string, 0, len(path))
+	for _, node := range path {
+		out = append(out, impactNodeLabel(node))
+	}
+	return out
+}
+
+func impactNodeLabel(node ImpactNode) string {
+	if node.Kind == "endpoint" && node.Method != "" && node.Path != "" {
+		return node.Method + " " + node.Path
+	}
+	if node.Name != "" {
+		return strings.TrimSpace(node.Kind + " " + node.Name)
+	}
+	if node.ID != "" {
+		return strings.TrimSpace(node.Kind + " " + node.ID)
+	}
+	return node.Kind
+}
+
+func weakestConfidence(path []ImpactNode) facts.Confidence {
+	out := facts.ConfidenceHigh
+	for _, node := range path {
+		out = weakerConfidence(out, node.Confidence)
+	}
+	return out
+}
+
+func weakerConfidence(left, right facts.Confidence) facts.Confidence {
+	if confidenceRank(right) < confidenceRank(left) {
+		return right
+	}
+	return left
+}
+
+func confidenceRank(confidence facts.Confidence) int {
+	switch confidence {
+	case facts.ConfidenceHigh:
+		return 3
+	case facts.ConfidenceMedium:
+		return 2
+	case facts.ConfidenceLow:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func normalizeEndpointImpactSource(source *EndpointImpactSource) {
+	sort.Slice(source.RootSymbols, func(i, j int) bool {
+		return source.RootSymbols[i].ID < source.RootSymbols[j].ID
+	})
+	source.RootSymbols = uniqueEndpointRootSymbols(source.RootSymbols)
+	sort.Slice(source.Chains, func(i, j int) bool {
+		return strings.Join(source.Chains[i], "\x00") < strings.Join(source.Chains[j], "\x00")
+	})
+	source.Chains = uniqueChains(source.Chains)
+	if source.RootSymbols == nil {
+		source.RootSymbols = []EndpointRootSymbolSummary{}
+	}
+	if source.Chains == nil {
+		source.Chains = [][]string{}
+	}
+}
+
+func uniqueEndpointRootSymbols(values []EndpointRootSymbolSummary) []EndpointRootSymbolSummary {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:0]
+	var last string
+	for i, value := range values {
+		if i > 0 && value.ID == last {
+			continue
+		}
+		out = append(out, value)
+		last = value.ID
+	}
+	return out
+}
+
+func uniqueChains(values [][]string) [][]string {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:0]
+	var last string
+	for i, value := range values {
+		key := strings.Join(value, "\x00")
+		if i > 0 && key == last {
+			continue
+		}
+		out = append(out, value)
+		last = key
+	}
+	return out
+}
+
+func sortEndpointImpactSources(sources []EndpointImpactSource) {
+	sort.Slice(sources, func(i, j int) bool {
+		left, right := sources[i], sources[j]
+		if left.SourceType != right.SourceType {
+			return left.SourceType < right.SourceType
+		}
+		if left.SourceFile != right.SourceFile {
+			return left.SourceFile < right.SourceFile
+		}
+		if left.ModulePath != right.ModulePath {
+			return left.ModulePath < right.ModulePath
+		}
+		return left.VersionAfter < right.VersionAfter
+	})
+}
+
 // normalizeImpactDocument 对整篇 ImpactDocument 做最终归一化与稳定排序。
 // 包括 nil 切片转空切片、endpoints / IM 事件排序去重、fileSources / moduleSources
 // 及其嵌套 SourceFiles 的稳定排序。这是 RenderImpactTreeJSON 之前的最后一道保障。
@@ -543,6 +858,24 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 	})
 	sort.Slice(doc.ModuleSources, func(i, j int) bool {
 		return doc.ModuleSources[i].ModulePath < doc.ModuleSources[j].ModulePath
+	})
+	if doc.EndpointSourcesSummary == nil {
+		doc.EndpointSourcesSummary = []EndpointSourceSummary{}
+	}
+	for i := range doc.EndpointSourcesSummary {
+		sortEndpointImpactSources(doc.EndpointSourcesSummary[i].Sources)
+		if doc.EndpointSourcesSummary[i].Sources == nil {
+			doc.EndpointSourcesSummary[i].Sources = []EndpointImpactSource{}
+		}
+		for j := range doc.EndpointSourcesSummary[i].Sources {
+			normalizeEndpointImpactSource(&doc.EndpointSourcesSummary[i].Sources[j])
+		}
+	}
+	sort.Slice(doc.EndpointSourcesSummary, func(i, j int) bool {
+		if doc.EndpointSourcesSummary[i].Method != doc.EndpointSourcesSummary[j].Method {
+			return doc.EndpointSourcesSummary[i].Method < doc.EndpointSourcesSummary[j].Method
+		}
+		return doc.EndpointSourcesSummary[i].Path < doc.EndpointSourcesSummary[j].Path
 	})
 	return doc
 }
