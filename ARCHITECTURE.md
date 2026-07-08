@@ -566,6 +566,8 @@ ToSymbol -> all FromSymbol
 
 入口：`internal/extract/im/extractor.go` 的 `Extract`。
 
+`internal/extract/im/summary.go` 负责 IM summary propagation，`internal/extract/im/template.go` 负责包内私有的 value-template 模型、表达式模板化、模板替换和模板去重键。
+
 职责分为四层：
 
 1. 协议发现：只有项目同时存在 `broadcast://` 和 `/broadcast/send` 锚点时，才把本仓调用链识别为 IM transport。
