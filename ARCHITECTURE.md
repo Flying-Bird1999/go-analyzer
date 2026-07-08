@@ -752,6 +752,10 @@ RouteGraph: HTTP 路由域传播
   middleware binding
     -> same group 且 statement order 更靠后的 routes
 
+  middleware symbol
+    -> middleware binding
+    -> same group 且 statement order 更靠后的 routes
+
   route-scoped dependency
     -> reference span 所在的具体 route registration
 

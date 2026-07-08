@@ -274,29 +274,8 @@ func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int) Node {
 }
 
 // middlewareBindingsForSymbol 返回所有引用了指定符号的中间件绑定事实。
-//
-// 返回结果按文件、statement_index、ID 稳定排序，便于后续 middleware 节点
-// 决定哪些"在同一 group 内、且 statement order 靠后"的路由受影响。
 func (b *treeBuilder) middlewareBindingsForSymbol(symbolID facts.SymbolID) []facts.MiddlewareBindingFact {
-	var out []facts.MiddlewareBindingFact
-	for _, binding := range b.store.Middleware {
-		for _, candidate := range binding.MiddlewareSymbols {
-			if candidate == symbolID {
-				out = append(out, binding)
-				break
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Span.File != out[j].Span.File {
-			return out[i].Span.File < out[j].Span.File
-		}
-		if out[i].StatementIndex != out[j].StatementIndex {
-			return out[i].StatementIndex < out[j].StatementIndex
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
+	return b.routes.MiddlewareBindingsForSymbol(symbolID)
 }
 
 // symbolNode 构造一个符号节点。若符号在 facts 中存在，则补全 file/package/span 等元信息；

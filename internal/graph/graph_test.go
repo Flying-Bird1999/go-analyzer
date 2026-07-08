@@ -57,6 +57,52 @@ func TestRouteGraphMiddlewareAffectsOnlyLaterRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteGraphIndexesMiddlewareBySymbol(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	auth := facts.SymbolID("method:example.com/project/auth:Auth:Middleware")
+	audit := facts.SymbolID("func:example.com/project/audit::Middleware")
+	store.Middleware = append(store.Middleware,
+		facts.MiddlewareBindingFact{
+			ID:                "middleware:b",
+			MiddlewareSymbols: []facts.SymbolID{auth, ""},
+			StatementIndex:    20,
+			Span:              facts.SourceSpan{File: "router/b.go"},
+		},
+		facts.MiddlewareBindingFact{
+			ID:                "middleware:a",
+			MiddlewareSymbols: []facts.SymbolID{auth, audit},
+			StatementIndex:    10,
+			Span:              facts.SourceSpan{File: "router/a.go"},
+		},
+		facts.MiddlewareBindingFact{
+			ID:                "middleware:c",
+			MiddlewareSymbols: []facts.SymbolID{auth},
+			StatementIndex:    5,
+			Span:              facts.SourceSpan{File: "router/a.go"},
+		},
+	)
+
+	graph := NewRouteGraph(store)
+	authBindings := graph.MiddlewareBindingsForSymbol(auth)
+	gotIDs := middlewareBindingIDs(authBindings)
+	wantIDs := []string{"middleware:c", "middleware:a", "middleware:b"}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("auth bindings = %#v, want %#v", gotIDs, wantIDs)
+	}
+	auditBindings := graph.MiddlewareBindingsForSymbol(audit)
+	if len(auditBindings) != 1 || auditBindings[0].ID != "middleware:a" {
+		t.Fatalf("audit bindings = %#v", auditBindings)
+	}
+	if bindings := graph.MiddlewareBindingsForSymbol(""); len(bindings) != 0 {
+		t.Fatalf("empty symbol bindings = %#v", bindings)
+	}
+	authBindings[0].ID = "mutated"
+	again := graph.MiddlewareBindingsForSymbol(auth)
+	if again[0].ID != "middleware:c" {
+		t.Fatalf("middleware bindings query did not return a copy: %#v", again)
+	}
+}
+
 // TestRouteGraphScopesGroupsByRouteFunction 场景：相同 groupVar 但不同路由函数的组不应串扰，中间件只命中同函数的组路由。
 func TestRouteGraphScopesGroupsByRouteFunction(t *testing.T) {
 	store := extractAndLinkFixture(t, "group-scope")
@@ -224,6 +270,14 @@ func TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes(t *testing.T) 
 	if len(routes) != 1 || routes[0].ID != "route:guarded" {
 		t.Fatalf("assigned group dependency routes = %#v", routes)
 	}
+}
+
+func middlewareBindingIDs(bindings []facts.MiddlewareBindingFact) []string {
+	out := make([]string, len(bindings))
+	for i, binding := range bindings {
+		out[i] = binding.ID
+	}
+	return out
 }
 
 // extractAndLinkFixture 加载 testdata fixture，执行路由抽取与 link，返回填充好的 Store。

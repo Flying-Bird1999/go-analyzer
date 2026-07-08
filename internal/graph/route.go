@@ -21,6 +21,8 @@ type RouteGraph struct {
 	GroupsByID map[string]facts.RouteGroupFact
 	// MiddlewareByID 按绑定 ID 索引的中间件绑定事实。
 	MiddlewareByID map[string]facts.MiddlewareBindingFact
+	// MiddlewareBySymbol 按中间件 symbol 聚合绑定事实。
+	MiddlewareBySymbol map[facts.SymbolID][]facts.MiddlewareBindingFact
 	// RoutesByGroupID 按有效 group ID 聚合的路由列表。
 	RoutesByGroupID map[string][]facts.RouteRegistrationFact
 	// ChildGroupsByID 按父组 ID 聚合的直接子组 ID（含 ParentGroupID 字段与 RouteGroupFlow）。
@@ -49,6 +51,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		RoutesByID:           map[string]facts.RouteRegistrationFact{},
 		GroupsByID:           map[string]facts.RouteGroupFact{},
 		MiddlewareByID:       map[string]facts.MiddlewareBindingFact{},
+		MiddlewareBySymbol:   map[facts.SymbolID][]facts.MiddlewareBindingFact{},
 		RoutesByGroupID:      map[string][]facts.RouteRegistrationFact{},
 		ChildGroupsByID:      map[string][]string{},
 		RoutesByHandler:      map[facts.SymbolID][]facts.RouteRegistrationFact{},
@@ -108,6 +111,12 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	// 第 4 步：索引中间件绑定与注解。
 	for _, binding := range store.Middleware {
 		g.MiddlewareByID[binding.ID] = binding
+		for _, symbol := range binding.MiddlewareSymbols {
+			if symbol == "" {
+				continue
+			}
+			g.MiddlewareBySymbol[symbol] = append(g.MiddlewareBySymbol[symbol], binding)
+		}
 	}
 	for _, annotation := range store.Annotations {
 		g.AnnotationsByHandler[annotation.HandlerSymbol] = append(g.AnnotationsByHandler[annotation.HandlerSymbol], annotation)
@@ -130,6 +139,9 @@ func (g *RouteGraph) sort() {
 	for dependency := range g.RoutesByDependency {
 		sortRoutes(g.RoutesByDependency[dependency])
 	}
+	for symbol := range g.MiddlewareBySymbol {
+		sortMiddlewareBindings(g.MiddlewareBySymbol[symbol])
+	}
 	for handler := range g.AnnotationsByHandler {
 		sort.Slice(g.AnnotationsByHandler[handler], func(i, j int) bool {
 			return g.AnnotationsByHandler[handler][i].ID < g.AnnotationsByHandler[handler][j].ID
@@ -146,6 +158,11 @@ func (g *RouteGraph) RoutesForHandler(handler facts.SymbolID) []facts.RouteRegis
 // 返回副本，调用方可安全修改。
 func (g *RouteGraph) RoutesForDependency(dependency facts.SymbolID) []facts.RouteRegistrationFact {
 	return append([]facts.RouteRegistrationFact(nil), g.RoutesByDependency[dependency]...)
+}
+
+// MiddlewareBindingsForSymbol 返回引用指定中间件 symbol 的全部中间件绑定。返回副本，调用方可安全修改。
+func (g *RouteGraph) MiddlewareBindingsForSymbol(symbol facts.SymbolID) []facts.MiddlewareBindingFact {
+	return append([]facts.MiddlewareBindingFact(nil), g.MiddlewareBySymbol[symbol]...)
 }
 
 // AnnotationsForHandler 返回绑定到 handler 的全部注解。返回副本，调用方可安全修改。
@@ -226,6 +243,18 @@ func sortRoutes(routes []facts.RouteRegistrationFact) {
 			return routes[i].StatementIndex < routes[j].StatementIndex
 		}
 		return routes[i].ID < routes[j].ID
+	})
+}
+
+func sortMiddlewareBindings(bindings []facts.MiddlewareBindingFact) {
+	sort.Slice(bindings, func(i, j int) bool {
+		if bindings[i].Span.File != bindings[j].Span.File {
+			return bindings[i].Span.File < bindings[j].Span.File
+		}
+		if bindings[i].StatementIndex != bindings[j].StatementIndex {
+			return bindings[i].StatementIndex < bindings[j].StatementIndex
+		}
+		return bindings[i].ID < bindings[j].ID
 	})
 }
 
