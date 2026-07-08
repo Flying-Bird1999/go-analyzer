@@ -5,7 +5,6 @@ package reference
 import (
 	"fmt"
 	"go/ast"
-	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
@@ -65,7 +64,7 @@ func (r resolver) interfaceBindingDiagnostic(expr ast.Expr, raw string) (diagnos
 		packagePath = importPath
 		varName = parts[1]
 	}
-	if !isProjectPackage(r.idx.Project.ModulePath, packagePath) {
+	if !r.idx.IsProjectPackage(packagePath) {
 		// 非项目包的接口变量不在此诊断范围内。
 		return "", "", false
 	}
@@ -99,19 +98,14 @@ func (r resolver) isUnresolvedProjectCall(expr ast.Expr) bool {
 		return false
 	}
 	importPath := r.file.Imports[parts[0]]
-	if !isProjectPackage(r.idx.Project.ModulePath, importPath) {
+	if !r.idx.IsProjectPackage(importPath) {
 		return false
 	}
 	if receiverType, ok := r.scopedTypes.resolve(selectorRootIdent(selector), selector.Pos()); ok {
-		return isProjectPackage(r.idx.Project.ModulePath, receiverType.PackagePath)
+		return r.idx.IsProjectPackage(receiverType.PackagePath)
 	}
 	if receiverType, ok := r.idx.ResolveSelectorReceiverType(r.file, parts); ok {
-		return isProjectPackage(r.idx.Project.ModulePath, receiverType.PackagePath)
+		return r.idx.IsProjectPackage(receiverType.PackagePath)
 	}
 	return true
-}
-
-// isProjectPackage 判断 packagePath 是否落在当前项目的 module 之下（精确匹配或为子包前缀）。
-func isProjectPackage(modulePath, packagePath string) bool {
-	return packagePath == modulePath || strings.HasPrefix(packagePath, modulePath+"/")
 }

@@ -42,6 +42,28 @@ func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	}
 }
 
+func TestIndexIsProjectPackage(t *testing.T) {
+	idx := &Index{Project: &project.Project{ModulePath: "example.com/app"}}
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "module root", path: "example.com/app", want: true},
+		{name: "child package", path: "example.com/app/service", want: true},
+		{name: "similar prefix", path: "example.com/application", want: false},
+		{name: "external", path: "example.com/other", want: false},
+		{name: "empty", path: "", want: false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idx.IsProjectPackage(tt.path); got != tt.want {
+				t.Fatalf("IsProjectPackage(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestBuildUsesCompleteDeclarationSpans 验证 type 与 var 声明的 span 覆盖完整声明体，而非仅首行。
 func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "declaration-spans")

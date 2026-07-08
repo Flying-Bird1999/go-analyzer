@@ -72,6 +72,15 @@ type ResolvedSymbol struct {
 	Confidence facts.Confidence
 }
 
+// IsProjectPackage 判断 packagePath 是否落在当前项目 module 下。
+func (idx *Index) IsProjectPackage(packagePath string) bool {
+	if idx == nil || idx.Project == nil || idx.Project.ModulePath == "" || packagePath == "" {
+		return false
+	}
+	modulePath := idx.Project.ModulePath
+	return packagePath == modulePath || strings.HasPrefix(packagePath, modulePath+"/")
+}
+
 // Build 遍历项目全部声明构建 Index。
 // 第一轮建立声明主表、struct 字段与 callable 返回类型；随后三步分别补全
 // 包级 var/const 的 value-type、map 字面量值类型，以及接口变量的严格绑定。
@@ -417,9 +426,7 @@ func (idx *Index) externalCallableReceiver(file *project.File, expr ast.Expr) (V
 		return ValueType{}, false
 	}
 	importPath := file.Imports[pkg.Name]
-	if importPath == "" ||
-		importPath == idx.Project.ModulePath ||
-		strings.HasPrefix(importPath, idx.Project.ModulePath+"/") {
+	if importPath == "" || idx.IsProjectPackage(importPath) {
 		// 项目内包不走外部 constructor 推测分支。
 		return ValueType{}, false
 	}

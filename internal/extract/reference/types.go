@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/printer"
-	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
@@ -168,9 +167,8 @@ func unresolvedProjectTypes(file *project.File, idx *astindex.Index, expr ast.Ex
 			return true
 		}
 		importPath := file.Imports[pkg.Name]
-		modulePath := idx.Project.ModulePath
 		// 仅当导入路径属于本项目时才视为需要诊断的项目内引用。
-		if importPath != modulePath && !strings.HasPrefix(importPath, modulePath+"/") {
+		if !idx.IsProjectPackage(importPath) {
 			return false
 		}
 		id := astindex.TypeSymbolID(importPath, selector.Sel.Name)
