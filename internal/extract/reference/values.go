@@ -11,44 +11,6 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-// extractValueReferences 遍历函数体，提取其中的 value 引用边。
-// 与初始化表达式不同，这里需要排除局部变量；调用位置的选择器走接收者解析路径。
-func extractValueReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, fn *ast.FuncDecl) {
-	if fn.Body == nil {
-		return
-	}
-	// ignored 标记不应作为 value 引用的位置（组合字面量类型、键值对键）。
-	ignored := ignoredValuePositions(fn.Body)
-	// callFuns 标记作为被调函数的选择器位置，需走接收者解析路径。
-	callFuns := callFunPositions(fn.Body)
-	resolver := newResolver(file, idx, scopedValueTypes{})
-
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		switch x := node.(type) {
-		case *ast.SelectorExpr:
-			if ignored[x.Pos()] {
-				return false
-			}
-			var targets []facts.SymbolID
-			if callFuns[x.Pos()] {
-				targets = resolver.ResolveReceiverValueIDs(x)
-			} else {
-				targets = resolver.ResolveValueIDs(x)
-			}
-			addValueReferenceFacts(p, file, store, from, x, targets)
-			// 选择器整体解析完毕，不再下钻以避免重复解析根 Ident。
-			return false
-		case *ast.Ident:
-			// 跳过被忽略位置、调用函数位置以及局部变量。
-			if ignored[x.Pos()] || callFuns[x.Pos()] || isLocalIdentifier(idx, x) {
-				return true
-			}
-			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
-		}
-		return true
-	})
-}
-
 // ResolveValueIDs 将一个值表达式解析为目标 value 符号列表。
 // 处理 Ident、导入包 value 选择器、本包局部变量上的方法调用以及 pkg.var.Method 三段选择器。
 func (r resolver) ResolveValueIDs(expr ast.Expr) []facts.SymbolID {

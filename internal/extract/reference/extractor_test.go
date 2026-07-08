@@ -87,6 +87,90 @@ func TestExtractPackageVarMethodCallReference(t *testing.T) {
 	)
 }
 
+func TestCollectFunctionBodyContextIndexesScopedTypesAndPositions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/reference-context\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte(`package sample
+
+type Payload struct{ ID string }
+type Service struct{}
+
+func (Service) Handle(Payload) {}
+
+var Default Service
+
+func NewService() Service { return Service{} }
+
+func Use() {
+	local := NewService()
+	local.Handle(Payload{ID: "x"})
+	Default.Handle(Payload{ID: "y"})
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := astindex.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := findReferenceTestFile(t, p, "main.go")
+	var fn *ast.FuncDecl
+	for _, decl := range file.AST.Decls {
+		candidate, ok := decl.(*ast.FuncDecl)
+		if ok && candidate.Name.Name == "Use" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatal("Use function not found")
+	}
+
+	ctx := collectFunctionBodyContext(file, idx, fn)
+	var (
+		localIdent *ast.Ident
+		callFun    ast.Expr
+		fieldKey   *ast.Ident
+	)
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		switch x := node.(type) {
+		case *ast.AssignStmt:
+			if len(x.Lhs) == 1 {
+				localIdent, _ = x.Lhs[0].(*ast.Ident)
+			}
+		case *ast.CallExpr:
+			if selector, ok := x.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Handle" && callFun == nil {
+				callFun = x.Fun
+			}
+		case *ast.KeyValueExpr:
+			if key, ok := x.Key.(*ast.Ident); ok && key.Name == "ID" && fieldKey == nil {
+				fieldKey = key
+			}
+		}
+		return true
+	})
+	if localIdent == nil || callFun == nil || fieldKey == nil {
+		t.Fatalf("test fixture did not expose expected nodes: local=%v call=%v field=%v", localIdent, callFun, fieldKey)
+	}
+	valueTypes, ok := ctx.scopedTypes.resolveAll(localIdent, callFun.Pos())
+	if !ok || len(valueTypes) != 1 || valueTypes[0].TypeName != "Service" {
+		t.Fatalf("scoped type for local = %#v ok=%v, want Service", valueTypes, ok)
+	}
+	if !ctx.callFuns[callFun.Pos()] {
+		t.Fatalf("call function position %v was not indexed", callFun.Pos())
+	}
+	if !ctx.ignored[fieldKey.Pos()] {
+		t.Fatalf("composite literal key position %v was not ignored", fieldKey.Pos())
+	}
+}
+
 // 场景：接口变量有唯一具体实现时，其方法调用应高置信度解析到具体方法。
 func TestExtractStrictInterfaceCallReference(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func Init() {

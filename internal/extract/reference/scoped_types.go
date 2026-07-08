@@ -26,6 +26,12 @@ type scopedValueTypes struct {
 	byName   map[string][]scopedValueType
 }
 
+type functionBodyContext struct {
+	scopedTypes scopedValueTypes
+	ignored     map[token.Pos]bool
+	callFuns    map[token.Pos]bool
+}
+
 // addAll 登记一个局部变量的推断类型。同名变量按声明位置追加，支持遮蔽；
 // 当 parser 提供 ast.Object 时同时按身份登记以保证精确。
 func (s *scopedValueTypes) addAll(name *ast.Ident, declPos token.Pos, valueTypes []astindex.ValueType) {
@@ -89,31 +95,44 @@ func (s scopedValueTypes) resolveAll(name *ast.Ident, pos token.Pos) ([]astindex
 	return best, found
 }
 
-// collectScopedValueTypes 收集函数声明的所有局部变量类型推断：参数、返回值与函数体内的赋值/局部声明。
-func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.FuncDecl) scopedValueTypes {
-	out := scopedValueTypes{}
-	// 抽取 FieldList（接收者/参数/返回值）中具名变量的类型。
-	addFields := func(fields *ast.FieldList) {
+func collectFunctionBodyContext(file *project.File, idx *astindex.Index, fn *ast.FuncDecl) functionBodyContext {
+	ctx := functionBodyContext{
+		ignored:  map[token.Pos]bool{},
+		callFuns: map[token.Pos]bool{},
+	}
+	if fn == nil {
+		return ctx
+	}
+	addScopedFields := func(fields *ast.FieldList) {
 		if fields == nil {
 			return
 		}
 		for _, field := range fields.List {
 			valueTypes := scopedTypesFromTypeExpr(file, field.Type)
 			for _, name := range field.Names {
-				out.addAll(name, token.NoPos, valueTypes)
+				ctx.scopedTypes.addAll(name, token.NoPos, valueTypes)
 			}
 		}
 	}
-	addFields(fn.Recv)
-	addFields(fn.Type.Params)
-	addFields(fn.Type.Results)
+	addScopedFields(fn.Recv)
+	addScopedFields(fn.Type.Params)
+	addScopedFields(fn.Type.Results)
+
 	if fn.Body == nil {
-		return out
+		return ctx
 	}
+
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch x := node.(type) {
+		case *ast.CallExpr:
+			ctx.callFuns[x.Fun.Pos()] = true
+		case *ast.CompositeLit:
+			markExprPositions(ctx.ignored, x.Type)
+		case *ast.KeyValueExpr:
+			if id, ok := x.Key.(*ast.Ident); ok {
+				ctx.ignored[id.Pos()] = true
+			}
 		case *ast.AssignStmt:
-			// 仅 := 形式才引入新的局部变量。
 			if x.Tok != token.DEFINE {
 				return true
 			}
@@ -122,7 +141,6 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 				if !ok || len(x.Rhs) == 0 {
 					continue
 				}
-				// 多返回值赋值仅根据单一右值推断首个左值，其余跳过。
 				if len(x.Rhs) == 1 && len(x.Lhs) > 1 && i > 0 {
 					continue
 				}
@@ -130,7 +148,7 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 				if valueIndex >= len(x.Rhs) {
 					valueIndex = len(x.Rhs) - 1
 				}
-				out.addAll(name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
+				ctx.scopedTypes.addAll(name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
 			}
 		case *ast.DeclStmt:
 			decl, ok := x.Decl.(*ast.GenDecl)
@@ -144,7 +162,6 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 				}
 				for i, name := range value.Names {
 					valueTypes := scopedTypesFromTypeExpr(file, value.Type)
-					// 无显式类型时回退到初始化值表达式推断。
 					if len(valueTypes) == 0 && len(value.Values) > 0 {
 						if len(value.Values) == 1 && len(value.Names) > 1 && i > 0 {
 							continue
@@ -155,13 +172,13 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 						}
 						valueTypes = scopedTypesFromValueExpr(file, idx, value.Values[valueIndex])
 					}
-					out.addAll(name, name.Pos(), valueTypes)
+					ctx.scopedTypes.addAll(name, name.Pos(), valueTypes)
 				}
 			}
 		}
 		return true
 	})
-	return out
+	return ctx
 }
 
 // scopedTypesFromTypeExpr 从类型表达式推断变量类型，支持本包/导入包类型、指针、括号与泛型实参化形式。

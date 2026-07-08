@@ -40,8 +40,8 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 // 依次处理接收者、类型参数、参数、返回值的类型引用，再进入函数体提取 value 与 call 边。
 func extractFuncReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, pkgPath string, fn *ast.FuncDecl) {
 	from := functionSymbol(pkgPath, fn)
-	// 预先收集函数作用域内局部变量的推断类型，用于方法调用的接收者分发。
-	scopedTypes := collectScopedValueTypes(file, idx, fn)
+	// 预先收集函数体上下文：局部变量推断类型、忽略位置和调用函数位置。
+	bodyContext := collectFunctionBodyContext(file, idx, fn)
 	if fn.Recv != nil {
 		// 方法的接收者类型本身算作 type 引用。
 		for _, field := range fn.Recv.List {
@@ -68,7 +68,15 @@ func extractFuncReferences(p *project.Project, file *project.File, idx *astindex
 		// 外部声明或仅声明无体的函数没有函数体可分析。
 		return
 	}
-	extractValueReferences(p, file, idx, store, from, fn)
+	extractFunctionBodyReferences(p, file, idx, store, from, fn, bodyContext)
+}
+
+// extractFunctionBodyReferences 用一次函数体遍历同时提取 call/type/value 引用。
+func extractFunctionBodyReferences(p *project.Project, file *project.File, idx *astindex.Index, store *facts.Store, from facts.SymbolID, fn *ast.FuncDecl, ctx functionBodyContext) {
+	if fn.Body == nil {
+		return
+	}
+	resolver := newResolver(file, idx, scopedValueTypes{})
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.CallExpr:
@@ -81,11 +89,30 @@ func extractFuncReferences(p *project.Project, file *project.File, idx *astindex
 			if len(collectTypeIDs(file, idx, callee)) > 0 {
 				addTypeReferences(p, file, idx, store, from, callee)
 			} else {
-				addCallReference(p, file, idx, store, from, scopedTypes, x)
+				addCallReference(p, file, idx, store, from, ctx.scopedTypes, x)
 			}
 		case *ast.CompositeLit:
 			// 组合字面量的类型部分构成 type 引用。
 			addTypeReferences(p, file, idx, store, from, x.Type)
+		case *ast.SelectorExpr:
+			if ctx.ignored[x.Pos()] {
+				return false
+			}
+			var targets []facts.SymbolID
+			if ctx.callFuns[x.Pos()] {
+				targets = resolver.ResolveReceiverValueIDs(x)
+			} else {
+				targets = resolver.ResolveValueIDs(x)
+			}
+			addValueReferenceFacts(p, file, store, from, x, targets)
+			// 选择器整体解析完毕，不再下钻以避免重复解析根 Ident。
+			return false
+		case *ast.Ident:
+			// 跳过被忽略位置、调用函数位置以及局部变量。
+			if ctx.ignored[x.Pos()] || ctx.callFuns[x.Pos()] || isLocalIdentifier(idx, x) {
+				return true
+			}
+			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
 		}
 		return true
 	})

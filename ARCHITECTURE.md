@@ -502,6 +502,7 @@ project.Project + astindex.Index + facts.Store
 - `value`：var/const/function value。
 
 selector/call/value 的解析集中在 `resolver` 边界内；extractor 负责遍历 AST 和写 facts，resolver 负责 typeflow、接口绑定诊断和 value/method 候选解析。
+函数体提取先构建 `functionBodyContext`，再用一次 emission walk 同时处理 call/type/value 引用；`resolver` 仍然只负责候选符号解析和接口绑定诊断。
 
 边方向是：
 
