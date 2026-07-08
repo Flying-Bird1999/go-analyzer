@@ -51,7 +51,7 @@ func (r resolver) interfaceBindingDiagnostic(expr ast.Expr, raw string) (diagnos
 	if !ok {
 		return "", "", false
 	}
-	parts := selectorParts(selector)
+	parts := astindex.SelectorParts(selector)
 	if len(parts) < 2 {
 		return "", "", false
 	}
@@ -94,7 +94,7 @@ func (r resolver) isUnresolvedProjectCall(expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	parts := selectorParts(selector)
+	parts := astindex.SelectorParts(selector)
 	if len(parts) < 2 {
 		return false
 	}

@@ -486,34 +486,11 @@ func functionValueType(file *project.File, fn *ast.FuncDecl, name string) (astin
 // typeExprValueType 把类型表达式解析为 ValueType。支持本地 ident、跨包 selector、
 // 指针、括号、泛型索引等常见形式，全部按 high confidence 处理。
 func typeExprValueType(file *project.File, expr ast.Expr) (astindex.ValueType, bool) {
-	switch value := expr.(type) {
-	case *ast.Ident:
-		return astindex.ValueType{PackagePath: file.Package.Path, TypeName: value.Name, Confidence: facts.ConfidenceHigh}, true
-	case *ast.SelectorExpr:
-		pkg, ok := value.X.(*ast.Ident)
-		if !ok {
-			return astindex.ValueType{}, false
-		}
-		importPath := file.Imports[pkg.Name]
-		if importPath == "" {
-			return astindex.ValueType{}, false
-		}
-		return astindex.ValueType{PackagePath: importPath, TypeName: value.Sel.Name, Confidence: facts.ConfidenceHigh}, true
-	case *ast.StarExpr:
-		// 指针类型：透传 base 类型。
-		return typeExprValueType(file, value.X)
-	case *ast.ParenExpr:
-		// 括号包裹：透传 base 类型。
-		return typeExprValueType(file, value.X)
-	case *ast.IndexExpr:
-		// 单类型实参的泛型（如 Foo[T]）：类型本身是 Foo。
-		return typeExprValueType(file, value.X)
-	case *ast.IndexListExpr:
-		// 多类型实参的泛型：类型本身是 base。
-		return typeExprValueType(file, value.X)
-	default:
+	vt := astindex.ValueTypeFromTypeExpr(file, expr)
+	if vt.TypeName == "" {
 		return astindex.ValueType{}, false
 	}
+	return vt, true
 }
 
 // staticStringTable 判断 expr 是否是纯字符串字面量数组/切片，是则返回字符串切片。

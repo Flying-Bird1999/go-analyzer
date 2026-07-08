@@ -86,6 +86,34 @@ diff
   -> 受影响 HTTP 接口 / IM event
 ```
 
+## 快速开始
+
+前置条件：
+
+- Go 1.24 或更高（见 `go.mod`）。
+- 仅依赖 Go 标准库，无需额外安装第三方库。
+
+构建与测试：
+
+```bash
+go build ./cmd/go-analyzer   # 产出 go-analyzer 二进制
+go test ./...
+```
+
+首次影响分析（无需安装，直接 `go run`；路径参数必须为绝对路径）：
+
+```bash
+go run ./cmd/go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
+```
+
+调试 facts（检查 symbol / route / reference / IM event / diagnostics 是否被正确抽取）：
+
+```bash
+go run ./cmd/go-analyzer facts --project /absolute/path/to/sl-sc1-bff-service
+```
+
+更详细的架构、模块职责、能力边界与调试指南见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
 ## CLI 使用
 
 对外接入只需要使用 `impact` 命令。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
@@ -94,6 +122,29 @@ diff
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --impact-config /absolute/path/to/go-impact.config.json --format json
 ```
+
+### 命令与参数参考
+
+`impact` 是对外接入命令；`facts`、`schema`、`--timings` 为开发调试能力（详见 ARCHITECTURE.md「内部调试契约」）。
+
+| 命令 / 参数 | 用途 | 面向 |
+| --- | --- | --- |
+| `impact` | 从已应用 diff 分析受影响 HTTP 接口 / IM event | 接入 |
+| `facts` | 输出项目 facts JSON，用于调试抽取结果与 diagnostics | 调试 |
+| `schema` | 输出 facts / impact JSON Schema，校验稳定输出契约 | 调试 |
+| `--project` | 目标项目根目录（绝对路径） | 接入 |
+| `--diff` | 已应用到变更后源码的 unified diff（绝对路径） | 接入 |
+| `--impact-config` | 可选 module 版本变更过滤配置（绝对路径） | 接入 |
+| `--format` | 输出格式，默认 `json` | 接入 |
+| `--goos` / `--goarch` / `--tags` / `--cgo` | 指定 Go build context，影响 build constraint 文件过滤；未指定按 `go/build` 默认值 | 调试 |
+| `--timings` | 把各 pipeline stage 耗时写到 stderr | 调试 |
+
+### 诊断与可观测性
+
+- `impact` JSON **不含** diagnostics（设计如此，保证接入输出稳定）。
+- 用 `facts` 查看项目级诊断，例如非变更文件解析失败产生的 `package_load_failed`。
+- 用 `--timings` 查看各 stage 耗时（写到 stderr，不污染 stdout 的 JSON）。
+- 用 `schema --type facts|impact` 校验或对齐输出契约。
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 `impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。

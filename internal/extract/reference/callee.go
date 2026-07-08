@@ -38,7 +38,7 @@ func (r resolver) ResolveCall(call *ast.CallExpr) ([]astindex.ResolvedSymbol, st
 // resolveSelectorCandidates 解析形如 pkg.Foo / recv.Method / pkg.var.Method 的选择器调用。
 // 优先级：导入包函数 > 局部变量推断类型上的方法 > 索引的包级选择器方法解析。
 func (r resolver) resolveSelectorCandidates(selector *ast.SelectorExpr) ([]astindex.ResolvedSymbol, string, bool) {
-	parts := selectorParts(selector)
+	parts := astindex.SelectorParts(selector)
 	raw := strings.Join(parts, ".")
 	if len(parts) == 2 {
 		// 形如 pkg.Func：当首段是导入别名且对应函数存在时直接命中。

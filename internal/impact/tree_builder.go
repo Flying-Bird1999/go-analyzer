@@ -218,10 +218,11 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 			// 命中环路：标记后不再递归展开，避免无限循环。
 			child.Cycle = true
 		} else {
-			// 复制一份 path 再加入当前符号，保证不同分支互不影响。
-			nextPath := copySymbolPath(path)
-			nextPath[ref.FromSymbol] = true
-			b.expandSymbol(&child, nextPath)
+			// 就地回溯：进入子分支前标记、返回后清除，避免每条边复制整张 path map。
+			// 环路检测与 EventsForPath 行为与复制版完全等价，但每条边从 O(L) 拷贝降到 O(1)。
+			path[ref.FromSymbol] = true
+			b.expandSymbol(&child, path)
+			delete(path, ref.FromSymbol)
 		}
 		node.Children = append(node.Children, child)
 	}
@@ -592,15 +593,6 @@ func referenceRelation(kind facts.ReferenceKind) string {
 	default:
 		return "call"
 	}
-}
-
-// copySymbolPath 复制一份 DFS 已访问符号集合，避免递归分支共享同一 map 互相污染。
-func copySymbolPath(path map[facts.SymbolID]bool) map[facts.SymbolID]bool {
-	out := make(map[facts.SymbolID]bool, len(path)+1)
-	for id, present := range path {
-		out[id] = present
-	}
-	return out
 }
 
 // mergeAndSortChildren 合并并稳定排序同一节点的子节点。

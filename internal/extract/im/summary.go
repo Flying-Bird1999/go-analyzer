@@ -443,43 +443,121 @@ func (e *summaryEngine) broadcastParamsCall(info *functionInfo, call *ast.CallEx
 }
 
 // directProtocolSummary 识别函数自身直接发送 IM 的场景：函数体可达 endpoint，
-// 且包含 data.Event(e) 调用和 Body 字段赋值。
-// 用于支持 SC2 风格的 SendData.Event / Body 直接发送模式。
+// 且存在对“持有 Body 字段的同一变量”的 Event(...) 调用（SC2 风格 SendData）。
+// 要求 Event 调用接收者与 Body 字面量绑定到同一变量，避免把函数内无关的 *.Event()
+// 调用或无关的 Body 字段错误配对成 IM event（Body 是极常见字段名）。
 func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSummary, bool) {
 	if !e.reach[info.id].endpoint {
 		return functionSummary{}, false
 	}
+	// 第一遍：收集被赋值为带 Body 字段的复合字面量的变量名 -> payload 表达式。
+	// 同名变量只记首次赋值，保证源序确定性。
+	bodyPayload := map[string]ast.Expr{}
+	ast.Inspect(info.decl.Body, func(node ast.Node) bool {
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for i, lhs := range assign.Lhs {
+			if i >= len(assign.Rhs) {
+				continue
+			}
+			switch left := lhs.(type) {
+			case *ast.Ident:
+				lit := compositeLitOf(assign.Rhs[i])
+				if lit == nil {
+					continue
+				}
+				if expr, ok := bodyFieldOf(lit); ok {
+					addBodyPayload(bodyPayload, left.Name, expr)
+				}
+			case *ast.SelectorExpr:
+				if left.Sel.Name != "Body" {
+					continue
+				}
+				recv, ok := left.X.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				addBodyPayload(bodyPayload, recv.Name, assign.Rhs[i])
+			}
+		}
+		return true
+	})
+	if len(bodyPayload) == 0 {
+		return functionSummary{}, false
+	}
+	// 第二遍：找到对上述变量的 Event(arg) 调用，取源序首个作为结构化绑定结果。
 	var eventExpr ast.Expr
 	var eventCall *ast.CallExpr
 	var payloadExpr ast.Expr
 	ast.Inspect(info.decl.Body, func(node ast.Node) bool {
-		switch value := node.(type) {
-		case *ast.CallExpr:
-			// 识别 data.Event(topic) 形式的调用，event 取唯一实参。
-			selector, ok := value.Fun.(*ast.SelectorExpr)
-			if ok && selector.Sel.Name == "Event" && len(value.Args) == 1 {
-				eventExpr = value.Args[0]
-				eventCall = value
-			}
-		case *ast.CompositeLit:
-			// 识别 Body 字段，payload 取其赋值表达式。
-			for _, rawElement := range value.Elts {
-				element, ok := rawElement.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := element.Key.(*ast.Ident)
-				if ok && key.Name == "Body" {
-					payloadExpr = element.Value
-				}
-			}
+		if eventExpr != nil {
+			return false
 		}
-		return true
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Event" || len(call.Args) != 1 {
+			return true
+		}
+		recv, ok := selector.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		payload, ok := bodyPayload[recv.Name]
+		if !ok {
+			return true
+		}
+		eventExpr = call.Args[0]
+		eventCall = call
+		payloadExpr = payload
+		return false
 	})
 	if eventExpr == nil || payloadExpr == nil {
 		return functionSummary{}, false
 	}
 	return e.summaryFromCall(info, eventCall, eventExpr, payloadExpr, nil), true
+}
+
+func addBodyPayload(bodyPayload map[string]ast.Expr, name string, expr ast.Expr) {
+	if name == "" || expr == nil {
+		return
+	}
+	if _, exists := bodyPayload[name]; exists {
+		return
+	}
+	bodyPayload[name] = expr
+}
+
+// compositeLitOf 解包可能的取址表达式（&T{...}），返回内部的复合字面量；否则返回 nil。
+func compositeLitOf(expr ast.Expr) *ast.CompositeLit {
+	switch x := expr.(type) {
+	case *ast.UnaryExpr:
+		if x.Op == token.AND {
+			return compositeLitOf(x.X)
+		}
+	case *ast.CompositeLit:
+		return x
+	}
+	return nil
+}
+
+// bodyFieldOf 在复合字面量中查找 Body 字段，返回其值表达式。
+func bodyFieldOf(lit *ast.CompositeLit) (ast.Expr, bool) {
+	for _, raw := range lit.Elts {
+		element, ok := raw.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := element.Key.(*ast.Ident)
+		if ok && key.Name == "Body" {
+			return element.Value, true
+		}
+	}
+	return nil, false
 }
 
 // addSummary 把 summary 加入对应函数的摘要集合，并对重复摘要去重。
@@ -499,12 +577,8 @@ func (e *summaryEngine) addSummary(summary functionSummary) bool {
 	}
 	e.summaryKeys[summary.function][key] = true
 	e.summaries[summary.function] = append(e.summaries[summary.function], summary)
-	// 同函数内按 event+payload 模板键排序，保证摘要集合顺序稳定。
-	sort.Slice(e.summaries[summary.function], func(i, j int) bool {
-		left := templateKey(e.summaries[summary.function][i].event) + "|" + templateKey(e.summaries[summary.function][i].payload)
-		right := templateKey(e.summaries[summary.function][j].event) + "|" + templateKey(e.summaries[summary.function][j].payload)
-		return left < right
-	})
+	// 不在此处排序：摘要集合的最终顺序由 extract 第三步投影后按 IMEventFact ID 排序保证，
+	// 集合本身由 summaryKeys 去重（与插入顺序无关），逐次插入排序只会带来 O(K²logK) 冗余。
 	return true
 }
 

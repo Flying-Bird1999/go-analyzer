@@ -63,7 +63,7 @@ func (r resolver) ResolveValueIDs(expr ast.Expr) []facts.SymbolID {
 		}
 		return existingValueIDs(r.idx, r.file.Package.Path, x.Name)
 	case *ast.SelectorExpr:
-		parts := selectorParts(x)
+		parts := astindex.SelectorParts(x)
 		if len(parts) == 2 {
 			// pkg.Name：导入包级 value。
 			if importPath := r.file.Imports[parts[0]]; importPath != "" {
@@ -106,7 +106,7 @@ func isLocalIdentifier(idx *astindex.Index, ident *ast.Ident) bool {
 // ResolveReceiverValueIDs 解析调用接收者选择器的 value 目标，仅取变量本身而非方法。
 // 例如 pkg.var.Method 解析为 pkg.var；本包 var.Method 解析为 var。
 func (r resolver) ResolveReceiverValueIDs(selector *ast.SelectorExpr) []facts.SymbolID {
-	parts := selectorParts(selector)
+	parts := astindex.SelectorParts(selector)
 	if len(parts) == 3 {
 		if importPath := r.file.Imports[parts[0]]; importPath != "" {
 			return existingIDs(r.idx, astindex.ValueSymbolID("var", importPath, parts[1]))

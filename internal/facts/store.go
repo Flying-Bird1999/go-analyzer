@@ -65,16 +65,17 @@ type Store struct {
 	Routes []RouteRegistrationFact `json:"routes"`
 	// Middleware 是路由分组绑定的中间件及其顺序。
 	Middleware []MiddlewareBindingFact `json:"middleware"`
-	// Changes 是 diff 映射得到的传播根，由 diff/app/impact 写入。
-	Changes []ChangeFact `json:"changes"`
+	// Changes 是 diff 映射得到的传播根，由 diff/app/impact 写入。仅在内存中流转，
+	// 不进入任何公开 JSON；用 json:"-" 从结构上排除，避免与 RouteGroupFlows 行为不一致。
+	Changes []ChangeFact `json:"-"`
 	// References 是 call/type/value 依赖边，由 reference extractor 写入。
 	References []ReferenceFact `json:"references"`
 	// Modules 是当前 go.mod 中的 dependency/replace。
 	Modules []ModuleDependencyFact `json:"modules"`
-	// ModuleChanges 是从 go.mod diff 恢复的模块变更。仅在 impact 阶段填充，公开 facts JSON 不输出。
-	ModuleChanges []ModuleChangeFact `json:"module_changes"`
-	// ModuleUsages 是变更模块在本仓的 import usage 映射。仅在 impact 阶段填充，公开 facts JSON 不输出。
-	ModuleUsages []ModuleUsageFact `json:"module_usages"`
+	// ModuleChanges 是从 go.mod diff 恢复的模块变更。仅在 impact 阶段填充，不进入公开 JSON。
+	ModuleChanges []ModuleChangeFact `json:"-"`
+	// ModuleUsages 是变更模块在本仓的 import usage 映射。仅在 impact 阶段填充，不进入公开 JSON。
+	ModuleUsages []ModuleUsageFact `json:"-"`
 	// IMEvents 是出站 IM 事件及其 sender 与精确依赖。
 	IMEvents []IMEventFact `json:"im_events"`
 	// Links 是 route-handler 与 handler-annotation 的关联事实，由 linker 写入。

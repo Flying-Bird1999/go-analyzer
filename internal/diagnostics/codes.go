@@ -35,6 +35,8 @@ const (
 	CodeIMSDKArgumentMismatch Code = "im_sdk_argument_mismatch"
 	// CodeIMSummaryIterationCapped：IM 摘要不动点传播触达迭代上限，结果可能不完整。
 	CodeIMSummaryIterationCapped Code = "im_summary_iteration_capped"
+	// CodePackageLoadFailed：单个源码文件解析失败，不中断整体加载，仅记录诊断后继续。
+	CodePackageLoadFailed Code = "package_load_failed"
 )
 
 // Severity 是诊断严重级别的类型。

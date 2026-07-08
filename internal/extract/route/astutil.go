@@ -9,6 +9,8 @@ import (
 	"go/token"
 	"strconv"
 	"strings"
+
+	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 )
 
 // exprString 将任意 AST 表达式格式化为源码字符串，用于事实记录中的原始文本。
@@ -34,25 +36,13 @@ func stringLiteral(expr ast.Expr) (string, bool) {
 	return v, true
 }
 
-// selectorParts 展开选择器表达式为按点分割的名称段，例如 a.b.c -> [a b c]。
-func selectorParts(expr ast.Expr) []string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return []string{x.Name}
-	case *ast.SelectorExpr:
-		return append(selectorParts(x.X), x.Sel.Name)
-	default:
-		return nil
-	}
-}
-
 // callName 返回调用的全限定名（含包前缀的点分形式）；非标识符/选择器调用返回空串。
 func callName(call *ast.CallExpr) string {
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
 		return fn.Name
 	case *ast.SelectorExpr:
-		parts := selectorParts(fn)
+		parts := astindex.SelectorParts(fn)
 		return strings.Join(parts, ".")
 	default:
 		return ""

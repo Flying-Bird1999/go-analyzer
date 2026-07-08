@@ -166,39 +166,11 @@ func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.Fu
 
 // scopedTypesFromTypeExpr 从类型表达式推断变量类型，支持本包/导入包类型、指针、括号与泛型实参化形式。
 func scopedTypesFromTypeExpr(file *project.File, expr ast.Expr) []astindex.ValueType {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return []astindex.ValueType{{
-			PackagePath: file.Package.Path,
-			TypeName:    x.Name,
-			Confidence:  facts.ConfidenceHigh,
-		}}
-	case *ast.SelectorExpr:
-		pkg, ok := x.X.(*ast.Ident)
-		if !ok {
-			return nil
-		}
-		importPath := file.Imports[pkg.Name]
-		if importPath == "" {
-			return nil
-		}
-		return []astindex.ValueType{{
-			PackagePath: importPath,
-			TypeName:    x.Sel.Name,
-			Confidence:  facts.ConfidenceHigh,
-		}}
-	case *ast.StarExpr:
-		return scopedTypesFromTypeExpr(file, x.X)
-	case *ast.ParenExpr:
-		return scopedTypesFromTypeExpr(file, x.X)
-	case *ast.IndexExpr:
-		// 取泛型基础类型，忽略类型实参。
-		return scopedTypesFromTypeExpr(file, x.X)
-	case *ast.IndexListExpr:
-		return scopedTypesFromTypeExpr(file, x.X)
-	default:
+	vt := astindex.ValueTypeFromTypeExpr(file, expr)
+	if vt.TypeName == "" {
 		return nil
 	}
+	return []astindex.ValueType{vt}
 }
 
 // scopedTypesFromValueExpr 从初始化值表达式推断变量类型：取地址、组合字面量、

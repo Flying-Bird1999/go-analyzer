@@ -298,6 +298,127 @@ func Receive(msg *serviceim.Message) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
 }
 
+// TestExtractDirectProtocolIgnoresUnrelatedEventAndBody 验证 directProtocolSummary
+// 不会把同一函数内与 IM 协议无关的 *.Event() 调用和无关的 Body 字段错误配对成 IM event。
+// sendImMessage 里 data.Event(topic) + SendData{Body: msg} 才是真实发送；Telemetry.Event
+// 与 Config.Body 是干扰项。松匹配会把 event 覆盖成 "metrics"、payload 覆盖成 "decoy"，
+// 从而丢失 Message 依赖；正确的结构化绑定应只认 data 上的 Event/Body。
+func TestExtractDirectProtocolIgnoresUnrelatedEventAndBody(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"util/im/im.go": `package im
+
+const BroadcastURI = "/broadcast/send"
+type SendData struct {
+	URL  string
+	Body any
+}
+
+func (d *SendData) Event(event string) { d.URL = "broadcast://" + event }
+
+// Telemetry / Config 与 IM 协议无关，仅用于构造干扰项。
+type Telemetry struct{ Name string }
+
+func (t *Telemetry) Event(metric string) {}
+
+type Config struct{ Body any }
+
+func Post(path string, body any) {}
+func sendImMessage(topic string, msg any) {
+	data := &SendData{Body: msg}
+	data.Event(topic)
+	tel := &Telemetry{}
+	tel.Event("metrics")
+	cfg := &Config{Body: "decoy"}
+	Post(BroadcastURI, data)
+	_ = cfg
+}
+func SendBroadcastMessage(topic string, msg any) {
+	sendImMessage(topic, msg)
+}
+`,
+		"service/im/im.go": `package im
+
+import utilim "example.com/im-flow/util/im"
+
+const MessageEvent = "mc/message"
+type Message struct{ ID string }
+
+func SendMessage(msg *Message) {
+	utilim.SendBroadcastMessage(MessageEvent, msg)
+}
+`,
+		"consumer.go": `package sample
+
+import serviceim "example.com/im-flow/service/im"
+
+func Receive(msg *serviceim.Message) {
+	serviceim.SendMessage(msg)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
+	messageID := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
+	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
+}
+
+func TestExtractDirectProtocolResolvesSplitBodyAssignment(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"util/im/im.go": `package im
+
+const BroadcastURI = "/broadcast/send"
+type SendData struct {
+	URL  string
+	Body any
+}
+
+func (d *SendData) Event(event string) { d.URL = "broadcast://" + event }
+
+func Post(path string, body any) {}
+func sendImMessage(topic string, msg any) {
+	data := &SendData{}
+	data.Body = msg
+	data.Event(topic)
+	Post(BroadcastURI, data)
+}
+func SendBroadcastMessage(topic string, msg any) {
+	sendImMessage(topic, msg)
+}
+`,
+		"service/im/im.go": `package im
+
+import utilim "example.com/im-flow/util/im"
+
+const MessageEvent = "mc/message"
+type Message struct{ ID string }
+
+func SendMessage(msg *Message) {
+	utilim.SendBroadcastMessage(MessageEvent, msg)
+}
+`,
+		"consumer.go": `package sample
+
+import serviceim "example.com/im-flow/service/im"
+
+func Receive(msg *serviceim.Message) {
+	serviceim.SendMessage(msg)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
+	messageID := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
+	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
+}
+
 // TestExtractResolvesLegacyEnumAndClosureWrapper 验证 legacy iota + String() 枚举、
 // channel.String() + event.String() 拼接 event，以及闭包 wrapper payload 这三种
 // 组合模式能被正确解析并传播。

@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 )
 
 // Load 以默认选项加载 root 目录下的 Go 项目。
@@ -161,7 +163,7 @@ func (p *Project) loadFile(path string) error {
 		rel = filepath.ToSlash(rel)
 		message := strings.ReplaceAll(err.Error(), path, rel)
 		p.Diagnostics = append(p.Diagnostics, LoadDiagnostic{
-			Code:    "package_load_failed",
+			Code:    string(diagnostics.CodePackageLoadFailed),
 			File:    rel,
 			Message: "failed to parse Go source: " + message,
 		})

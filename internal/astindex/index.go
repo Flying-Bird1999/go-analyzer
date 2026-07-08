@@ -213,7 +213,7 @@ func (idx *Index) staticMapConcreteValueTypes(file *project.File, expr ast.Expr)
 	if !ok {
 		return nil, false
 	}
-	declaredValueType := valueTypeFromTypeExpr(file, mapType.Value)
+	declaredValueType := ValueTypeFromTypeExpr(file, mapType.Value)
 	if declaredValueType.TypeName == "" || !idx.isInterfaceType(declaredValueType) {
 		return nil, false
 	}
@@ -265,7 +265,7 @@ func (idx *Index) indexStructFields(file *project.File, id facts.SymbolID, spec 
 	}
 	fields := map[string]ValueType{}
 	for _, field := range structType.Fields.List {
-		valueType := valueTypeFromTypeExpr(file, field.Type)
+		valueType := ValueTypeFromTypeExpr(file, field.Type)
 		if valueType.TypeName == "" {
 			continue
 		}
@@ -306,7 +306,7 @@ func (idx *Index) indexCallableReturnType(file *project.File, id facts.SymbolID,
 	if decl.Type.Results == nil || len(decl.Type.Results.List) == 0 {
 		return
 	}
-	valueType := valueTypeFromTypeExpr(file, decl.Type.Results.List[0].Type)
+	valueType := ValueTypeFromTypeExpr(file, decl.Type.Results.List[0].Type)
 	if valueType.TypeName != "" && idx.isInterfaceType(valueType) {
 		if concrete, ok := idx.singleConcreteReturnType(file, decl); ok {
 			valueType = concrete
@@ -378,7 +378,7 @@ func valueKind(tok token.Token) string {
 // -> 外部 constructor selector 名（中等置信度）-> 组合字面量/取址表达式。
 func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
 	if spec.Type != nil {
-		return valueTypeFromTypeExpr(file, spec.Type)
+		return ValueTypeFromTypeExpr(file, spec.Type)
 	}
 	if len(spec.Values) == 0 {
 		return ValueType{}
@@ -438,7 +438,7 @@ func valueTypeFromExpr(file *project.File, expr ast.Expr) ValueType {
 		// 处理 &T{}：剥掉取址运算符后继续判断被操作数。
 		return valueTypeFromExpr(file, x.X)
 	case *ast.CompositeLit:
-		return valueTypeFromTypeExpr(file, x.Type)
+		return ValueTypeFromTypeExpr(file, x.Type)
 	default:
 		return ValueType{}
 	}
@@ -496,14 +496,14 @@ func (idx *Index) ResolveBuiltinNewType(file *project.File, call *ast.CallExpr) 
 			return ValueType{}, false
 		}
 	}
-	valueType := valueTypeFromTypeExpr(file, call.Args[0])
+	valueType := ValueTypeFromTypeExpr(file, call.Args[0])
 	return valueType, valueType.TypeName != ""
 }
 
-// valueTypeFromTypeExpr 把类型表达式归一化为 ValueType。
+// ValueTypeFromTypeExpr 把类型表达式归一化为 ValueType。
 // 项目内 ident 视为本包类型；selector 形式按 import 解析跨包类型；
 // 指针、括号、单/多类型参数泛型实例化一律剥离包装取基础类型名。
-func valueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
+func ValueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		return ValueType{PackagePath: file.Package.Path, TypeName: x.Name, Confidence: facts.ConfidenceHigh}
@@ -519,16 +519,16 @@ func valueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 		return ValueType{PackagePath: importPath, TypeName: x.Sel.Name, Confidence: facts.ConfidenceHigh}
 	case *ast.StarExpr:
 		// 指针类型 *T：剥掉指针取基础类型。
-		return valueTypeFromTypeExpr(file, x.X)
+		return ValueTypeFromTypeExpr(file, x.X)
 	case *ast.ParenExpr:
 		// 括号包裹 (T)：剥掉括号。
-		return valueTypeFromTypeExpr(file, x.X)
+		return ValueTypeFromTypeExpr(file, x.X)
 	case *ast.IndexExpr:
 		// 泛型实例化 T[A]：剥掉类型实参。
-		return valueTypeFromTypeExpr(file, x.X)
+		return ValueTypeFromTypeExpr(file, x.X)
 	case *ast.IndexListExpr:
 		// 多类型参数实例化 T[A, B]：剥掉全部实参。
-		return valueTypeFromTypeExpr(file, x.X)
+		return ValueTypeFromTypeExpr(file, x.X)
 	default:
 		return ValueType{}
 	}
@@ -643,7 +643,7 @@ func (idx *Index) ResolveMapIndexValueTypes(file *project.File, expr *ast.IndexE
 	if file == nil || expr == nil {
 		return nil, false
 	}
-	parts := selectorParts(expr.X)
+	parts := SelectorParts(expr.X)
 	if len(parts) == 0 {
 		return nil, false
 	}
@@ -680,14 +680,15 @@ func (idx *Index) PackageValueSymbol(object *ast.Object) (facts.SymbolID, bool) 
 	return id, ok
 }
 
-// selectorParts 把 selector 表达式展平为字符串切片。
+// SelectorParts 把 selector 表达式展平为字符串切片。
 // 例如 pkg.Var.Field 返回 ["pkg", "Var", "Field"]，非 selector 返回 nil。
-func selectorParts(expr ast.Expr) []string {
+// 导出供 route/reference/link 等包复用，避免逐字节重复的平行实现。
+func SelectorParts(expr ast.Expr) []string {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		return []string{x.Name}
 	case *ast.SelectorExpr:
-		return append(selectorParts(x.X), x.Sel.Name)
+		return append(SelectorParts(x.X), x.Sel.Name)
 	default:
 		return nil
 	}

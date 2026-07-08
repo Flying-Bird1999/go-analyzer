@@ -3,18 +3,6 @@ package reference
 
 import "go/ast"
 
-// selectorParts 将选择器链拆成按点分隔的字符串段，例如 a.b.c -> ["a","b","c"]。
-func selectorParts(expr ast.Expr) []string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return []string{x.Name}
-	case *ast.SelectorExpr:
-		return append(selectorParts(x.X), x.Sel.Name)
-	default:
-		return nil
-	}
-}
-
 // unwrapGenericCallee 剥去泛型调用上的类型实参（IndexExpr/IndexListExpr），返回真正的被调表达式。
 func unwrapGenericCallee(expr ast.Expr) ast.Expr {
 	switch x := expr.(type) {

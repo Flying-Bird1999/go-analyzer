@@ -75,7 +75,7 @@ func resolveCallable(idx *astindex.Index, file *project.File, expr ast.Expr) (fa
 		return id, ok
 	case *ast.SelectorExpr:
 		// 把嵌套 selector 拍平成 ["pkg", "Var", ..., "Method"] 的段序列。
-		parts := selectorParts(x)
+		parts := astindex.SelectorParts(x)
 		if len(parts) == 2 {
 			// 两段且首段是 import 别名：优先尝试目标包里的普通函数（如 pkg.Middleware）。
 			if importPath := file.Imports[parts[0]]; importPath != "" {
@@ -89,17 +89,4 @@ func resolveCallable(idx *astindex.Index, file *project.File, expr ast.Expr) (fa
 		return idx.ResolveSelectorMethod(file, parts)
 	}
 	return "", false
-}
-
-// selectorParts 把 *ast.SelectorExpr（可能左递归嵌套）递归拍平为段切片，顺序为从左到右。
-// 例如 provider.Default.Middleware 返回 ["provider", "Default", "Middleware"]。
-func selectorParts(expr ast.Expr) []string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return []string{x.Name}
-	case *ast.SelectorExpr:
-		return append(selectorParts(x.X), x.Sel.Name)
-	default:
-		return nil
-	}
 }

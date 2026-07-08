@@ -520,7 +520,13 @@ func joinDeletedRoutePath(prefix, path string) string {
 	if out == "" {
 		return "/"
 	}
-	return strings.ReplaceAll(out, "//", "/")
+	out = strings.ReplaceAll(out, "//", "/")
+	// 与 route.joinPath 保持一致的尾斜杠归一：避免同一逻辑端点在删除前后
+	// 路径字符串不同（如 group.GET("/") 在活路由得 /api、删除路由曾得 /api/）。
+	if len(out) > 1 {
+		out = strings.TrimRight(out, "/")
+	}
+	return out
 }
 
 // deletedRouteID 为被删除路由生成稳定 ID，包含文件、method、local path、旧行号与偏移，
