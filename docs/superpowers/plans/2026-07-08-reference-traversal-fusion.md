@@ -167,21 +167,21 @@ Expected: FAIL to compile with `undefined: collectFunctionBodyContext` or `undef
 
 ---
 
-### Task 2: Implement Function Body Context
+### Task 2: Implement Single-Pass Function Body Context
 
 **Files:**
 - Modify: `internal/extract/reference/scoped_types.go`
 
 **Interfaces:**
 - Consumes:
-  - `func collectScopedValueTypes(file *project.File, idx *astindex.Index, fn *ast.FuncDecl) scopedValueTypes`
-  - `func ignoredValuePositions(root ast.Node) map[token.Pos]bool`
-  - `func callFunPositions(root ast.Node) map[token.Pos]bool`
+  - `func scopedTypesFromTypeExpr(file *project.File, expr ast.Expr) []astindex.ValueType`
+  - `func scopedTypesFromValueExpr(file *project.File, idx *astindex.Index, expr ast.Expr) []astindex.ValueType`
+  - `func markExprPositions(out map[token.Pos]bool, expr ast.Expr)`
 - Produces:
   - `type functionBodyContext struct`
   - `func collectFunctionBodyContext(file *project.File, idx *astindex.Index, fn *ast.FuncDecl) functionBodyContext`
 
-- [ ] **Step 1: Add the context type and collector**
+- [ ] **Step 1: Add the context type and single-pass collector**
 
 In `internal/extract/reference/scoped_types.go`, after `type scopedValueTypes struct`, add:
 
@@ -191,21 +191,99 @@ type functionBodyContext struct {
 	ignored     map[token.Pos]bool
 	callFuns    map[token.Pos]bool
 }
+```
 
+Then replace the old body-scanning implementation of `collectScopedValueTypes` with this collector:
+
+```go
 func collectFunctionBodyContext(file *project.File, idx *astindex.Index, fn *ast.FuncDecl) functionBodyContext {
 	ctx := functionBodyContext{
-		scopedTypes: collectScopedValueTypes(file, idx, fn),
-		ignored:     map[token.Pos]bool{},
-		callFuns:    map[token.Pos]bool{},
+		ignored:  map[token.Pos]bool{},
+		callFuns: map[token.Pos]bool{},
 	}
-	if fn == nil || fn.Body == nil {
+	if fn == nil {
 		return ctx
 	}
-	ctx.ignored = ignoredValuePositions(fn.Body)
-	ctx.callFuns = callFunPositions(fn.Body)
+	addScopedFields := func(fields *ast.FieldList) {
+		if fields == nil {
+			return
+		}
+		for _, field := range fields.List {
+			valueTypes := scopedTypesFromTypeExpr(file, field.Type)
+			for _, name := range field.Names {
+				ctx.scopedTypes.addAll(name, token.NoPos, valueTypes)
+			}
+		}
+	}
+	addScopedFields(fn.Recv)
+	addScopedFields(fn.Type.Params)
+	addScopedFields(fn.Type.Results)
+
+	if fn.Body == nil {
+		return ctx
+	}
+
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		switch x := node.(type) {
+		case *ast.CallExpr:
+			ctx.callFuns[x.Fun.Pos()] = true
+		case *ast.CompositeLit:
+			markExprPositions(ctx.ignored, x.Type)
+		case *ast.KeyValueExpr:
+			if id, ok := x.Key.(*ast.Ident); ok {
+				ctx.ignored[id.Pos()] = true
+			}
+		case *ast.AssignStmt:
+			if x.Tok != token.DEFINE {
+				return true
+			}
+			for i, lhs := range x.Lhs {
+				name, ok := lhs.(*ast.Ident)
+				if !ok || len(x.Rhs) == 0 {
+					continue
+				}
+				if len(x.Rhs) == 1 && len(x.Lhs) > 1 && i > 0 {
+					continue
+				}
+				valueIndex := i
+				if valueIndex >= len(x.Rhs) {
+					valueIndex = len(x.Rhs) - 1
+				}
+				ctx.scopedTypes.addAll(name, name.Pos(), scopedTypesFromValueExpr(file, idx, x.Rhs[valueIndex]))
+			}
+		case *ast.DeclStmt:
+			decl, ok := x.Decl.(*ast.GenDecl)
+			if !ok || decl.Tok != token.VAR {
+				return true
+			}
+			for _, spec := range decl.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range value.Names {
+					valueTypes := scopedTypesFromTypeExpr(file, value.Type)
+					if len(valueTypes) == 0 && len(value.Values) > 0 {
+						if len(value.Values) == 1 && len(value.Names) > 1 && i > 0 {
+							continue
+						}
+						valueIndex := i
+						if valueIndex >= len(value.Values) {
+							valueIndex = len(value.Values) - 1
+						}
+						valueTypes = scopedTypesFromValueExpr(file, idx, value.Values[valueIndex])
+					}
+					ctx.scopedTypes.addAll(name, name.Pos(), valueTypes)
+				}
+			}
+		}
+		return true
+	})
 	return ctx
 }
 ```
+
+Remove the old `collectScopedValueTypes` function after `extractFuncReferences` no longer calls it. Do not keep a compatibility wrapper that calls `collectFunctionBodyContext`, because that would reintroduce unnecessary ignored/call position work for scoped-type-only callers.
 
 - [ ] **Step 2: Run the new test**
 
