@@ -112,11 +112,18 @@ go run ./cmd/go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service -
 go run ./cmd/go-analyzer facts --project /absolute/path/to/sl-sc1-bff-service
 ```
 
+查询 BFF endpoint 的下游 gRPC，或从 gRPC operation 反查 BFF endpoint：
+
+```bash
+go run ./cmd/go-analyzer endpoint-assets --project /absolute/path/to/sl-sc1-bff-service --endpoint "GET /orders/:id"
+go run ./cmd/go-analyzer grpc-consumers --project /absolute/path/to/sl-sc1-bff-service --grpc "/package.OrderService/GetOrder"
+```
+
 更详细的架构、模块职责、能力边界与调试指南见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## CLI 使用
 
-对外接入只需要使用 `impact` 命令。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
+对外接入可以使用 `impact`、`endpoint-assets` 和 `grpc-consumers`。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
 
 ```bash
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
@@ -130,6 +137,8 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 | 命令 / 参数 | 用途 | 面向 |
 | --- | --- | --- |
 | `impact` | 从已应用 diff 分析受影响 HTTP 接口 / IM event | 接入 |
+| `endpoint-assets` | 查询一个或多个精确 endpoint 的 gRPC 依赖 | 接入 |
+| `grpc-consumers` | 查询一个或多个 canonical gRPC method 的 BFF 消费 endpoint | 接入 |
 | `facts` | 输出项目 facts JSON，用于调试抽取结果与 diagnostics | 调试 |
 | `schema` | 输出 facts / impact JSON Schema，校验稳定输出契约 | 调试 |
 | `--project` | 目标项目根目录（绝对路径） | 接入 |
@@ -145,6 +154,8 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 - 用 `facts` 查看项目级诊断，例如非变更文件解析失败产生的 `package_load_failed`。
 - 用 `--timings` 查看各 stage 耗时（写到 stderr，不污染 stdout 的 JSON）。
 - 用 `schema --type facts|impact` 校验或对齐输出契约。
+
+`endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`grpc-consumers` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`。两者仅输出 generated gRPC client、静态 receiver 类型和项目内可执行调用链共同证明的关系；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 `impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。
@@ -268,6 +279,10 @@ IM 识别规则由 analyzer 内置。协议型实现必须同时存在 `broadcas
 输出契约见：
 
 [docs/contracts/output-contract.md](docs/contracts/output-contract.md)
+
+gRPC 依赖能力的设计和实施记录见：
+
+[docs/bff-grpc-dependency-assets/](docs/bff-grpc-dependency-assets/)
 
 `docs/design/`、`docs/superpowers/specs/` 和 `docs/superpowers/plans/` 保存历史设计与实施过程，不作为当前实现状态真值。
 

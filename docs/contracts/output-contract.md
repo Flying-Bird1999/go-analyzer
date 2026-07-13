@@ -38,6 +38,32 @@ static event value when resolvable, payload/event/control dependencies,
 evidence spans and resolution state. It is a debugging contract; the impact
 report projects only event names and propagation nodes.
 
+`facts` also emits `grpc_operations` and `grpc_calls`. Operations are discovered
+from the selected module dependency graph's generated client transport source;
+calls are emitted only when a project selector call has one exact generated
+client binding. `facts` records gRPC discovery failures as diagnostics, while
+the dependency query commands fail atomically.
+
+## BFF gRPC Dependency Output
+
+```bash
+go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id"
+go-analyzer grpc-consumers --project /absolute/path/to/project --grpc "/package.OrderService/GetOrder"
+```
+
+Both commands return `{ "project": ..., ... }` with the effective build
+context. `endpoint-assets.endpointAssets[]` contains `endpoint`, `handlers`,
+and `dependencies.grpc`; each gRPC item contains canonical identity, generated
+client bindings, and endpoint-to-call-site chains. `grpc-consumers` returns
+the same endpoint/handler/client/chain projection under `grpcConsumers[]`.
+Chains always point from BFF endpoint handler to the project gRPC call site.
+
+Inputs are exact and repeatable. An unknown endpoint is an error; a valid
+canonical gRPC method with no consumer returns an empty `consumers` array.
+Errors write `error_code=<stable-code> message=<message>` to stderr and do not
+write partial JSON to stdout. No additional `schema --type` is introduced for
+these reports.
+
 ## Impact Output
 
 `impact` is the original human-reviewable MR impact report:

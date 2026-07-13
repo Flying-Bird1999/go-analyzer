@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/dependency"
+	grpcextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/grpc"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
@@ -85,7 +86,7 @@ func runDependency(path, format string, context project.BuildContextOptions, ren
 	recorder := &pipelineRecorder{}
 	built, err := buildFacts(path, context, recorder, buildFactsOptions{grpcMode: grpcModeStrict})
 	if err != nil {
-		return RunResult{}, &AnalysisError{"grpc_catalog_failed", err}
+		return RunResult{}, strictAnalysisError(err)
 	}
 	var out []byte
 	err = recorder.measure("dependency_query", func() error { var renderErr error; out, renderErr = render(built); return renderErr })
@@ -93,4 +94,16 @@ func runDependency(path, format string, context project.BuildContextOptions, ren
 		return RunResult{}, err
 	}
 	return RunResult{Output: out, Metrics: recorder.metrics()}, nil
+}
+
+func strictAnalysisError(err error) error {
+	var dependencyErr *project.DependencyDiscoveryError
+	if errors.As(err, &dependencyErr) {
+		return &AnalysisError{Code: "dependency_load_failed", Err: err}
+	}
+	var ambiguity *grpcextract.CallAmbiguityError
+	if errors.As(err, &ambiguity) {
+		return &AnalysisError{Code: "grpc_call_ambiguous", Err: err}
+	}
+	return &AnalysisError{Code: "grpc_catalog_failed", Err: err}
 }

@@ -4,6 +4,8 @@
     "annotations": 32,
     "routes": 32,
     "route_links": 32,
+    "grpc_operations": 119,
+    "grpc_calls": 11,
     "diagnostics": {}
   },
   "sl-sc1-admin-bff": {
@@ -11,6 +13,8 @@
     "annotations": 463,
     "routes": 559,
     "route_links": 559,
+    "grpc_operations": 410,
+    "grpc_calls": 252,
     "diagnostics": {
       "symbol_reference_ambiguous_interface": 5
     }
@@ -20,6 +24,8 @@
     "annotations": 98,
     "routes": 136,
     "route_links": 136,
+    "grpc_operations": 270,
+    "grpc_calls": 43,
     "diagnostics": {}
   }
 }

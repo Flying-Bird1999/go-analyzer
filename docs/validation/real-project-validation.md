@@ -26,6 +26,11 @@ Facts counts and diagnostic code distributions are compared against
 `testdata/baselines/real-project-facts.json`; intentional analyzer behavior
 changes must update that baseline in the same review.
 
+The gRPC dependency validation additionally checks that `facts` exposes
+generated operations and project call sites, then verifies selected relations
+through both `endpoint-assets` and `grpc-consumers`. The two directions must
+contain the same endpoint/gRPC pair for one project snapshot and build context.
+
 ## Current Expectations
 
 The MVP validation target is stability rather than perfect precision:

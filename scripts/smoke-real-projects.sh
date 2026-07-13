@@ -146,6 +146,8 @@ actual = {
     "annotations": len(data.get("annotations") or []),
     "routes": len(routes),
     "route_links": route_to_handler,
+    "grpc_operations": len(data.get("grpc_operations") or []),
+    "grpc_calls": len(data.get("grpc_calls") or []),
     "diagnostics": dict(sorted(diagnostics.items())),
 }
 expected = baselines.get(name)
@@ -178,7 +180,7 @@ else:
             f"expected={json.dumps(expected_diag, sort_keys=True)}"
         )
     # --- Raw counts: advisory. Fail only when drift exceeds tolerance. ---
-    for field in ("symbols", "annotations", "routes", "route_links"):
+    for field in ("symbols", "annotations", "routes", "route_links", "grpc_operations", "grpc_calls"):
         want = expected.get(field, 0)
         got = actual[field]
         if want <= 0:
@@ -194,11 +196,13 @@ else:
             print(f"  note: {name} {field} drifted {got}<-{want} ({drift:.1%}, within tolerance)")
 
 print(
-    "symbols={symbols} annotations={annotations} routes={routes} route_links={route_links} diagnostics={diagnostics}".format(
+    "symbols={symbols} annotations={annotations} routes={routes} route_links={route_links} grpc_operations={grpc_operations} grpc_calls={grpc_calls} diagnostics={diagnostics}".format(
         symbols=actual["symbols"],
         annotations=actual["annotations"],
         routes=actual["routes"],
         route_links=actual["route_links"],
+        grpc_operations=actual["grpc_operations"],
+        grpc_calls=actual["grpc_calls"],
         diagnostics=actual["diagnostics"],
     )
 )

@@ -82,9 +82,10 @@ type grpcConsumer struct {
 }
 
 func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset) ([]byte, error) {
-	doc := endpointAssetDocument{Project: projectForDependency(store)}
+	doc := endpointAssetDocument{Project: projectForDependency(store), EndpointAssets: []endpointAsset{}}
 	for _, asset := range assets {
 		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), Handlers: symbolsForDependency(store, asset.Handlers)}
+		item.Dependencies.Grpc = []dependencyGrpc{}
 		for _, grpc := range asset.Grpc {
 			item.Dependencies.Grpc = append(item.Dependencies.Grpc, grpcForDependency(store, grpc))
 		}
@@ -93,9 +94,9 @@ func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset)
 	return renderDependency(doc)
 }
 func RenderGrpcConsumers(store *facts.Store, results []dependency.GrpcConsumerResult) ([]byte, error) {
-	doc := grpcConsumersDocument{Project: projectForDependency(store)}
+	doc := grpcConsumersDocument{Project: projectForDependency(store), GrpcConsumers: []grpcConsumerResult{}}
 	for _, result := range results {
-		item := grpcConsumerResult{Grpc: identityForDependency(result.Grpc)}
+		item := grpcConsumerResult{Grpc: identityForDependency(result.Grpc), Consumers: []grpcConsumer{}}
 		for _, consumer := range result.Consumers {
 			item.Consumers = append(item.Consumers, grpcConsumer{Endpoint: endpointForDependency(consumer.Endpoint), Handlers: symbolsForDependency(store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(store, consumer.Chains)})
 		}
