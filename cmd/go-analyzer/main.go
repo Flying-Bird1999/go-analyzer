@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/build"
@@ -16,7 +17,12 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		var analysisErr *app.AnalysisError
+		if errors.As(err, &analysisErr) {
+			fmt.Fprintf(os.Stderr, "error_code=%s message=%s\n", analysisErr.Code, analysisErr.Err)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
@@ -32,11 +38,80 @@ func run(args []string) error {
 		return runFacts(args[1:])
 	case "impact":
 		return runImpact(args[1:])
+	case "endpoint-assets":
+		return runEndpointAssets(args[1:])
+	case "grpc-consumers":
+		return runGrpcConsumers(args[1:])
 	case "schema":
 		return runSchema(args[1:])
 	default:
 		return fmt.Errorf("unsupported command %q", args[0])
 	}
+}
+
+type stringList []string
+
+func (s *stringList) String() string         { return strings.Join(*s, ",") }
+func (s *stringList) Set(value string) error { *s = append(*s, value); return nil }
+
+func runEndpointAssets(args []string) error {
+	fs := flag.NewFlagSet("endpoint-assets", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projectPath := fs.String("project", "", "absolute project path")
+	format := fs.String("format", "json", "output format")
+	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	var endpoints stringList
+	fs.Var(&endpoints, "endpoint", "endpoint as METHOD /exact/path; repeatable")
+	buildFlags := registerBuildContextFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateAbsPath("project path", *projectPath); err != nil {
+		return err
+	}
+	buildContext, err := buildFlags.options()
+	if err != nil {
+		return err
+	}
+	result, err := app.RunEndpointAssetsWithMetrics(app.EndpointAssetsOptions{ProjectPath: *projectPath, Endpoints: endpoints, Format: *format, BuildContext: buildContext})
+	if err != nil {
+		return err
+	}
+	if *timings {
+		writeTimings(os.Stderr, result.Metrics)
+	}
+	_, err = os.Stdout.Write(result.Output)
+	return err
+}
+
+func runGrpcConsumers(args []string) error {
+	fs := flag.NewFlagSet("grpc-consumers", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projectPath := fs.String("project", "", "absolute project path")
+	format := fs.String("format", "json", "output format")
+	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	var methods stringList
+	fs.Var(&methods, "grpc", "canonical gRPC full method; repeatable")
+	buildFlags := registerBuildContextFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateAbsPath("project path", *projectPath); err != nil {
+		return err
+	}
+	buildContext, err := buildFlags.options()
+	if err != nil {
+		return err
+	}
+	result, err := app.RunGrpcConsumersWithMetrics(app.GrpcConsumersOptions{ProjectPath: *projectPath, GrpcMethods: methods, Format: *format, BuildContext: buildContext})
+	if err != nil {
+		return err
+	}
+	if *timings {
+		writeTimings(os.Stderr, result.Metrics)
+	}
+	_, err = os.Stdout.Write(result.Output)
+	return err
 }
 
 func runHelp(args []string) error {
@@ -222,6 +297,14 @@ func usage(command string) string {
 --impact-config 为可选配置，仅用于 module 版本变更过滤；未传时自动尝试读取项目内 .analyzer/go-impact.config.json。
 Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
+	case "endpoint-assets":
+		return `用法:
+  go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id" [--endpoint "POST /orders"] [--format json] [--timings]
+`
+	case "grpc-consumers":
+		return `用法:
+  go-analyzer grpc-consumers --project /absolute/path/to/project --grpc "/package.Service/Method" [--grpc "/package.Service/Other"] [--format json] [--timings]
+`
 	case "schema":
 		return `用法:
   go-analyzer schema --type facts
@@ -232,10 +315,14 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 	default:
 		return `用法:
  go-analyzer help impact
+ go-analyzer help endpoint-assets
+ go-analyzer help grpc-consumers
  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
 对外接入命令:
   impact  从已应用到变更后源码的 unified diff 分析受影响 HTTP 接口和 IM event。
+  endpoint-assets  查询 BFF endpoint 的 gRPC 依赖。
+  grpc-consumers   查询 gRPC operation 的 BFF 消费 endpoint。
 
 CLI 路径参数必须使用绝对路径。
 `
