@@ -138,7 +138,10 @@ func buildPackageCatalog(pkg project.DependencyPackage) ([]CatalogEntry, error) 
 			}
 			operation, err := operationFromFullMethod(fullMethod, mode)
 			if err != nil {
-				return nil, fmt.Errorf("generated gRPC method %s.%s: %w", pkg.ImportPath, fn.Name.Name, err)
+				// Some generated SDKs use Invoke/NewStream for transport internals but do
+				// not expose a canonical protobuf service/method identity. They do not
+				// satisfy this analyzer's generated gRPC operation contract.
+				continue
 			}
 			binding := facts.GrpcClientBinding{GoPackage: pkg.ImportPath, ClientType: clientType, GoMethod: fn.Name.Name}
 			position := file.fset.Position(fn.Pos())
