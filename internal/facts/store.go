@@ -78,6 +78,10 @@ type Store struct {
 	ModuleUsages []ModuleUsageFact `json:"-"`
 	// IMEvents 是出站 IM 事件及其 sender 与精确依赖。
 	IMEvents []IMEventFact `json:"im_events"`
+	// GrpcOperations 是当前依赖图中 generated client source 证明的 gRPC operation。
+	GrpcOperations []GrpcOperationFact `json:"grpc_operations"`
+	// GrpcCalls 是项目内精确匹配 generated client binding 的调用点。
+	GrpcCalls []GrpcCallFact `json:"grpc_calls"`
 	// Links 是 route-handler 与 handler-annotation 的关联事实，由 linker 写入。
 	Links []LinkFact `json:"links"`
 	// Diagnostics 是各阶段记录的可恢复不确定性诊断。
@@ -116,6 +120,8 @@ func NewStore(root, modulePath string, buildContext ...BuildContextFact) *Store 
 		ModuleChanges:   []ModuleChangeFact{},
 		ModuleUsages:    []ModuleUsageFact{},
 		IMEvents:        []IMEventFact{},
+		GrpcOperations:  []GrpcOperationFact{},
+		GrpcCalls:       []GrpcCallFact{},
 		Links:           []LinkFact{},
 		Diagnostics:     []DiagnosticFact{},
 	}

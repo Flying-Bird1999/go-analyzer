@@ -1,6 +1,8 @@
 {
   "annotations": [],
   "diagnostics": [],
+  "grpc_calls": [],
+  "grpc_operations": [],
   "im_events": [],
   "links": [],
   "middleware": [],

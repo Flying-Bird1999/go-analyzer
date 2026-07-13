@@ -25,6 +25,10 @@ type Document struct {
 	Modules []facts.ModuleDependencyFact `json:"modules"`
 	// IMEvents 是出站 IM event、sender 与精确依赖事实。
 	IMEvents []facts.IMEventFact `json:"im_events"`
+	// GrpcOperations 是从 generated dependency client 提取的 operation facts。
+	GrpcOperations []facts.GrpcOperationFact `json:"grpc_operations"`
+	// GrpcCalls 是项目内已证明的 generated client 调用事实。
+	GrpcCalls []facts.GrpcCallFact `json:"grpc_calls"`
 	// Links 是 route-handler / handler-annotation / middleware symbol 关联。
 	Links []facts.LinkFact `json:"links"`
 	// Diagnostics 是可恢复的不确定性诊断。

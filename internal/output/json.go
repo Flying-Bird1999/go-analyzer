@@ -16,17 +16,19 @@ import (
 // 该函数是 facts 命令的对外契约实现，相同 Store 产出字节级一致输出。
 func RenderJSON(store *facts.Store) ([]byte, error) {
 	doc := Document{
-		Project:     store.Project,
-		Symbols:     append([]facts.SymbolFact(nil), store.Symbols...),
-		Annotations: append([]facts.AnnotationFact(nil), store.Annotations...),
-		RouteGroups: append([]facts.RouteGroupFact(nil), store.RouteGroups...),
-		Routes:      append([]facts.RouteRegistrationFact(nil), store.Routes...),
-		Middleware:  append([]facts.MiddlewareBindingFact(nil), store.Middleware...),
-		References:  append([]facts.ReferenceFact(nil), store.References...),
-		Modules:     append([]facts.ModuleDependencyFact(nil), store.Modules...),
-		IMEvents:    append([]facts.IMEventFact(nil), store.IMEvents...),
-		Links:       append([]facts.LinkFact(nil), store.Links...),
-		Diagnostics: append([]facts.DiagnosticFact(nil), store.Diagnostics...),
+		Project:        store.Project,
+		Symbols:        append([]facts.SymbolFact(nil), store.Symbols...),
+		Annotations:    append([]facts.AnnotationFact(nil), store.Annotations...),
+		RouteGroups:    append([]facts.RouteGroupFact(nil), store.RouteGroups...),
+		Routes:         append([]facts.RouteRegistrationFact(nil), store.Routes...),
+		Middleware:     append([]facts.MiddlewareBindingFact(nil), store.Middleware...),
+		References:     append([]facts.ReferenceFact(nil), store.References...),
+		Modules:        append([]facts.ModuleDependencyFact(nil), store.Modules...),
+		IMEvents:       append([]facts.IMEventFact(nil), store.IMEvents...),
+		GrpcOperations: append([]facts.GrpcOperationFact(nil), store.GrpcOperations...),
+		GrpcCalls:      append([]facts.GrpcCallFact(nil), store.GrpcCalls...),
+		Links:          append([]facts.LinkFact(nil), store.Links...),
+		Diagnostics:    append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
 	// 各类事实按 ID 字典序排序，保证相同事实集合产生稳定输出，便于 golden 与 diff。
 	sort.Slice(doc.Symbols, func(i, j int) bool {
@@ -52,6 +54,12 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	})
 	sort.Slice(doc.IMEvents, func(i, j int) bool {
 		return doc.IMEvents[i].ID < doc.IMEvents[j].ID
+	})
+	sort.Slice(doc.GrpcOperations, func(i, j int) bool {
+		return doc.GrpcOperations[i].ID < doc.GrpcOperations[j].ID
+	})
+	sort.Slice(doc.GrpcCalls, func(i, j int) bool {
+		return doc.GrpcCalls[i].ID < doc.GrpcCalls[j].ID
 	})
 	sort.Slice(doc.Links, func(i, j int) bool {
 		return doc.Links[i].ID < doc.Links[j].ID
@@ -93,6 +101,12 @@ func ensureNonNilSlices(doc *Document) {
 	}
 	if doc.IMEvents == nil {
 		doc.IMEvents = []facts.IMEventFact{}
+	}
+	if doc.GrpcOperations == nil {
+		doc.GrpcOperations = []facts.GrpcOperationFact{}
+	}
+	if doc.GrpcCalls == nil {
+		doc.GrpcCalls = []facts.GrpcCallFact{}
 	}
 	if doc.Links == nil {
 		doc.Links = []facts.LinkFact{}

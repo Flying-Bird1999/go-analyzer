@@ -37,6 +37,12 @@ const (
 	CodeIMSummaryIterationCapped Code = "im_summary_iteration_capped"
 	// CodePackageLoadFailed：单个源码文件解析失败，不中断整体加载，仅记录诊断后继续。
 	CodePackageLoadFailed Code = "package_load_failed"
+	// CodeGrpcDependencyLoadFailed：gRPC dependency graph 无法在只读模式下解析。
+	CodeGrpcDependencyLoadFailed Code = "grpc_dependency_load_failed"
+	// CodeGrpcCatalogFailed：generated gRPC client catalog 无法可靠构建。
+	CodeGrpcCatalogFailed Code = "grpc_catalog_failed"
+	// CodeGrpcCallAmbiguous：项目调用的 receiver 无法唯一收敛到 generated binding。
+	CodeGrpcCallAmbiguous Code = "grpc_call_ambiguous"
 )
 
 // Severity 是诊断严重级别的类型。

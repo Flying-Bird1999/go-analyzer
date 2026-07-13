@@ -1,6 +1,6 @@
 # BFF gRPC Dependency Assets Implementation Plan
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 实施采用轻量增量方式：按能力链路完成代码和必要测试，在阶段性里程碑提交；不要求逐任务审查、子代理编排或流程性验证。
 
 **Goal:** 为单个 Go BFF 项目提供精确的 `endpoint-assets` 与 `grpc-consumers` 双向查询，且只输出可由 generated gRPC client、静态 receiver 类型和项目内可执行调用链共同证明的正式关系。
 
@@ -12,7 +12,7 @@
 
 ## 1. 实施约束
 
-- 设计真值：`docs/design/bff-grpc-dependency-assets.md`。
+- 设计真值：`docs/bff-grpc-dependency-assets/design.md`。
 - 每次命令只分析一个 `--project`；不得引入多仓聚合或项目注册表。
 - gRPC 主键只能是 `/<protobuf-package>.<service>/<rpc-method>`，不能由 Go method 名反推。
 - endpoint 输入只能是 `METHOD /exact/template/path`，method 大写归一化，path 精确匹配。
@@ -22,7 +22,7 @@
 - BFF 业务源码直接调用 `Invoke` / `NewStream` 不进入第一版结果。
 - 查询输出 all-or-nothing；任何严格分析错误都不得在 stdout 留下部分 JSON。
 - 新命令不增加 `schema --type`；但现有 `facts` schema 必须同步新增公开 facts。
-- 每个任务完成后运行指定测试并提交；不得把多个失败点堆到最后一起修复。
+- 每个能力阶段完成后运行对应测试并提交；不为流程目的拆分无意义的验证或提交。
 
 ## 2. 文件职责映射
 
@@ -998,7 +998,7 @@ Run: `rg -n '/Users/|/go/pkg/mod|\.codex/' .analyzer-smoke testdata/golden -g '*
 
 Expected: 除计划内文件无意外修改；路径扫描无命中。
 
-- [ ] **Step 7: 使用 @superpowers:requesting-code-review 做最终审查**
+- [ ] **Step 7: 进行聚焦代码审查**
 
 审查重点：
 
@@ -1009,9 +1009,9 @@ Expected: 除计划内文件无意外修改；路径扫描无命中。
 - 所有 forward/reverse relation 是否满足不变量。
 - impact 是否保持 grpc mode off。
 
-- [ ] **Step 8: 修复审查问题后重复对应验证**
+- [ ] **Step 8: 修复问题后重复受影响验证**
 
-Critical/Important 问题必须修复并重跑受影响 package、`go test ./...` 和真实 smoke。Minor 问题若明确延期，必须记录到 review 结论，不能静默忽略。
+Critical/Important 问题必须修复并重跑受影响 package；仅在最终里程碑运行全量测试和真实 smoke。Minor 问题若明确延期，必须记录到 review 结论，不能静默忽略。
 
 - [ ] **Step 9: 提交最终验证修订**
 
