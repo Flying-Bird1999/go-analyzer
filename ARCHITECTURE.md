@@ -11,7 +11,7 @@
 核心问题只有一个：
 
 ```text
-这次 Go BFF 变更，最终会影响哪些 HTTP 接口和 IM event？
+这次 Go BFF 变更或上游 gRPC operation 变更，最终会影响哪些 HTTP 接口和 IM event？
 ```
 
 当前分析模型是：
@@ -1133,8 +1133,16 @@ go run ./cmd/go-analyzer impact \
 ```json
 {
   "summary": {
-    "impactedEndpointCount": 0,
-    "impactedEndpoints": [],
+    "impactedEndpointCount": 1,
+    "impactedEndpoints": [
+      {
+        "method": "POST",
+        "path": "/admin/api/bff-web/orders",
+        "routes": [
+          {"method": "POST", "path": "/api/bff-web/orders"}
+        ]
+      }
+    ],
     "impactedIMCount": 0,
     "impactedIMEvents": []
   },
