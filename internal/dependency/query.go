@@ -30,17 +30,17 @@ type GrpcDependency struct {
 	Chains    []Chain
 }
 type EndpointAsset struct {
-	Endpoint            Endpoint
-	RegisteredEndpoints []Endpoint
-	Handlers            []facts.SymbolID
-	Grpc                []GrpcDependency
+	Endpoint Endpoint
+	Routes   []Endpoint
+	Handlers []facts.SymbolID
+	Grpc     []GrpcDependency
 }
 type GrpcImpactConsumer struct {
-	Endpoint            Endpoint
-	RegisteredEndpoints []Endpoint
-	Handlers            []facts.SymbolID
-	Clients             []facts.GrpcClientBinding
-	Chains              []Chain
+	Endpoint Endpoint
+	Routes   []Endpoint
+	Handlers []facts.SymbolID
+	Clients  []facts.GrpcClientBinding
+	Chains   []Chain
 }
 type GrpcImpactSource struct {
 	Grpc      GrpcMethod
@@ -84,9 +84,9 @@ func FindEndpointAssets(store *facts.Store, inputs []Endpoint) ([]EndpointAsset,
 			return nil, fmt.Errorf("endpoint not found: %s %s", input.Method, input.Path)
 		}
 		asset := EndpointAsset{
-			Endpoint:            input,
-			RegisteredEndpoints: registeredEndpointsForHandlers(routes, matched),
-			Handlers:            append([]facts.SymbolID(nil), matched...),
+			Endpoint: input,
+			Routes:   routesForHandlers(routes, matched),
+			Handlers: append([]facts.SymbolID(nil), matched...),
 		}
 		byOperation := map[string]*GrpcDependency{}
 		for _, handler := range matched {
@@ -137,7 +137,7 @@ func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpac
 		for _, asset := range assets {
 			for _, dependency := range asset.Grpc {
 				if dependency.Operation.FullMethod == input.FullMethod {
-					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, RegisteredEndpoints: asset.RegisteredEndpoints, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
+					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, Routes: asset.Routes, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
 				}
 			}
 		}
@@ -173,7 +173,7 @@ func endpointHandlers(store *facts.Store, routes *graph.RouteGraph) map[Endpoint
 	}
 	return out
 }
-func registeredEndpointsForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []Endpoint {
+func routesForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []Endpoint {
 	var out []Endpoint
 	for _, handler := range handlers {
 		for _, route := range routes.RoutesByHandler[handler] {

@@ -98,7 +98,8 @@ type EndpointSummary struct {
 	// Method 是 HTTP method，例如 GET、POST。
 	Method string `json:"method"`
 	// Path 是完整 HTTP path。
-	Path string `json:"path"`
+	Path   string               `json:"path"`
+	Routes []dependencyEndpoint `json:"routes"`
 }
 
 // EndpointSourceSummary 描述一个 endpoint 被哪些变更来源影响。
@@ -153,8 +154,8 @@ type GrpcOperationSummary struct {
 // GrpcConsumerImpact 是一个 BFF endpoint 对 gRPC source 的静态消费证据。
 type GrpcConsumerImpact struct {
 	Endpoint dependencyEndpoint `json:"endpoint"`
-	// RegisteredEndpoints 是从 route registration 静态解析出的辅助路径，不改变 annotation endpoint 的正式身份。
-	RegisteredEndpoints []dependencyEndpoint `json:"registeredEndpoints"`
+	// Routes 是从 route registration 静态解析出的辅助路径，不改变 annotation endpoint 的正式身份。
+	Routes []dependencyEndpoint `json:"routes"`
 	// Relation 固定为 may_call：静态分析证明调用可达，但不承诺每次请求必然执行该调用。
 	Relation string             `json:"relation"`
 	Handlers []dependencySymbol `json:"handlers"`
@@ -979,10 +980,31 @@ func uniqueEndpointSummaries(values []EndpointSummary) []EndpointSummary {
 	}
 	out := values[:0]
 	for _, value := range values {
-		if len(out) > 0 && out[len(out)-1] == value {
+		value.Routes = uniqueDependencyEndpoints(value.Routes)
+		if len(out) > 0 && endpointKey(out[len(out)-1]) == endpointKey(value) {
+			out[len(out)-1].Routes = uniqueDependencyEndpoints(append(out[len(out)-1].Routes, value.Routes...))
 			continue
 		}
 		out = append(out, value)
+	}
+	return out
+}
+
+func uniqueDependencyEndpoints(values []dependencyEndpoint) []dependencyEndpoint {
+	if values == nil {
+		return []dependencyEndpoint{}
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].Method != values[j].Method {
+			return values[i].Method < values[j].Method
+		}
+		return values[i].Path < values[j].Path
+	})
+	out := values[:0]
+	for _, value := range values {
+		if len(out) == 0 || out[len(out)-1] != value {
+			out = append(out, value)
+		}
 	}
 	return out
 }

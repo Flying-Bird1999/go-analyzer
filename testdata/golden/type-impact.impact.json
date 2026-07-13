@@ -4,7 +4,8 @@
     "impactedEndpoints": [
       {
         "method": "POST",
-        "path": "/orders"
+        "path": "/orders",
+        "routes": null
       }
     ],
     "impactedIMCount": 0,
@@ -133,7 +134,8 @@
       "impactedEndpoints": [
         {
           "method": "POST",
-          "path": "/orders"
+          "path": "/orders",
+          "routes": null
         }
       ],
       "impactedIMEvents": []

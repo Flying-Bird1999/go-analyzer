@@ -47,10 +47,10 @@ type endpointAssetDocument struct {
 	EndpointAssets []endpointAsset   `json:"endpointAssets"`
 }
 type endpointAsset struct {
-	Endpoint            dependencyEndpoint   `json:"endpoint"`
-	RegisteredEndpoints []dependencyEndpoint `json:"registeredEndpoints"`
-	Handlers            []dependencySymbol   `json:"handlers"`
-	Dependencies        struct {
+	Endpoint     dependencyEndpoint   `json:"endpoint"`
+	Routes       []dependencyEndpoint `json:"routes"`
+	Handlers     []dependencySymbol   `json:"handlers"`
+	Dependencies struct {
 		Grpc []dependencyGrpc `json:"grpc"`
 	} `json:"dependencies"`
 }
@@ -58,7 +58,7 @@ type endpointAsset struct {
 func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset) ([]byte, error) {
 	doc := endpointAssetDocument{Project: projectForDependency(store), EndpointAssets: []endpointAsset{}}
 	for _, asset := range assets {
-		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), RegisteredEndpoints: endpointsForDependency(asset.RegisteredEndpoints), Handlers: symbolsForDependency(store, asset.Handlers)}
+		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), Routes: endpointsForDependency(asset.Routes), Handlers: symbolsForDependency(store, asset.Handlers)}
 		item.Dependencies.Grpc = []dependencyGrpc{}
 		for _, grpc := range asset.Grpc {
 			item.Dependencies.Grpc = append(item.Dependencies.Grpc, grpcForDependency(store, grpc))

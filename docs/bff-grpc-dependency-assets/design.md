@@ -284,7 +284,7 @@ impact source，不再作为独立的对外查询命令。
             "method": "GET",
             "path": "/orders/:orderId"
           },
-          "registeredEndpoints": [
+          "routes": [
             {
               "method": "GET",
               "path": "/api/orders/:orderId"
@@ -304,7 +304,7 @@ impact source，不再作为独立的对外查询命令。
 即使输入源是 gRPC，`chains` 仍统一按 `endpoint -> gRPC` 方向输出。`relation: "may_call"`
 表示静态可达，不承诺每次 HTTP 请求都会执行该调用。
 
-`endpoint` 使用 controller annotation 作为正式 identity；`registeredEndpoints` 仅列出能从
+`endpoint` 使用 controller annotation 作为正式 identity；`routes` 仅列出能从
 route registration 静态解析出的路径，用于暴露 annotation 与运行时路由可能存在的漂移。后者
 不参与 endpoint 去重或双向查询不变量，动态 route 无法解析时允许为空或不完整。
 

@@ -23,15 +23,12 @@ func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependenc
 		}
 		for _, consumer := range result.Consumers {
 			source.Consumers = append(source.Consumers, GrpcConsumerImpact{
-				Endpoint:            endpointForDependency(consumer.Endpoint),
-				RegisteredEndpoints: endpointsForDependency(consumer.RegisteredEndpoints),
-				Relation:            "may_call",
-				Handlers:            symbolsForDependency(store, consumer.Handlers),
-				Clients:             clientsForDependency(consumer.Clients),
-				Chains:              chainsForDependency(store, consumer.Chains),
+				Endpoint: endpointForDependency(consumer.Endpoint), Routes: endpointsForDependency(consumer.Routes), Relation: "may_call",
+				Handlers: symbolsForDependency(store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(store, consumer.Chains),
 			})
-			source.ImpactedEndpoints = append(source.ImpactedEndpoints, EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path})
-			doc.Summary.ImpactedEndpoints = append(doc.Summary.ImpactedEndpoints, EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path})
+			summary := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: endpointsForDependency(consumer.Routes)}
+			source.ImpactedEndpoints = append(source.ImpactedEndpoints, summary)
+			doc.Summary.ImpactedEndpoints = append(doc.Summary.ImpactedEndpoints, summary)
 		}
 		normalizeGrpcSource(&source)
 		doc.GrpcSources = append(doc.GrpcSources, source)
@@ -54,7 +51,7 @@ func normalizeGrpcSource(source *GrpcSourceImpact) {
 func addEndpointGrpcSource(builders map[string]*endpointSourceSummaryBuilder, source GrpcSourceImpact) {
 	metadata := endpointSourceMetadata{sourceType: "grpc", grpcFullMethod: source.Grpc.FullMethod}
 	for _, consumer := range source.Consumers {
-		endpoint := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path}
+		endpoint := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: consumer.Routes}
 		endpointID := endpointKey(endpoint)
 		builder := builders[endpointID]
 		if builder == nil {
