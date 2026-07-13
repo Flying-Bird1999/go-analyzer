@@ -416,59 +416,32 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 	return node
 }
 
-// annotationNode 构造注解节点并补齐 endpoint。这里集中处理 endpoint 的 method/path 优先级：
-//
-//   - 默认以注解为准（annotation_endpoint，high）。
-//   - 若路由解析路径比 local path 更完整（resolved 与 local 不同，或属于 legacy old path group），
-//     则路由路径被视为权威，覆盖注解路径（route_endpoint）。
-//   - 被删除路由的特殊处理：只要有 local path 即视为权威，便于在恢复时仍落到完整路径。
-//   - 当注解和路由都没有路径时，退回 local path。
-//   - "注解在路由路径上扩展了父级前缀"的情况（annotationExtendsRoutePath）不算路由权威，
-//     以注解更长的路径为准，避免把 path 截断成局部段。
-//
-// 这些规则保证：能完整解析前缀或属于明确旧路径 group 时以路由为准；
-// route 只剩 local path 且注解补出父级前缀时以注解为准。
+// annotationNode 构造注解节点并补齐 endpoint。注解是正式 endpoint identity；只有注解缺少
+// method 或 path 时，才使用已解析 route 补齐对应字段。route 节点仍保留完整解析路径，供
+// review 与辅助校验，不得覆盖完整 annotation。
 func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
-	routePath := route.ResolvedPath
-	// routePathAuthoritative 表示路由路径应优先于注解路径。
-	routePathAuthoritative := routePath != "" && (routePath != route.LocalPath || isLegacyPathGroup(route.GroupVar))
-	if route.RecoveredFromDiff && route.LocalPath != "" {
-		// 被删除路由：尽量用 local path 作为完整路径，避免恢复结果只剩局部段。
-		if routePath == "" {
-			routePath = route.LocalPath
-		}
-		routePathAuthoritative = true
-	}
-	if annotation.Path == "" && routePath == "" {
-		routePath = route.LocalPath
-		routePathAuthoritative = routePath != ""
-	}
-	// 注解在路由路径上扩展了父级前缀时，注解路径更完整，路由不再权威。
-	if routePathAuthoritative && annotationExtendsRoutePath(annotation.Path, routePath) && !isLegacyPathGroup(route.GroupVar) {
-		routePathAuthoritative = false
-	}
 	method := annotation.Method
 	path := annotation.Path
 	endpointRelation := "annotation_endpoint"
 	endpointSpan := annotation.Span
 	endpointConfidence := facts.ConfidenceHigh
-	if routePathAuthoritative {
-		path = routePath
-		if route.Method != "" {
-			method = route.Method
+	if method == "" {
+		method = route.Method
+		endpointRelation = "route_endpoint"
+		endpointSpan = route.Span
+		endpointConfidence = facts.ConfidenceMedium
+	}
+	if path == "" {
+		path = route.ResolvedPath
+		if path == "" {
+			path = route.LocalPath
 		}
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
-		if route.RecoveredFromDiff {
-			endpointRelation = "deleted_route_endpoint"
-		}
+		endpointConfidence = facts.ConfidenceMedium
 	}
-	// 注解缺 method/path 时分别用路由字段兜底，尽可能产出完整 endpoint。
-	if method == "" {
-		method = route.Method
-	}
-	if path == "" {
-		path = route.LocalPath
+	if endpointRelation == "route_endpoint" && route.RecoveredFromDiff {
+		endpointRelation = "deleted_route_endpoint"
 	}
 	node := Node{
 		ID:         annotation.ID,
@@ -497,33 +470,6 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		))
 	}
 	return node
-}
-
-// isLegacyPathGroup 判断 group 变量是否属于 legacy old path（变量名包含 oldpath），
-// 这些 group 上的路由路径不能直接信任，需要结合注解判断。
-func isLegacyPathGroup(groupVar string) bool {
-	return strings.Contains(strings.ToLower(groupVar), "oldpath")
-}
-
-// annotationExtendsRoutePath 判断注解路径是否在路由路径上扩展了父级前缀：
-// 注解路径以路由路径为后缀、且两者不同、且路由路径至少有 2 段。
-// 此情形下注解路径更完整，应优先使用注解路径。
-func annotationExtendsRoutePath(annotationPath, routePath string) bool {
-	return annotationPath != "" &&
-		routePath != "" &&
-		annotationPath != routePath &&
-		routePathSegmentCount(routePath) >= 2 &&
-		strings.HasSuffix(annotationPath, routePath)
-}
-
-// routePathSegmentCount 返回路由路径的段数（按 / 分隔并去除首尾斜杠），
-// 用于 annotationExtendsRoutePath 判断时避免局部 path 误判。
-func routePathSegmentCount(routePath string) int {
-	trimmed := strings.Trim(routePath, "/")
-	if trimmed == "" {
-		return 0
-	}
-	return len(strings.Split(trimmed, "/"))
 }
 
 // endpointNode 构造一个 endpoint 终端节点，并把命中的端点记入本棵树的端点摘要。

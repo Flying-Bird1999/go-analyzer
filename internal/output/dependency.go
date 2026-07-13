@@ -47,9 +47,10 @@ type endpointAssetDocument struct {
 	EndpointAssets []endpointAsset   `json:"endpointAssets"`
 }
 type endpointAsset struct {
-	Endpoint     dependencyEndpoint `json:"endpoint"`
-	Handlers     []dependencySymbol `json:"handlers"`
-	Dependencies struct {
+	Endpoint            dependencyEndpoint   `json:"endpoint"`
+	RegisteredEndpoints []dependencyEndpoint `json:"registeredEndpoints"`
+	Handlers            []dependencySymbol   `json:"handlers"`
+	Dependencies        struct {
 		Grpc []dependencyGrpc `json:"grpc"`
 	} `json:"dependencies"`
 }
@@ -57,7 +58,7 @@ type endpointAsset struct {
 func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset) ([]byte, error) {
 	doc := endpointAssetDocument{Project: projectForDependency(store), EndpointAssets: []endpointAsset{}}
 	for _, asset := range assets {
-		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), Handlers: symbolsForDependency(store, asset.Handlers)}
+		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), RegisteredEndpoints: endpointsForDependency(asset.RegisteredEndpoints), Handlers: symbolsForDependency(store, asset.Handlers)}
 		item.Dependencies.Grpc = []dependencyGrpc{}
 		for _, grpc := range asset.Grpc {
 			item.Dependencies.Grpc = append(item.Dependencies.Grpc, grpcForDependency(store, grpc))
@@ -71,6 +72,13 @@ func projectForDependency(store *facts.Store) dependencyProject {
 }
 func endpointForDependency(value dependency.Endpoint) dependencyEndpoint {
 	return dependencyEndpoint{Method: value.Method, Path: value.Path}
+}
+func endpointsForDependency(values []dependency.Endpoint) []dependencyEndpoint {
+	out := make([]dependencyEndpoint, 0, len(values))
+	for _, value := range values {
+		out = append(out, endpointForDependency(value))
+	}
+	return out
 }
 func grpcForDependency(store *facts.Store, value dependency.GrpcDependency) dependencyGrpc {
 	return dependencyGrpc{FullMethod: value.Operation.FullMethod, ProtoPackage: value.Operation.ProtoPackage, Service: value.Operation.Service, Method: value.Operation.Method, Clients: clientsForDependency(value.Clients), Chains: chainsForDependency(store, value.Chains)}

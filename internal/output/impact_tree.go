@@ -153,6 +153,8 @@ type GrpcOperationSummary struct {
 // GrpcConsumerImpact 是一个 BFF endpoint 对 gRPC source 的静态消费证据。
 type GrpcConsumerImpact struct {
 	Endpoint dependencyEndpoint `json:"endpoint"`
+	// RegisteredEndpoints 是从 route registration 静态解析出的辅助路径，不改变 annotation endpoint 的正式身份。
+	RegisteredEndpoints []dependencyEndpoint `json:"registeredEndpoints"`
 	// Relation 固定为 may_call：静态分析证明调用可达，但不承诺每次请求必然执行该调用。
 	Relation string             `json:"relation"`
 	Handlers []dependencySymbol `json:"handlers"`

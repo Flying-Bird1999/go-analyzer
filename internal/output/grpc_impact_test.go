@@ -22,9 +22,10 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	AddGrpcSources(&doc, store, []dependency.GrpcImpactSource{{
 		Grpc: operation,
 		Consumers: []dependency.GrpcImpactConsumer{{
-			Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
-			Handlers: []facts.SymbolID{handler},
-			Clients:  []facts.GrpcClientBinding{{GoPackage: "example.com/proto", ClientType: "OrderServiceClient", GoMethod: "Get"}},
+			Endpoint:            dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
+			RegisteredEndpoints: []dependency.Endpoint{{Method: "GET", Path: "/router/orders/:id"}},
+			Handlers:            []facts.SymbolID{handler},
+			Clients:             []facts.GrpcClientBinding{{GoPackage: "example.com/proto", ClientType: "OrderServiceClient", GoMethod: "Get"}},
 			Chains: []dependency.Chain{{
 				Symbols: []facts.SymbolID{handler, remote},
 				Call:    facts.GrpcCallFact{Span: facts.SourceSpan{File: "remote/order.go", StartLine: 18, StartCol: 9}},
@@ -45,7 +46,8 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 				FullMethod string `json:"fullMethod"`
 			} `json:"grpc"`
 			Consumers []struct {
-				Relation string `json:"relation"`
+				Relation            string               `json:"relation"`
+				RegisteredEndpoints []dependencyEndpoint `json:"registeredEndpoints"`
 			} `json:"consumers"`
 		} `json:"grpcSources"`
 		EndpointSourcesSummary []EndpointSourceSummary `json:"endpointSourcesSummary"`
@@ -58,6 +60,9 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	}
 	if len(rendered.GrpcSources[0].Consumers) != 1 || rendered.GrpcSources[0].Consumers[0].Relation != "may_call" {
 		t.Fatalf("consumers = %#v", rendered.GrpcSources[0].Consumers)
+	}
+	if got := rendered.GrpcSources[0].Consumers[0].RegisteredEndpoints; len(got) != 1 || got[0].Path != "/router/orders/:id" {
+		t.Fatalf("registered endpoints = %#v", got)
 	}
 	if len(rendered.Summary.ImpactedEndpoints) != 1 || rendered.Summary.ImpactedEndpoints[0].Path != "/orders/:id" {
 		t.Fatalf("summary endpoints = %#v", rendered.Summary.ImpactedEndpoints)

@@ -911,7 +911,7 @@ func Init(g *RouterGroup) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	assertEndpointSummary(t, doc, "POST", "/internal/orders")
+	assertEndpointSummary(t, doc, "POST", "/public/orders")
 }
 
 // TestRunImpactRecoversDeletedHandlerAnnotationAndRoute 验证被删除的 handler 注解+路由能恢复，并替换掉文件级 fallback 根。
@@ -965,11 +965,11 @@ func Init(g *RouterGroup) {
 			t.Fatalf("deleted handler should replace file fallback root: %#v", source.Symbols)
 		}
 	}
-	assertEndpointSummary(t, doc, "GET", "/internal/users/:id")
+	assertEndpointSummary(t, doc, "GET", "/public/users/:id")
 }
 
-// TestRunImpactUsesRouteEndpointWhenAnnotationDisagrees 验证注解与路由路径冲突时，以可完整解析的路由端点为准。
-func TestRunImpactUsesRouteEndpointWhenAnnotationDisagrees(t *testing.T) {
+// TestRunImpactKeepsAnnotationEndpointWhenRouteDisagrees 验证注解与路由路径冲突时，以注解端点为正式身份。
+func TestRunImpactKeepsAnnotationEndpointWhenRouteDisagrees(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/route-authority\n\ngo 1.24\n")
 	writeTestFile(t, root, "controller/order.go", `package controller
@@ -1014,10 +1014,10 @@ func Init(g *RouterGroup) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	assertEndpointSummary(t, doc, "POST", "/internal/orders")
+	assertEndpointSummary(t, doc, "POST", "/public/orders")
 	for _, endpoint := range doc.Summary.ImpactedEndpoints {
-		if endpoint.Method == "POST" && endpoint.Path == "/public/orders" {
-			t.Fatalf("annotation endpoint should not override route endpoint: %#v", doc.Summary)
+		if endpoint.Method == "POST" && endpoint.Path == "/internal/orders" {
+			t.Fatalf("route endpoint should not override annotation endpoint: %#v", doc.Summary)
 		}
 	}
 }
@@ -1076,8 +1076,8 @@ func Init(adminWebGroup *RouterGroup) {
 	}
 }
 
-// TestRunImpactUsesOldPathGroupRouteWhenAnnotationDisagrees 验证 oldPathGroup 兼容旧路径时，以路由端点为准而非注解。
-func TestRunImpactUsesOldPathGroupRouteWhenAnnotationDisagrees(t *testing.T) {
+// TestRunImpactKeepsAnnotationEndpointWhenOldPathGroupDisagrees 验证 oldPathGroup 路由与注解冲突时，注解保持正式身份。
+func TestRunImpactKeepsAnnotationEndpointWhenOldPathGroupDisagrees(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "go.mod", "module example.com/oldpath-authority\n\ngo 1.24\n")
 	writeTestFile(t, root, "controller/socialuser.go", `package controller
@@ -1119,10 +1119,10 @@ func Init(oldPathGroup *RouterGroup) {
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
-	assertEndpointSummary(t, doc, "PUT", "/uc/tags/v2/user/createTag/:psid")
+	assertEndpointSummary(t, doc, "PUT", "/admin/api/bff-web/mc/social-user/:psid/tag")
 	for _, endpoint := range doc.Summary.ImpactedEndpoints {
-		if endpoint.Method == "PUT" && endpoint.Path == "/admin/api/bff-web/mc/social-user/:psid/tag" {
-			t.Fatalf("annotation endpoint should not override oldPathGroup route endpoint: %#v", doc.Summary)
+		if endpoint.Method == "PUT" && endpoint.Path == "/uc/tags/v2/user/createTag/:psid" {
+			t.Fatalf("oldPathGroup route endpoint should not override annotation endpoint: %#v", doc.Summary)
 		}
 	}
 }

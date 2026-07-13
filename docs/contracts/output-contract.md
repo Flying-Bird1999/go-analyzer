@@ -51,9 +51,11 @@ go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET 
 ```
 
 `endpoint-assets` returns `{ "project": {"module": ...}, "endpointAssets": [...] }`.
-Each asset contains `endpoint`, `handlers`, and `dependencies.grpc`; every gRPC
-item contains canonical identity, generated client bindings, and endpoint-to-call-site
-chains. Chains always point from BFF endpoint handler to the project gRPC call site.
+Each asset contains `endpoint`, `registeredEndpoints`, `handlers`, and `dependencies.grpc`;
+every gRPC item contains canonical identity, generated client bindings, and endpoint-to-call-site
+chains. `endpoint` is the annotation-first formal identity. `registeredEndpoints` lists route
+paths that can be statically resolved for the handler; it is auxiliary evidence and may be empty
+or incomplete for dynamic registration. Chains always point from BFF endpoint handler to the project gRPC call site.
 
 Inputs are exact and repeatable. An unknown endpoint is an error. Errors write
 `error_code=<stable-code> message=<message>` to stderr and do not write partial
@@ -96,7 +98,8 @@ Top-level shape:
   local usage trees, and is omitted when there are no emitted module changes.
 - `grpcSources` contains each requested canonical gRPC operation, its statically
   proven BFF consumers, their generated client binding and endpoint-to-call-site
-  chains. Consumer `relation` is always `may_call`: it proves static reachability,
+  chains. A consumer exposes both annotation-first `endpoint` and auxiliary
+  `registeredEndpoints` route evidence. Consumer `relation` is always `may_call`: it proves static reachability,
   not that every request executes the call.
 - `endpointSourcesSummary` is a lightweight endpoint-to-source projection placed
   last in the rendered JSON. It is always present and is an empty array when no

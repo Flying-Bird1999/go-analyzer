@@ -23,11 +23,12 @@ func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependenc
 		}
 		for _, consumer := range result.Consumers {
 			source.Consumers = append(source.Consumers, GrpcConsumerImpact{
-				Endpoint: endpointForDependency(consumer.Endpoint),
-				Relation: "may_call",
-				Handlers: symbolsForDependency(store, consumer.Handlers),
-				Clients:  clientsForDependency(consumer.Clients),
-				Chains:   chainsForDependency(store, consumer.Chains),
+				Endpoint:            endpointForDependency(consumer.Endpoint),
+				RegisteredEndpoints: endpointsForDependency(consumer.RegisteredEndpoints),
+				Relation:            "may_call",
+				Handlers:            symbolsForDependency(store, consumer.Handlers),
+				Clients:             clientsForDependency(consumer.Clients),
+				Chains:              chainsForDependency(store, consumer.Chains),
 			})
 			source.ImpactedEndpoints = append(source.ImpactedEndpoints, EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path})
 			doc.Summary.ImpactedEndpoints = append(doc.Summary.ImpactedEndpoints, EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path})

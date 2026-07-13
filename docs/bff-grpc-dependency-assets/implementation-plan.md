@@ -670,7 +670,7 @@ type GrpcMethodIdentity struct { FullMethod, ProtoPackage, Service, Method strin
 type GrpcImpactSource struct { Grpc GrpcMethodIdentity; Consumers []GrpcImpactConsumer }
 ```
 
-endpoint identity 解析规则：优先使用已解析 route 的 method/path；没有可解析 route 时使用 `RouteGraph.AnnotationsForHandler`。只有被 route 注册证明的 handler 才能成为 endpoint。
+endpoint identity 解析规则：优先使用 `RouteGraph.AnnotationsForHandler` 的 method/path；没有 annotation 时使用已解析 route method/path。已解析 route 同时作为 `registeredEndpoints` 辅助证据输出，但不改变 annotation endpoint 的正式 identity。只有被 route 注册证明的 handler 才能成为 endpoint。
 
 - [ ] **Step 5: 实现确定性 BFS**
 

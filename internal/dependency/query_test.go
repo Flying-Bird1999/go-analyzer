@@ -8,7 +8,8 @@ import (
 
 func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	store := queryStore()
-	endpoint := Endpoint{Method: "GET", Path: "/orders/:id"}
+	endpoint := Endpoint{Method: "GET", Path: "/stale/orders/:id"}
+	registeredEndpoint := Endpoint{Method: "GET", Path: "/orders/:id"}
 	assets, err := FindEndpointAssets(store, []Endpoint{endpoint, endpoint})
 	if err != nil {
 		t.Fatal(err)
@@ -18,6 +19,9 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	}
 	if len(assets[0].Grpc[0].Chains) != 1 || len(assets[0].Grpc[0].Chains[0].Symbols) != 2 {
 		t.Fatalf("chains=%#v", assets[0].Grpc[0].Chains)
+	}
+	if len(assets[0].RegisteredEndpoints) != 1 || assets[0].RegisteredEndpoints[0] != registeredEndpoint {
+		t.Fatalf("registered endpoints=%#v", assets[0].RegisteredEndpoints)
 	}
 	method, err := ParseGrpcMethod("/shop.order.v1.OrderService/Get")
 	if err != nil {
@@ -29,6 +33,9 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	}
 	if len(consumers) != 1 || len(consumers[0].Consumers) != 1 || consumers[0].Consumers[0].Endpoint != endpoint {
 		t.Fatalf("consumers=%#v", consumers)
+	}
+	if len(consumers[0].Consumers[0].RegisteredEndpoints) != 1 || consumers[0].Consumers[0].RegisteredEndpoints[0] != registeredEndpoint {
+		t.Fatalf("consumer registered endpoints=%#v", consumers[0].Consumers[0].RegisteredEndpoints)
 	}
 	missing, err := ParseGrpcMethod("/shop.order.v1.OrderService/Missing")
 	if err != nil {

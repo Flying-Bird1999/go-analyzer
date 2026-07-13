@@ -102,9 +102,9 @@ func TestAnalyzePrefersChangedRouteDomainRootOverHandlerSymbol(t *testing.T) {
 	}
 }
 
-// TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint 验证注解领域根展开时，
-// 端点 method/path 以注册路由的完整路径为准（覆盖注解的局部 path）。
-func TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint(t *testing.T) {
+// TestAnalyzeAnnotationRootKeepsAnnotationEndpoint 验证注解领域根展开时，完整 annotation
+// 保持正式 endpoint identity；注册路由只作为树中的辅助证据。
+func TestAnalyzeAnnotationRootKeepsAnnotationEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	handler := facts.SymbolID("func:example.com/project/controller/common::CheckIn")
 	annotation := facts.AnnotationFact{
@@ -143,7 +143,7 @@ func TestAnalyzeAnnotationRootUsesRegisteredRouteEndpoint(t *testing.T) {
 	if len(root.Endpoints) != 1 {
 		t.Fatalf("endpoints = %#v", root.Endpoints)
 	}
-	if root.Endpoints[0].Method != "POST" || root.Endpoints[0].Path != "/api/bff-web/common/checkIn" {
+	if root.Endpoints[0].Method != "POST" || root.Endpoints[0].Path != "/api/bff-web/common/checkInV2" {
 		t.Fatalf("endpoint = %#v", root.Endpoints[0])
 	}
 	if len(root.Root.Children) != 1 || root.Root.Children[0].Kind != "route" {

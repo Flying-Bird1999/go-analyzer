@@ -30,15 +30,17 @@ type GrpcDependency struct {
 	Chains    []Chain
 }
 type EndpointAsset struct {
-	Endpoint Endpoint
-	Handlers []facts.SymbolID
-	Grpc     []GrpcDependency
+	Endpoint            Endpoint
+	RegisteredEndpoints []Endpoint
+	Handlers            []facts.SymbolID
+	Grpc                []GrpcDependency
 }
 type GrpcImpactConsumer struct {
-	Endpoint Endpoint
-	Handlers []facts.SymbolID
-	Clients  []facts.GrpcClientBinding
-	Chains   []Chain
+	Endpoint            Endpoint
+	RegisteredEndpoints []Endpoint
+	Handlers            []facts.SymbolID
+	Clients             []facts.GrpcClientBinding
+	Chains              []Chain
 }
 type GrpcImpactSource struct {
 	Grpc      GrpcMethod
@@ -81,7 +83,11 @@ func FindEndpointAssets(store *facts.Store, inputs []Endpoint) ([]EndpointAsset,
 		if len(matched) == 0 {
 			return nil, fmt.Errorf("endpoint not found: %s %s", input.Method, input.Path)
 		}
-		asset := EndpointAsset{Endpoint: input, Handlers: append([]facts.SymbolID(nil), matched...)}
+		asset := EndpointAsset{
+			Endpoint:            input,
+			RegisteredEndpoints: registeredEndpointsForHandlers(routes, matched),
+			Handlers:            append([]facts.SymbolID(nil), matched...),
+		}
 		byOperation := map[string]*GrpcDependency{}
 		for _, handler := range matched {
 			for _, chain := range forwardChains(calls, handler) {
@@ -131,7 +137,7 @@ func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpac
 		for _, asset := range assets {
 			for _, dependency := range asset.Grpc {
 				if dependency.Operation.FullMethod == input.FullMethod {
-					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
+					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, RegisteredEndpoints: asset.RegisteredEndpoints, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
 				}
 			}
 		}
@@ -150,22 +156,39 @@ func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpac
 func endpointHandlers(store *facts.Store, routes *graph.RouteGraph) map[Endpoint][]facts.SymbolID {
 	out := map[Endpoint][]facts.SymbolID{}
 	for handler, registered := range routes.RoutesByHandler {
-		foundRoute := false
+		annotations := routes.AnnotationsForHandler(handler)
+		if len(annotations) > 0 {
+			for _, annotation := range annotations {
+				endpoint := Endpoint{Method: strings.ToUpper(annotation.Method), Path: annotation.Path}
+				out[endpoint] = appendSymbol(out[endpoint], handler)
+			}
+			continue
+		}
 		for _, route := range registered {
 			if route.ResolvedPath != "" {
 				endpoint := Endpoint{Method: strings.ToUpper(route.Method), Path: route.ResolvedPath}
 				out[endpoint] = appendSymbol(out[endpoint], handler)
-				foundRoute = true
 			}
 		}
-		if foundRoute {
-			continue
-		}
-		for _, annotation := range routes.AnnotationsForHandler(handler) {
-			endpoint := Endpoint{Method: strings.ToUpper(annotation.Method), Path: annotation.Path}
-			out[endpoint] = appendSymbol(out[endpoint], handler)
+	}
+	return out
+}
+func registeredEndpointsForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []Endpoint {
+	var out []Endpoint
+	for _, handler := range handlers {
+		for _, route := range routes.RoutesByHandler[handler] {
+			if route.ResolvedPath != "" {
+				out = append(out, Endpoint{Method: strings.ToUpper(route.Method), Path: route.ResolvedPath})
+			}
 		}
 	}
+	out = uniqueEndpoints(out)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Method != out[j].Method {
+			return out[i].Method < out[j].Method
+		}
+		return out[i].Path < out[j].Path
+	})
 	return out
 }
 func forwardChains(calls *graph.CallGraph, handler facts.SymbolID) []Chain {

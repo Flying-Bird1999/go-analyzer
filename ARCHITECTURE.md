@@ -20,12 +20,12 @@
 diff
   -> changed symbol / route / middleware / annotation
   -> project-local reverse references
-  -> route registration -> HTTP endpoint (annotation fallback)
+  -> route registration -> controller annotation -> HTTP endpoint
   -> IM payload/event/control dependency -> IM transport -> IM event
 
 grpc operation
   -> generated client + static receiver + project-local executable call chain
-  -> route registration -> HTTP endpoint (annotation fallback)
+  -> route registration -> controller annotation -> HTTP endpoint
 ```
 
 项目刻意不分析“函数内部具体改了什么”，也不输出字段级变化描述。diff 的作用是定位最小完整语义根；影响分析从这个语义根向外扩散。
@@ -295,7 +295,7 @@ go-analyzer/
 | `internal/link`               | 把 route raw handler、handler annotation、middleware symbol 接起来 | `live_view.LiveViewRedirect` -> `func:...::LiveViewRedirect`，再连到 `@Get`                                    |
 | `internal/diff`               | 把 unified diff 映射到语义 root                                    | 改`service/merchant.go` 的函数体 -> `symbol_changed` root                                                        |
 | `internal/graph`              | 构造传播查询视图                                                   | reverse reference、handler -> route/annotation、sender -> 精确 IM event                                           |
-| `internal/dependency`         | endpoint -> gRPC 资产与 gRPC -> endpoint impact source 查询       | `POST /api/bff-web/sc/channel/config/bind` <-> `StoreChannelConfigService/Bind` |
+| `internal/dependency`         | endpoint -> gRPC 资产与 gRPC -> endpoint impact source 查询       | `@Post /admin/.../config` + route `/api/.../config/bind` <-> `StoreChannelConfigService/Bind` |
 | `internal/impact`             | 从 change root 扩散并产出 endpoint / IM event                      | `GetMerchantInfo` 落到 HTTP endpoint；IM payload type 落到具体 event                                               |
 | `internal/output`             | 输出稳定 JSON/schema                                               | 输出原始传播树、module/grpc sources、endpoint 和 IM event 摘要                                                     |
 
@@ -647,7 +647,7 @@ middleware binding -> middleware function/method symbol
 
 - 某个 handler 变了，影响哪些 route。
 - 某个 middleware 方法变了，影响哪些挂载了该 middleware 的 route。
-- route 找到 handler 后，以已解析 route method/path 确认 endpoint；仅在没有可解析 route 时回退到 handler annotation。
+- route 找到 handler 后，优先用 handler annotation 确认正式 endpoint；已解析 route 作为 `registeredEndpoints` 辅助证据一并输出，不参与正式 endpoint identity。
 
 真实 BFF 例子：
 
@@ -813,7 +813,7 @@ ChangeFact(symbol)
 
 - `FindEndpointAssets`：从 endpoint handler 沿项目内可执行调用链查找 gRPC terminal。
 - `FindGrpcImpactSources`：从输入的 canonical full method 查找当前 BFF 的 HTTP consumer。
-- endpoint 优先以已解析 route 确定；无可解析 route 时才使用 controller annotation。
+- endpoint 优先以 controller annotation 确定；没有 annotation 时才使用已解析 route。已解析 route 始终作为 `registeredEndpoints` 输出，但不改变 annotation endpoint 的正式身份。
 - gRPC source 保留合法输入，即使当前 BFF 未消费该 operation 也返回空 consumer 数组。
 - 只接受 generated transport、receiver 静态类型和项目内可执行调用链共同证明的关系；不推断外部 SDK 的隐藏调用。
 
@@ -1160,7 +1160,7 @@ go run ./cmd/go-analyzer impact \
 `impactedIMEvents` 表示可静态确定的 IM event。endpoint 摘要是 `fileSources`、
 `moduleSources` 与 `grpcSources` 对应摘要的并集；gRPC source 不产生 IM event。
 
-每个 `grpcSources[]` 保留输入 gRPC 的 canonical identity、当前 BFF 的 `consumers` 和 `impactedEndpoints`。consumer 的 `relation` 固定为 `may_call`：调用链在静态上可达，但不承诺每次 HTTP 请求都会执行。每条 consumer 还保留 handler、client binding 和 endpoint 到 gRPC call-site 的项目内链路，便于回归与业务排查。
+每个 `grpcSources[]` 保留输入 gRPC 的 canonical identity、当前 BFF 的 `consumers` 和 `impactedEndpoints`。consumer 的 `endpoint` 是 annotation 优先的正式 endpoint identity；`registeredEndpoints` 同时列出能从 route registration 静态解析出的辅助路径，允许下游识别注释与路由的漂移，但该字段为空或不完整时不影响正式结果。consumer 的 `relation` 固定为 `may_call`：调用链在静态上可达，但不承诺每次 HTTP 请求都会执行。每条 consumer 还保留 handler、client binding 和 endpoint 到 gRPC call-site 的项目内链路，便于回归与业务排查。
 
 每个 `moduleSources[]` 保留：
 
