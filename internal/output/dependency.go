@@ -53,26 +53,6 @@ type endpointAsset struct {
 		Grpc []dependencyGrpc `json:"grpc"`
 	} `json:"dependencies"`
 }
-type grpcConsumersDocument struct {
-	Project       dependencyProject    `json:"project"`
-	GrpcConsumers []grpcConsumerResult `json:"grpcConsumers"`
-}
-type grpcConsumerResult struct {
-	Grpc      dependencyGrpcIdentity `json:"grpc"`
-	Consumers []grpcConsumer         `json:"consumers"`
-}
-type dependencyGrpcIdentity struct {
-	FullMethod   string `json:"fullMethod"`
-	ProtoPackage string `json:"protoPackage"`
-	Service      string `json:"service"`
-	Method       string `json:"method"`
-}
-type grpcConsumer struct {
-	Endpoint dependencyEndpoint `json:"endpoint"`
-	Handlers []dependencySymbol `json:"handlers"`
-	Clients  []dependencyClient `json:"clients"`
-	Chains   []dependencyChain  `json:"chains"`
-}
 
 func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset) ([]byte, error) {
 	doc := endpointAssetDocument{Project: projectForDependency(store), EndpointAssets: []endpointAsset{}}
@@ -86,25 +66,11 @@ func RenderEndpointAssets(store *facts.Store, assets []dependency.EndpointAsset)
 	}
 	return renderDependency(doc)
 }
-func RenderGrpcConsumers(store *facts.Store, results []dependency.GrpcConsumerResult) ([]byte, error) {
-	doc := grpcConsumersDocument{Project: projectForDependency(store), GrpcConsumers: []grpcConsumerResult{}}
-	for _, result := range results {
-		item := grpcConsumerResult{Grpc: identityForDependency(result.Grpc), Consumers: []grpcConsumer{}}
-		for _, consumer := range result.Consumers {
-			item.Consumers = append(item.Consumers, grpcConsumer{Endpoint: endpointForDependency(consumer.Endpoint), Handlers: symbolsForDependency(store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(store, consumer.Chains)})
-		}
-		doc.GrpcConsumers = append(doc.GrpcConsumers, item)
-	}
-	return renderDependency(doc)
-}
 func projectForDependency(store *facts.Store) dependencyProject {
 	return dependencyProject{Module: store.Project.ModulePath}
 }
 func endpointForDependency(value dependency.Endpoint) dependencyEndpoint {
 	return dependencyEndpoint{Method: value.Method, Path: value.Path}
-}
-func identityForDependency(value dependency.GrpcMethod) dependencyGrpcIdentity {
-	return dependencyGrpcIdentity{FullMethod: value.FullMethod, ProtoPackage: value.ProtoPackage, Service: value.Service, Method: value.Method}
 }
 func grpcForDependency(store *facts.Store, value dependency.GrpcDependency) dependencyGrpc {
 	return dependencyGrpc{FullMethod: value.Operation.FullMethod, ProtoPackage: value.Operation.ProtoPackage, Service: value.Operation.Service, Method: value.Operation.Method, Clients: clientsForDependency(value.Clients), Chains: chainsForDependency(store, value.Chains)}

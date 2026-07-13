@@ -10,7 +10,7 @@
 
 // Package output 把 internal/impact 产出的传播树投影为稳定的对外 JSON 文档。
 //
-// 该包承担 ARCHITECTURE.md 第 5.15、11 节定义的输出契约：
+// 该包承担 ARCHITECTURE.md 第 5.16、11 节定义的输出契约：
 //   - 把内部 impact 树投影为稳定 JSON，保留从 change root 到 endpoint / IM event 的完整 children 递归链路。
 //   - 按变更来源聚合 change root：普通文件逻辑变更进入 fileSources，go.mod 语义模块变更进入 moduleSources。
 //   - 去重端点（endpoint）摘要与已解析的 IM 事件字符串；动态 IM 事件以 im_event_unresolved 终端保留在树中但不计入摘要。

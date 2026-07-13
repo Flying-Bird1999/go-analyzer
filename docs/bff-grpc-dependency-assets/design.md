@@ -615,7 +615,7 @@ internal/graph
 
 internal/dependency
   FindEndpointAssets
-  FindGrpcConsumers
+  FindGrpcImpactSources
   双向一致性与最短链算法
 
 internal/output
@@ -644,7 +644,7 @@ dependency_render
 
 ```text
 RunEndpointAssets
-RunGrpcConsumers
+RunImpact (--grpc)
 ```
 
 `internal/dependency` 负责查询语义；`internal/output` 只做投影、排序和渲染。两个命令都不

@@ -19,9 +19,9 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	}
 	operation := dependency.GrpcMethod{FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}
 	doc := BuildImpactDocument(nil, impact.TreeResult{}, ImpactDocumentOptions{})
-	AddGrpcSources(&doc, store, []dependency.GrpcConsumerResult{{
+	AddGrpcSources(&doc, store, []dependency.GrpcImpactSource{{
 		Grpc: operation,
-		Consumers: []dependency.GrpcConsumer{{
+		Consumers: []dependency.GrpcImpactConsumer{{
 			Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
 			Handlers: []facts.SymbolID{handler},
 			Clients:  []facts.GrpcClientBinding{{GoPackage: "example.com/proto", ClientType: "OrderServiceClient", GoMethod: "Get"}},

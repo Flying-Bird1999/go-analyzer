@@ -40,8 +40,6 @@ func run(args []string) error {
 		return runImpact(args[1:])
 	case "endpoint-assets":
 		return runEndpointAssets(args[1:])
-	case "grpc-consumers":
-		return runGrpcConsumers(args[1:])
 	case "schema":
 		return runSchema(args[1:])
 	default:
@@ -82,10 +80,6 @@ func runEndpointAssets(args []string) error {
 	}
 	_, err = os.Stdout.Write(result.Output)
 	return err
-}
-
-func runGrpcConsumers(args []string) error {
-	return runImpact(args)
 }
 
 func runHelp(args []string) error {
@@ -283,12 +277,6 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 	case "endpoint-assets":
 		return `用法:
   go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id" [--endpoint "POST /orders"] [--format json] [--timings]
-`
-	case "grpc-consumers":
-		return `用法:
-  go-analyzer impact --project /absolute/path/to/project --grpc "/package.Service/Method" [--grpc "/package.Service/Other"] [--format json] [--timings]
-
-grpc-consumers 是兼容别名，输出与 impact --grpc 完全相同。
 `
 	case "schema":
 		return `用法:

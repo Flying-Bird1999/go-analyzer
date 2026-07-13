@@ -34,15 +34,15 @@ type EndpointAsset struct {
 	Handlers []facts.SymbolID
 	Grpc     []GrpcDependency
 }
-type GrpcConsumer struct {
+type GrpcImpactConsumer struct {
 	Endpoint Endpoint
 	Handlers []facts.SymbolID
 	Clients  []facts.GrpcClientBinding
 	Chains   []Chain
 }
-type GrpcConsumerResult struct {
+type GrpcImpactSource struct {
 	Grpc      GrpcMethod
-	Consumers []GrpcConsumer
+	Consumers []GrpcImpactConsumer
 }
 
 func ParseEndpoint(raw string) (Endpoint, error) {
@@ -114,7 +114,8 @@ func FindEndpointAssets(store *facts.Store, inputs []Endpoint) ([]EndpointAsset,
 	return out, nil
 }
 
-func FindGrpcConsumers(store *facts.Store, inputs []GrpcMethod) ([]GrpcConsumerResult, error) {
+// FindGrpcImpactSources maps changed upstream gRPC methods to BFF HTTP consumers.
+func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpactSource, error) {
 	handlers := endpointHandlers(store, graph.NewRouteGraph(store))
 	endpoints := make([]Endpoint, 0, len(handlers))
 	for endpoint := range handlers {
@@ -124,13 +125,13 @@ func FindGrpcConsumers(store *facts.Store, inputs []GrpcMethod) ([]GrpcConsumerR
 	if err != nil {
 		return nil, err
 	}
-	var out []GrpcConsumerResult
+	var out []GrpcImpactSource
 	for _, input := range uniqueGrpc(inputs) {
-		result := GrpcConsumerResult{Grpc: input}
+		result := GrpcImpactSource{Grpc: input}
 		for _, asset := range assets {
 			for _, dependency := range asset.Grpc {
 				if dependency.Operation.FullMethod == input.FullMethod {
-					result.Consumers = append(result.Consumers, GrpcConsumer{Endpoint: asset.Endpoint, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
+					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
 				}
 			}
 		}
@@ -149,19 +150,20 @@ func FindGrpcConsumers(store *facts.Store, inputs []GrpcMethod) ([]GrpcConsumerR
 func endpointHandlers(store *facts.Store, routes *graph.RouteGraph) map[Endpoint][]facts.SymbolID {
 	out := map[Endpoint][]facts.SymbolID{}
 	for handler, registered := range routes.RoutesByHandler {
-		annotations := routes.AnnotationsForHandler(handler)
-		if len(annotations) > 0 {
-			for _, annotation := range annotations {
-				endpoint := Endpoint{Method: strings.ToUpper(annotation.Method), Path: annotation.Path}
-				out[endpoint] = appendSymbol(out[endpoint], handler)
-			}
-			continue
-		}
+		foundRoute := false
 		for _, route := range registered {
 			if route.ResolvedPath != "" {
 				endpoint := Endpoint{Method: strings.ToUpper(route.Method), Path: route.ResolvedPath}
 				out[endpoint] = appendSymbol(out[endpoint], handler)
+				foundRoute = true
 			}
+		}
+		if foundRoute {
+			continue
+		}
+		for _, annotation := range routes.AnnotationsForHandler(handler) {
+			endpoint := Endpoint{Method: strings.ToUpper(annotation.Method), Path: annotation.Path}
+			out[endpoint] = appendSymbol(out[endpoint], handler)
 		}
 	}
 	return out

@@ -9,7 +9,7 @@ import (
 )
 
 // AddGrpcSources 将 gRPC 变更源及其静态 BFF 消费关系合入 impact 文档。
-func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependency.GrpcConsumerResult) {
+func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependency.GrpcImpactSource) {
 	for _, result := range results {
 		source := GrpcSourceImpact{
 			Grpc: GrpcOperationSummary{

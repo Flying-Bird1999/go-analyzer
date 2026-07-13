@@ -16,12 +16,6 @@ type EndpointAssetsOptions struct {
 	Format       string
 	BuildContext project.BuildContextOptions
 }
-type GrpcConsumersOptions struct {
-	ProjectPath  string
-	GrpcMethods  []string
-	Format       string
-	BuildContext project.BuildContextOptions
-}
 type AnalysisError struct {
 	Code string
 	Err  error
@@ -51,29 +45,6 @@ func RunEndpointAssetsWithMetrics(opts EndpointAssetsOptions) (RunResult, error)
 			return nil, &AnalysisError{"endpoint_not_found", err}
 		}
 		return output.RenderEndpointAssets(store.store, assets)
-	})
-}
-func RunGrpcConsumersWithMetrics(opts GrpcConsumersOptions) (RunResult, error) {
-	if opts.ProjectPath == "" {
-		return RunResult{}, &AnalysisError{"project_load_failed", errors.New("project path is required")}
-	}
-	if len(opts.GrpcMethods) == 0 {
-		return RunResult{}, &AnalysisError{"invalid_grpc_method", errors.New("at least one --grpc is required")}
-	}
-	inputs := make([]dependency.GrpcMethod, 0, len(opts.GrpcMethods))
-	for _, raw := range opts.GrpcMethods {
-		value, err := dependency.ParseGrpcMethod(raw)
-		if err != nil {
-			return RunResult{}, &AnalysisError{"invalid_grpc_method", err}
-		}
-		inputs = append(inputs, value)
-	}
-	return runDependency(opts.ProjectPath, opts.Format, opts.BuildContext, func(store builtFacts) ([]byte, error) {
-		results, err := dependency.FindGrpcConsumers(store.store, inputs)
-		if err != nil {
-			return nil, err
-		}
-		return output.RenderGrpcConsumers(store.store, results)
 	})
 }
 func runDependency(path, format string, context project.BuildContextOptions, render func(builtFacts) ([]byte, error)) (RunResult, error) {

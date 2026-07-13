@@ -218,8 +218,8 @@ func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
 		return RunResult{}, err
 	}
 	if len(grpcInputs) > 0 {
-		if err := recorder.measure("grpc_consumer_query", func() error {
-			consumers, queryErr := dependency.FindGrpcConsumers(store, grpcInputs)
+		if err := recorder.measure("grpc_impact_source_query", func() error {
+			consumers, queryErr := dependency.FindGrpcImpactSources(store, grpcInputs)
 			if queryErr != nil {
 				return strictAnalysisError(queryErr)
 			}

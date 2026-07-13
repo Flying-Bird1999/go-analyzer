@@ -154,7 +154,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 - 用 `--timings` 查看各 stage 耗时（写到 stderr，不污染 stdout 的 JSON）。
 - 用 `schema --type facts|impact` 校验或对齐输出契约。
 
-`endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`impact` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`，可与 `--diff` 组合。gRPC 关系仅在 generated client、静态 receiver 类型和项目内可执行调用链共同证明时输出；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。`grpc-consumers` 仅保留为兼容别名，输出等同于 `impact --grpc`。
+`endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`impact` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`，可与 `--diff` 组合。gRPC 关系仅在 generated client、静态 receiver 类型和项目内可执行调用链共同证明时输出；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 提供 `--diff` 时，`impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。`--diff` 与 `--grpc` 至少提供一个。

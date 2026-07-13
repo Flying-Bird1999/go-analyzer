@@ -23,7 +23,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumers, err := FindGrpcConsumers(store, []GrpcMethod{method})
+	consumers, err := FindGrpcImpactSources(store, []GrpcMethod{method})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, err := FindGrpcConsumers(store, []GrpcMethod{missing})
+	empty, err := FindGrpcImpactSources(store, []GrpcMethod{missing})
 	if err != nil || len(empty) != 1 || len(empty[0].Consumers) != 0 {
 		t.Fatalf("empty=%#v err=%v", empty, err)
 	}
@@ -52,7 +52,7 @@ func queryStore() *facts.Store {
 	handler := facts.SymbolID("func:example.com/project/controller::Get")
 	service := facts.SymbolID("func:example.com/project/service::Get")
 	store.Routes = []facts.RouteRegistrationFact{{ID: "route:get", Method: "GET", ResolvedPath: "/orders/:id", HandlerSymbol: handler}}
-	store.Annotations = []facts.AnnotationFact{{ID: "annotation:get", Method: "GET", Path: "/orders/:id", HandlerSymbol: handler}}
+	store.Annotations = []facts.AnnotationFact{{ID: "annotation:get", Method: "GET", Path: "/stale/orders/:id", HandlerSymbol: handler}}
 	store.References = []facts.ReferenceFact{{ID: "call:handler", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: service}, {ID: "type:ignored", Kind: facts.ReferenceKindType, FromSymbol: handler, ToSymbol: "func:example.com/project/other::Ignored"}}
 	operation := facts.GrpcOperationFact{ID: facts.GrpcOperationID("/shop.order.v1.OrderService/Get"), FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}
 	store.GrpcOperations = []facts.GrpcOperationFact{operation}

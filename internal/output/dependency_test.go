@@ -20,12 +20,6 @@ func TestDependencyRenderersDoNotExposeBuildContext(t *testing.T) {
 				return RenderEndpointAssets(store, []dependency.EndpointAsset{{Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders"}}})
 			},
 		},
-		{
-			name: "grpc consumers",
-			run: func() ([]byte, error) {
-				return RenderGrpcConsumers(store, []dependency.GrpcConsumerResult{{Grpc: dependency.GrpcMethod{FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}}})
-			},
-		},
 	}
 	for _, tt := range renders {
 		t.Run(tt.name, func(t *testing.T) {
