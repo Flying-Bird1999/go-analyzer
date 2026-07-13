@@ -35,7 +35,7 @@ contain the same endpoint/gRPC pair for one project snapshot and build context.
 
 The MVP validation target is stability rather than perfect precision:
 
-- Both projects should run without panic.
+- All three projects should run without panic.
 - Facts JSON should be parseable and every route should have both
   `handler_symbol` and `resolved_path`.
 - Annotation, route, symbol, and diagnostic counts should be recorded from each
@@ -48,26 +48,36 @@ The MVP validation target is stability rather than perfect precision:
 
 ## Latest Facts Smoke Snapshot
 
-Local smoke run on 2026-07-02:
+Strict facts and gRPC query smoke run on 2026-07-13:
 
-| Project | Symbols | Annotations | Routes | Diagnostics |
-| --- | ---: | ---: | ---: | ---: |
-| `sl-sc1-bff-service` | 781 | 32 | 32 | 0 |
-| `sl-sc1-admin-bff` | 5132 | 463 | 559 | 5 |
-| `sl-sc2-admin-bff` | 1397 | 98 | 136 | 0 |
+| Project | Symbols | Annotations | Routes | gRPC operations | gRPC calls | Diagnostics |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `sl-sc1-bff-service` | 781 | 32 | 32 | 119 | 11 | 0 |
+| `sl-sc1-admin-bff` | 5132 | 463 | 559 | 410 | 252 | 1 |
+| `sl-sc2-admin-bff` | 1397 | 98 | 136 | 270 | 43 | 0 |
 
 The analyzer now honors the default Go build context when loading files, so
 files excluded by build constraints such as `//go:build ignore` and
 `//go:build race_test` are not included in these symbol counts.
 
-All five remaining diagnostics are `symbol_reference_ambiguous_interface` for
-`sc_redisx.SentinelClient.Eval/Scan`. Production `.go` files assign both
-`RedisClusterClient` and `RedisClientMock`, so strict interface dispatch reports
-the ambiguous binding instead of guessing. Unique package-level interface
-bindings, static map interface dispatch where every map value is known,
-`new(T)` package/local values, and methods on typed constants now resolve.
-External SDK methods reached through project package variables or locals that
-shadow project imports are not reported as unresolved project symbols.
+The remaining diagnostic is `symbol_reference_ambiguous_interface`. Strict
+interface dispatch reports this binding instead of guessing. Unique
+package-level interface bindings, static map interface dispatch where every map
+value is known, `new(T)` package/local values, and methods on typed constants
+now resolve. External SDK methods reached through project package variables or
+locals that shadow project imports are not reported as unresolved project
+symbols.
+
+## gRPC Dependency Query Cases
+
+The checked-in facts baseline also contains one bidirectional gRPC query case
+per BFF. Each case must be returned by `endpoint-assets` and `grpc-consumers`:
+
+| Project | BFF endpoint | gRPC operation |
+| --- | --- | --- |
+| `sl-sc1-bff-service` | `GET /api/bff-web/mc/form/:shortLinkId/user/generateId` | `/gopkg.inshopline.com.sc1.app.modules.mc.mc_form.proto.McFormClientService/GenerateUserId` |
+| `sl-sc1-admin-bff` | `GET /admin/api/bff-web/live/sale/:salesId/comments/product_set/detail` | `/gopkg.inshopline.com.sc1.app.modules.medium.comment.CommentService/getCombineProductBaseSnapshot` |
+| `sl-sc2-admin-bff` | `POST /admin/api/bff-web/sc/channel/config` | `/com.shopline.sc.api.channel.StoreChannelConfigService/Bind` |
 
 ## Impact Fixture Snapshot
 

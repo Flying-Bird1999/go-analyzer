@@ -150,9 +150,11 @@ actual = {
     "grpc_calls": len(data.get("grpc_calls") or []),
     "diagnostics": dict(sorted(diagnostics.items())),
 }
+
 expected = baselines.get(name)
 if expected is None:
     raise SystemExit(f"missing facts baseline for {name}")
+expected = {key: value for key, value in expected.items() if key != "grpc_cases"}
 
 if strict:
     if actual != expected:
@@ -206,6 +208,48 @@ print(
         diagnostics=actual["diagnostics"],
     )
 )
+PY
+}
+
+validate_grpc_queries() {
+  local name="$1"
+  local path="$2"
+
+  python3 - "$ANALYZER_BIN" "$path" "$FACTS_BASELINE" "$name" <<'PY'
+import json
+import subprocess
+import sys
+
+analyzer, project, baseline_path, name = sys.argv[1:]
+with open(baseline_path, "r", encoding="utf-8") as f:
+    cases = (json.load(f).get(name) or {}).get("grpc_cases") or []
+
+for case in cases:
+    endpoint = case["endpoint"]
+    grpc = case["grpc"]
+    forward = json.loads(subprocess.check_output(
+        [analyzer, "endpoint-assets", "--project", project, "--endpoint", endpoint], text=True
+    ))
+    assets = forward.get("endpointAssets") or []
+    if len(assets) != 1:
+        raise SystemExit(f"{name} endpoint-assets returned {len(assets)} assets for {endpoint}")
+    methods = {item.get("fullMethod") for item in ((assets[0].get("dependencies") or {}).get("grpc") or [])}
+    if grpc not in methods:
+        raise SystemExit(f"{name} forward relation missing {endpoint} -> {grpc}: {methods}")
+
+    reverse = json.loads(subprocess.check_output(
+        [analyzer, "grpc-consumers", "--project", project, "--grpc", grpc], text=True
+    ))
+    results = reverse.get("grpcConsumers") or []
+    if len(results) != 1:
+        raise SystemExit(f"{name} grpc-consumers returned {len(results)} results for {grpc}")
+    consumers = {
+        f"{item.get('endpoint', {}).get('method')} {item.get('endpoint', {}).get('path')}"
+        for item in (results[0].get("consumers") or [])
+    }
+    if endpoint not in consumers:
+        raise SystemExit(f"{name} reverse relation missing {grpc} -> {endpoint}: {consumers}")
+    print(f"grpc_case={name} endpoint={endpoint} grpc={grpc}")
 PY
 }
 
@@ -905,8 +949,11 @@ SC2_ADMIN_BFF="$(resolve_sibling "sl-sc2-admin-bff" "sl-sc2-admin-bff")"
   go build -o "${ANALYZER_BIN}" ./cmd/go-analyzer)
 
 run_project "sl-sc1-bff-service" "${SC1_BFF}"
+validate_grpc_queries "sl-sc1-bff-service" "${SC1_BFF}"
 run_project "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
+validate_grpc_queries "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
 run_project "sl-sc2-admin-bff" "${SC2_ADMIN_BFF}"
+validate_grpc_queries "sl-sc2-admin-bff" "${SC2_ADMIN_BFF}"
 run_impact_fixture
 run_impact_case "deleted-route" "POST" "/internal/orders"
 run_impact_case "gomod-impact" "GET" "/api/checkIn"

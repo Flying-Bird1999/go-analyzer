@@ -6,6 +6,12 @@
     "route_links": 32,
     "grpc_operations": 119,
     "grpc_calls": 11,
+    "grpc_cases": [
+      {
+        "endpoint": "GET /api/bff-web/mc/form/:shortLinkId/user/generateId",
+        "grpc": "/gopkg.inshopline.com.sc1.app.modules.mc.mc_form.proto.McFormClientService/GenerateUserId"
+      }
+    ],
     "diagnostics": {}
   },
   "sl-sc1-admin-bff": {
@@ -16,8 +22,14 @@
     "grpc_operations": 410,
     "grpc_calls": 252,
     "diagnostics": {
-      "symbol_reference_ambiguous_interface": 5
-    }
+      "symbol_reference_ambiguous_interface": 1
+    },
+    "grpc_cases": [
+      {
+        "endpoint": "GET /admin/api/bff-web/live/sale/:salesId/comments/product_set/detail",
+        "grpc": "/gopkg.inshopline.com.sc1.app.modules.medium.comment.CommentService/getCombineProductBaseSnapshot"
+      }
+    ]
   },
   "sl-sc2-admin-bff": {
     "symbols": 1397,
@@ -26,6 +38,12 @@
     "route_links": 136,
     "grpc_operations": 270,
     "grpc_calls": 43,
+    "grpc_cases": [
+      {
+        "endpoint": "POST /admin/api/bff-web/sc/channel/config",
+        "grpc": "/com.shopline.sc.api.channel.StoreChannelConfigService/Bind"
+      }
+    ],
     "diagnostics": {}
   }
 }
