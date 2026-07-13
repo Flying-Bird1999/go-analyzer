@@ -8,14 +8,7 @@ import (
 )
 
 type dependencyProject struct {
-	Module       string                 `json:"module"`
-	BuildContext dependencyBuildContext `json:"buildContext"`
-}
-type dependencyBuildContext struct {
-	GOOS       string   `json:"goos"`
-	GOARCH     string   `json:"goarch"`
-	Tags       []string `json:"tags"`
-	CgoEnabled bool     `json:"cgoEnabled"`
+	Module string `json:"module"`
 }
 type dependencyEndpoint struct {
 	Method string `json:"method"`
@@ -105,7 +98,7 @@ func RenderGrpcConsumers(store *facts.Store, results []dependency.GrpcConsumerRe
 	return renderDependency(doc)
 }
 func projectForDependency(store *facts.Store) dependencyProject {
-	return dependencyProject{Module: store.Project.ModulePath, BuildContext: dependencyBuildContext{GOOS: store.Project.BuildContext.GOOS, GOARCH: store.Project.BuildContext.GOARCH, Tags: append([]string(nil), store.Project.BuildContext.Tags...), CgoEnabled: store.Project.BuildContext.CgoEnabled}}
+	return dependencyProject{Module: store.Project.ModulePath}
 }
 func endpointForDependency(value dependency.Endpoint) dependencyEndpoint {
 	return dependencyEndpoint{Method: value.Method, Path: value.Path}

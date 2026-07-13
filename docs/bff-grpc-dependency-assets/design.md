@@ -163,13 +163,7 @@ go-analyzer grpc-consumers \
 ```json
 {
   "project": {
-    "module": "sc1-admin-bff",
-    "buildContext": {
-      "goos": "linux",
-      "goarch": "amd64",
-      "tags": [],
-      "cgoEnabled": false
-    }
+    "module": "sc1-admin-bff"
   },
   "endpointAssets": [
     {
@@ -238,7 +232,7 @@ go-analyzer grpc-consumers \
 
 字段语义：
 
-- `project`：保证结果可关联到 module 和实际 build context。
+- `project`：标识当前单 BFF 项目的 module。
 - `endpoint`：controller annotation / route link 确定的 canonical method/path。
 - `handlers`：该 endpoint 下的全部静态 handler，不假设 method/path 只对应一个 handler。
 - `dependencies.grpc`：按 canonical full method 聚合的 gRPC operation。
@@ -275,13 +269,7 @@ go-analyzer grpc-consumers \
 ```json
 {
   "project": {
-    "module": "sc1-admin-bff",
-    "buildContext": {
-      "goos": "linux",
-      "goarch": "amd64",
-      "tags": [],
-      "cgoEnabled": false
-    }
+    "module": "sc1-admin-bff"
   },
   "grpcConsumers": [
     {

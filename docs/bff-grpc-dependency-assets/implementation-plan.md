@@ -709,7 +709,7 @@ endpoint-assets: project, endpointAssets
 grpc-consumers: project, grpcConsumers
 ```
 
-字段命名严格对齐设计：`buildContext`、`endpointAssets`、`fullMethod`、`protoPackage`、`callSite` 等 camelCase。第一版不得输出 `contract`、`http`、`events` 或 diagnostics 占位。
+字段命名严格对齐设计：`endpointAssets`、`fullMethod`、`protoPackage`、`callSite` 等 camelCase。查询响应的 `project` 仅输出 `module`；第一版不得输出 `buildContext`、`contract`、`http`、`events` 或 diagnostics 占位。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -722,7 +722,7 @@ Expected: FAIL，document/render API 不存在。
 `internal/output/dependency.go` 定义共享结构：
 
 ```go
-type DependencyProject struct { Module string; BuildContext DependencyBuildContext }
+type DependencyProject struct { Module string }
 type DependencyEndpoint struct { Method, Path string }
 type DependencyHandler struct { ID, Kind, Name, File string }
 type DependencyClient struct { GoPackage, ClientType, GoMethod string }
