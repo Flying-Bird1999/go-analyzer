@@ -28,7 +28,7 @@ changes must update that baseline in the same review.
 
 The gRPC dependency validation additionally checks that `facts` exposes
 generated operations and project call sites, then verifies selected relations
-through both `endpoint-assets` and `grpc-consumers`. The two directions must
+through `endpoint-assets` and `impact --grpc`. The two directions must
 contain the same endpoint/gRPC pair for one project snapshot and build context.
 
 ## Current Expectations
@@ -71,7 +71,7 @@ symbols.
 ## gRPC Dependency Query Cases
 
 The checked-in facts baseline also contains one bidirectional gRPC query case
-per BFF. Each case must be returned by `endpoint-assets` and `grpc-consumers`:
+per BFF. Each case must be returned by `endpoint-assets` and `impact --grpc`:
 
 | Project | BFF endpoint | gRPC operation |
 | --- | --- | --- |

@@ -126,16 +126,17 @@ method 会归一化为大写；path 必须与 analyzer 已链接的 canonical en
 - 正则路径。
 - 模糊或前缀路径。
 
-### 6.2 gRPC 消费方查询
+### 6.2 gRPC 变更影响源
 
 ```bash
-go-analyzer grpc-consumers \
+go-analyzer impact \
   --project /absolute/path/to/bff \
   --grpc "/package.OrderService/GetOrder" \
   --grpc "/package.OrderService/CreateOrder"
 ```
 
-`--grpc` 可重复传入，只接受 canonical full method。
+`--grpc` 可重复传入，只接受 canonical full method；可与 `--diff` 组合。gRPC operation 是
+impact source，不再作为独立的对外查询命令。
 
 ### 6.3 公共参数
 
@@ -262,16 +263,14 @@ go-analyzer grpc-consumers \
 
 这些字段只是扩展方向，第一版不定义也不输出空占位字段。
 
-## 8. gRPC 消费方输出
+## 8. gRPC Impact Source 输出
 
-反向查询复用相同的 endpoint、handler、client 和 chain 结构：
+`impact --grpc` 在既有 impact 文档中增加 `grpcSources`。反向关系复用 endpoint、handler、client
+和 chain 结构：
 
 ```json
 {
-  "project": {
-    "module": "sc1-admin-bff"
-  },
-  "grpcConsumers": [
+  "grpcSources": [
     {
       "grpc": {
         "fullMethod": "/package.OrderService/GetOrder",
@@ -285,6 +284,7 @@ go-analyzer grpc-consumers \
             "method": "GET",
             "path": "/orders/:orderId"
           },
+          "relation": "may_call",
           "handlers": [],
           "clients": [],
           "chains": []
@@ -295,8 +295,8 @@ go-analyzer grpc-consumers \
 }
 ```
 
-即使查询入口是 gRPC，`chains` 仍统一按 `endpoint -> gRPC` 方向输出。这样两条命令可以
-复用 contract，也便于直接验证双向一致性。
+即使输入源是 gRPC，`chains` 仍统一按 `endpoint -> gRPC` 方向输出。`relation: "may_call"`
+表示静态可达，不承诺每次 HTTP 请求都会执行该调用。
 
 ## 9. 内部 Fact 模型
 
@@ -535,7 +535,7 @@ site 必须分别保留。
 ```text
 endpoint-assets(A) 包含 gRPC B
 当且仅当
-grpc-consumers(B) 包含 endpoint A
+impact --grpc B 的 grpcSources 包含 endpoint A
 ```
 
 该不变量只在相同项目快照和 build context 下成立。
@@ -620,15 +620,15 @@ internal/dependency
 
 internal/output
   endpoint-assets JSON
-  grpc-consumers JSON
+  impact grpcSources JSON
   排序与 contract
 
 internal/app
-  两个命令的 pipeline 编排
+  endpoint asset 与 impact source pipeline 编排
 
 cmd/go-analyzer
   endpoint-assets
-  grpc-consumers
+  impact --grpc
 ```
 
 新增可观测阶段：
@@ -657,15 +657,14 @@ RunGrpcConsumers
 buildFactsOptions.grpcMode = off | diagnostic | strict
 ```
 
-- `impact` 使用 `off`：完全跳过 dependency list 和 gRPC extraction，保持现有性能与失败
-  语义。
+- 未提供 `--grpc` 的 `impact` 使用 `off`：完全跳过 dependency list 和 gRPC extraction，保持
+  现有 diff 性能与失败语义。
 - `facts` 使用 `diagnostic`：执行 gRPC extraction；失败时写入稳定 diagnostics，并保留其他
   facts，符合 facts 现有的调试定位职责。
-- `endpoint-assets` / `grpc-consumers` 使用 `strict`：dependency、catalog 或相关歧义失败
-  直接返回 typed error，不进入 query/render。
+- `endpoint-assets` 和提供 `--grpc` 的 `impact` 使用 `strict`：dependency、catalog 或相关歧义
+  失败直接返回 typed error，不进入 query/render。
 
-只有 mode 非 `off` 时才注册和记录 `dependency_list`、`grpc_extract` timing。`impact` 在未来
-真正消费 gRPC facts 前不增加该阶段。
+只有 mode 非 `off` 时才注册和记录 `dependency_list`、`grpc_extract` timing。
 
 ## 18. 测试矩阵
 
@@ -722,15 +721,15 @@ buildFactsOptions.grpcMode = off | diagnostic | strict
 ### 18.4 Contract 与 CLI
 
 - endpoint asset golden JSON。
-- gRPC consumer golden JSON。
+- `impact --grpc` source JSON。
 - facts 中 operation/call facts。
 - structured chain 和 source position。
 - 只输出项目相对路径。
 - `--timings` 的 stdout/stderr 隔离。
 - build-context 参数一致性。
-- 不增加 schema 类型。
-- `impact` 明确使用 grpc mode `off`，dependency/catalog 故障不得影响现有 impact。
-- `facts` diagnostic mode 与两个 query strict mode 的失败传播差异。
+- `impact` schema 包含 `grpcSources`，endpoint assets 不增加 schema 类型。
+- 未提供 `--grpc` 的 `impact` 使用 grpc mode `off`；提供 `--grpc` 时 dependency/catalog 故障必须使该次 impact 原子失败。
+- `facts` diagnostic mode、endpoint assets strict mode 与 `impact --grpc` strict mode 的失败传播差异。
 - 现有 facts、impact、route、IM 和 output 测试无回归。
 
 ## 19. 真实 BFF 验收

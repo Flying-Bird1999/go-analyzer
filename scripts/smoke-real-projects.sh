@@ -238,11 +238,11 @@ for case in cases:
         raise SystemExit(f"{name} forward relation missing {endpoint} -> {grpc}: {methods}")
 
     reverse = json.loads(subprocess.check_output(
-        [analyzer, "grpc-consumers", "--project", project, "--grpc", grpc], text=True
+        [analyzer, "impact", "--project", project, "--grpc", grpc], text=True
     ))
-    results = reverse.get("grpcConsumers") or []
+    results = reverse.get("grpcSources") or []
     if len(results) != 1:
-        raise SystemExit(f"{name} grpc-consumers returned {len(results)} results for {grpc}")
+        raise SystemExit(f"{name} impact returned {len(results)} gRPC sources for {grpc}")
     consumers = {
         f"{item.get('endpoint', {}).get('method')} {item.get('endpoint', {}).get('path')}"
         for item in (results[0].get("consumers") or [])

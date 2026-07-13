@@ -85,33 +85,7 @@ func runEndpointAssets(args []string) error {
 }
 
 func runGrpcConsumers(args []string) error {
-	fs := flag.NewFlagSet("grpc-consumers", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	projectPath := fs.String("project", "", "absolute project path")
-	format := fs.String("format", "json", "output format")
-	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
-	var methods stringList
-	fs.Var(&methods, "grpc", "canonical gRPC full method; repeatable")
-	buildFlags := registerBuildContextFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := validateAbsPath("project path", *projectPath); err != nil {
-		return err
-	}
-	buildContext, err := buildFlags.options()
-	if err != nil {
-		return err
-	}
-	result, err := app.RunGrpcConsumersWithMetrics(app.GrpcConsumersOptions{ProjectPath: *projectPath, GrpcMethods: methods, Format: *format, BuildContext: buildContext})
-	if err != nil {
-		return err
-	}
-	if *timings {
-		writeTimings(os.Stderr, result.Metrics)
-	}
-	_, err = os.Stdout.Write(result.Output)
-	return err
+	return runImpact(args)
 }
 
 func runHelp(args []string) error {
@@ -159,10 +133,12 @@ func runImpact(args []string) error {
 	fs := flag.NewFlagSet("impact", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	projectPath := fs.String("project", "", "absolute project path")
-	diffPath := fs.String("diff", "", "absolute unified diff file path")
+	diffPath := fs.String("diff", "", "optional absolute unified diff file path")
 	impactConfigPath := fs.String("impact-config", "", "optional absolute impact config path")
 	format := fs.String("format", "json", "output format")
 	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	var grpcMethods stringList
+	fs.Var(&grpcMethods, "grpc", "canonical changed gRPC full method; repeatable")
 	buildFlags := registerBuildContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -170,8 +146,13 @@ func runImpact(args []string) error {
 	if err := validateAbsPath("project path", *projectPath); err != nil {
 		return err
 	}
-	if err := validateAbsPath("diff path", *diffPath); err != nil {
-		return err
+	if *diffPath != "" {
+		if err := validateAbsPath("diff path", *diffPath); err != nil {
+			return err
+		}
+	}
+	if *diffPath == "" && len(grpcMethods) == 0 {
+		return fmt.Errorf("at least one --diff or --grpc is required")
 	}
 	if *impactConfigPath != "" {
 		if err := validateAbsPath("impact config path", *impactConfigPath); err != nil {
@@ -185,6 +166,7 @@ func runImpact(args []string) error {
 	result, err := app.RunImpactWithMetrics(app.ImpactOptions{
 		ProjectPath:      *projectPath,
 		DiffPath:         *diffPath,
+		GrpcMethods:      grpcMethods,
 		ImpactConfigPath: *impactConfigPath,
 		Format:           *format,
 		BuildContext:     buildContext,
@@ -291,9 +273,10 @@ func usage(command string) string {
 `
 	case "impact":
 		return `用法:
-  go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
+  go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "/package.Service/Method"] [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
 
-基于已经应用到变更后源码的 unified diff，分析受影响的 HTTP 接口和出站 IM event。
+基于已经应用到变更后源码的 unified diff 和/或上游 gRPC operation，分析受影响的 HTTP 接口和出站 IM event。
+--diff 与 --grpc 至少提供一个；两者可组合，--grpc 可重复。
 --impact-config 为可选配置，仅用于 module 版本变更过滤；未传时自动尝试读取项目内 .analyzer/go-impact.config.json。
 Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
@@ -303,7 +286,9 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
 	case "grpc-consumers":
 		return `用法:
-  go-analyzer grpc-consumers --project /absolute/path/to/project --grpc "/package.Service/Method" [--grpc "/package.Service/Other"] [--format json] [--timings]
+  go-analyzer impact --project /absolute/path/to/project --grpc "/package.Service/Method" [--grpc "/package.Service/Other"] [--format json] [--timings]
+
+grpc-consumers 是兼容别名，输出与 impact --grpc 完全相同。
 `
 	case "schema":
 		return `用法:
@@ -316,13 +301,11 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 		return `用法:
  go-analyzer help impact
  go-analyzer help endpoint-assets
- go-analyzer help grpc-consumers
- go-analyzer impact --project /absolute/path/to/project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
+ go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "/package.Service/Method"] [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
 对外接入命令:
-  impact  从已应用到变更后源码的 unified diff 分析受影响 HTTP 接口和 IM event。
+  impact  从 unified diff 和/或上游 gRPC operation 分析受影响 HTTP 接口和 IM event。
   endpoint-assets  查询 BFF endpoint 的 gRPC 依赖。
-  grpc-consumers   查询 gRPC operation 的 BFF 消费 endpoint。
 
 CLI 路径参数必须使用绝对路径。
 `

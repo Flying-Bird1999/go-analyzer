@@ -185,6 +185,15 @@ func TestRunImpactKeepsReviewEvidenceAndOmitsSpans(t *testing.T) {
 	}
 }
 
+func TestRunImpactRequiresDiffOrGrpcSource(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/impact-input\n\ngo 1.24\n")
+	_, err := RunImpact(ImpactOptions{ProjectPath: root, Format: "json"})
+	if err == nil || !strings.Contains(err.Error(), "at least one --diff or --grpc") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 // TestRunImpactMapsDiffToEndpoint 验证普通函数体改动经反向引用传播到 HTTP 端点。
 func TestRunImpactMapsDiffToEndpoint(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "utility-fanout"))

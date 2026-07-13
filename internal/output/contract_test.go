@@ -167,8 +167,8 @@ func TestImpactSchemaExposesModuleSourcesInsteadOfModuleFacts(t *testing.T) {
 	}
 }
 
-// 场景：impact schema 暴露 endpointSourcesSummary 及其轻量来源摘要定义。
-func TestImpactSchemaExposesEndpointSourcesSummary(t *testing.T) {
+// 场景：impact schema 暴露 endpoint/gRPC source 摘要及其定义。
+func TestImpactSchemaExposesEndpointAndGrpcSources(t *testing.T) {
 	got, err := SchemaJSON("impact")
 	if err != nil {
 		t.Fatal(err)
@@ -178,19 +178,23 @@ func TestImpactSchemaExposesEndpointSourcesSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	properties := doc["properties"].(map[string]any)
-	if _, ok := properties["endpointSourcesSummary"]; !ok {
-		t.Fatalf("endpointSourcesSummary property missing: %#v", properties)
+	for _, field := range []string{"endpointSourcesSummary", "grpcSources"} {
+		if _, ok := properties[field]; !ok {
+			t.Fatalf("%s property missing: %#v", field, properties)
+		}
 	}
 	requiredValues := doc["required"].([]any)
 	required := make([]string, 0, len(requiredValues))
 	for _, value := range requiredValues {
 		required = append(required, value.(string))
 	}
-	if !slices.Contains(required, "endpointSourcesSummary") {
-		t.Fatalf("endpointSourcesSummary missing from required: %#v", required)
+	for _, field := range []string{"endpointSourcesSummary", "grpcSources"} {
+		if !slices.Contains(required, field) {
+			t.Fatalf("%s missing from required: %#v", field, required)
+		}
 	}
 	defs := doc["$defs"].(map[string]any)
-	for _, name := range []string{"endpoint_source_summary", "endpoint_impact_source", "endpoint_root_symbol_summary"} {
+	for _, name := range []string{"endpoint_source_summary", "endpoint_impact_source", "endpoint_root_symbol_summary", "grpc_source_impact", "grpc_operation_summary", "grpc_consumer_impact"} {
 		if _, ok := defs[name]; !ok {
 			t.Fatalf("%s definition missing: %#v", name, defs)
 		}

@@ -41,6 +41,8 @@ type ImpactDocument struct {
 	FileSources []FileSourceImpact `json:"fileSources"`
 	// ModuleSources 仅在形成 go.mod 模块变更时输出，避免 go.mod 噪音混入 fileSources。
 	ModuleSources []ModuleSourceImpact `json:"moduleSources,omitempty"`
+	// GrpcSources 是作为上游变更输入的 canonical gRPC operation 及其 BFF consumer 证据。
+	GrpcSources []GrpcSourceImpact `json:"grpcSources"`
 	// EndpointSourcesSummary 是 endpoint -> 变更来源的轻量反查摘要，完整证据仍保留在 sources 的 symbols 树中。
 	EndpointSourcesSummary []EndpointSourceSummary `json:"endpointSourcesSummary"`
 }
@@ -123,12 +125,39 @@ type EndpointImpactSource struct {
 	VersionBefore string `json:"versionBefore,omitempty"`
 	// VersionAfter 是 module 变更后版本。
 	VersionAfter string `json:"versionAfter,omitempty"`
+	// GrpcFullMethod 仅在 sourceType=grpc 时出现。
+	GrpcFullMethod string `json:"grpcFullMethod,omitempty"`
 	// RootSymbols 是该来源中能到达 endpoint 的 changed roots。
 	RootSymbols []EndpointRootSymbolSummary `json:"rootSymbols"`
 	// Chains 是每个 root 到 endpoint 的最短人读链路摘要。
 	Chains [][]string `json:"chains"`
 	// Confidence 是所选链路中的最弱证据强度。
 	Confidence facts.Confidence `json:"confidence"`
+}
+
+// GrpcSourceImpact 描述一个发生变更的上游 gRPC operation 在当前 BFF 的静态消费范围。
+type GrpcSourceImpact struct {
+	Grpc              GrpcOperationSummary `json:"grpc"`
+	Consumers         []GrpcConsumerImpact `json:"consumers"`
+	ImpactedEndpoints []EndpointSummary    `json:"impactedEndpoints"`
+}
+
+// GrpcOperationSummary 是 canonical gRPC operation 的稳定身份。
+type GrpcOperationSummary struct {
+	FullMethod   string `json:"fullMethod"`
+	ProtoPackage string `json:"protoPackage"`
+	Service      string `json:"service"`
+	Method       string `json:"method"`
+}
+
+// GrpcConsumerImpact 是一个 BFF endpoint 对 gRPC source 的静态消费证据。
+type GrpcConsumerImpact struct {
+	Endpoint dependencyEndpoint `json:"endpoint"`
+	// Relation 固定为 may_call：静态分析证明调用可达，但不承诺每次请求必然执行该调用。
+	Relation string             `json:"relation"`
+	Handlers []dependencySymbol `json:"handlers"`
+	Clients  []dependencyClient `json:"clients"`
+	Chains   []dependencyChain  `json:"chains"`
 }
 
 // EndpointRootSymbolSummary 是 endpoint source 中 changed root 的轻量信息。
@@ -579,6 +608,9 @@ func buildEndpointSourcesSummary(doc ImpactDocument) []EndpointSourceSummary {
 			})
 		}
 	}
+	for _, source := range doc.GrpcSources {
+		addEndpointGrpcSource(builders, source)
+	}
 	out := make([]EndpointSourceSummary, 0, len(builders))
 	for _, builder := range builders {
 		for _, source := range builder.sources {
@@ -603,12 +635,13 @@ type endpointSourceSummaryBuilder struct {
 }
 
 type endpointSourceMetadata struct {
-	sourceType    string
-	sourceFile    string
-	modulePath    string
-	changeType    facts.ModuleChangeKind
-	versionBefore string
-	versionAfter  string
+	sourceType     string
+	sourceFile     string
+	modulePath     string
+	changeType     facts.ModuleChangeKind
+	versionBefore  string
+	versionAfter   string
+	grpcFullMethod string
 }
 
 func addEndpointSourceFile(builders map[string]*endpointSourceSummaryBuilder, source FileSourceImpact, metadata endpointSourceMetadata) {
@@ -675,6 +708,7 @@ func endpointImpactSourceKey(metadata endpointSourceMetadata) string {
 		string(metadata.changeType),
 		metadata.versionBefore,
 		metadata.versionAfter,
+		metadata.grpcFullMethod,
 	}, "\x00")
 }
 
@@ -832,6 +866,7 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 		doc.Summary.ImpactedEndpoints = []EndpointSummary{}
 	}
 	sortEndpointSummaries(doc.Summary.ImpactedEndpoints)
+	doc.Summary.ImpactedEndpoints = uniqueEndpointSummaries(doc.Summary.ImpactedEndpoints)
 	doc.Summary.ImpactedEndpointCount = len(doc.Summary.ImpactedEndpoints)
 	if doc.Summary.ImpactedIMEvents == nil {
 		doc.Summary.ImpactedIMEvents = []string{}
@@ -842,6 +877,15 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 	if doc.FileSources == nil {
 		doc.FileSources = []FileSourceImpact{}
 	}
+	if doc.GrpcSources == nil {
+		doc.GrpcSources = []GrpcSourceImpact{}
+	}
+	for i := range doc.GrpcSources {
+		normalizeGrpcSource(&doc.GrpcSources[i])
+	}
+	sort.Slice(doc.GrpcSources, func(i, j int) bool {
+		return doc.GrpcSources[i].Grpc.FullMethod < doc.GrpcSources[j].Grpc.FullMethod
+	})
 	for i := range doc.FileSources {
 		doc.FileSources[i] = normalizeFileSource(doc.FileSources[i])
 	}
@@ -925,6 +969,20 @@ func sortEndpointSummaries(endpoints []EndpointSummary) {
 		}
 		return endpoints[i].Path < endpoints[j].Path
 	})
+}
+
+func uniqueEndpointSummaries(values []EndpointSummary) []EndpointSummary {
+	if len(values) < 2 {
+		return values
+	}
+	out := values[:0]
+	for _, value := range values {
+		if len(out) > 0 && out[len(out)-1] == value {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 // sortedStrings 把字符串集合转为字典序切片，用于 IM 事件去重后的稳定输出。

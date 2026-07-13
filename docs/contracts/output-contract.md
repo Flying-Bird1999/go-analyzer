@@ -42,36 +42,33 @@ report projects only event names and propagation nodes.
 from the selected module dependency graph's generated client transport source;
 calls are emitted only when a project selector call has one exact generated
 client binding. `facts` records gRPC discovery failures as diagnostics, while
-the dependency query commands fail atomically.
+`impact --grpc` and `endpoint-assets` fail atomically.
 
 ## BFF gRPC Dependency Output
 
 ```bash
 go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id"
-go-analyzer grpc-consumers --project /absolute/path/to/project --grpc "/package.OrderService/GetOrder"
 ```
 
-Both commands return `{ "project": ..., ... }` with the effective build
-context. `endpoint-assets.endpointAssets[]` contains `endpoint`, `handlers`,
-and `dependencies.grpc`; each gRPC item contains canonical identity, generated
-client bindings, and endpoint-to-call-site chains. `grpc-consumers` returns
-the same endpoint/handler/client/chain projection under `grpcConsumers[]`.
-Chains always point from BFF endpoint handler to the project gRPC call site.
+`endpoint-assets` returns `{ "project": {"module": ...}, "endpointAssets": [...] }`.
+Each asset contains `endpoint`, `handlers`, and `dependencies.grpc`; every gRPC
+item contains canonical identity, generated client bindings, and endpoint-to-call-site
+chains. Chains always point from BFF endpoint handler to the project gRPC call site.
 
-Inputs are exact and repeatable. An unknown endpoint is an error; a valid
-canonical gRPC method with no consumer returns an empty `consumers` array.
-Errors write `error_code=<stable-code> message=<message>` to stderr and do not
-write partial JSON to stdout. No additional `schema --type` is introduced for
-these reports.
+Inputs are exact and repeatable. An unknown endpoint is an error. Errors write
+`error_code=<stable-code> message=<message>` to stderr and do not write partial
+JSON to stdout. No additional `schema --type` is introduced for endpoint assets.
 
 ## Impact Output
 
-`impact` is the original human-reviewable MR impact report:
+`impact` is the human-reviewable BFF impact report. `--diff` and repeatable
+`--grpc` are independent sources and may be combined:
 
 ```bash
 go-analyzer impact \
   --project /absolute/path/to/project \
   --diff /absolute/path/to/change.diff \
+  --grpc "/package.OrderService/GetOrder" \
   --format json
 ```
 
@@ -88,6 +85,7 @@ Top-level shape:
     "impactedIMEvents": ["order/changed"]
   },
   "fileSources": [],
+  "grpcSources": [],
   "endpointSourcesSummary": []
 }
 ```
@@ -96,6 +94,10 @@ Top-level shape:
 - `fileSources` contains ordinary source-file changes and their complete trees.
 - `moduleSources` is optional. It contains semantic go.mod changes and their
   local usage trees, and is omitted when there are no emitted module changes.
+- `grpcSources` contains each requested canonical gRPC operation, its statically
+  proven BFF consumers, their generated client binding and endpoint-to-call-site
+  chains. Consumer `relation` is always `may_call`: it proves static reachability,
+  not that every request executes the call.
 - `endpointSourcesSummary` is a lightweight endpoint-to-source projection placed
   last in the rendered JSON. It is always present and is an empty array when no
   endpoint is impacted.

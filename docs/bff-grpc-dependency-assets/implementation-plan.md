@@ -2,11 +2,20 @@
 
 > 实施采用轻量增量方式：按能力链路完成代码和必要测试，在阶段性里程碑提交；不要求逐任务审查、子代理编排或流程性验证。
 
-**Goal:** 为单个 Go BFF 项目提供精确的 `endpoint-assets` 与 `grpc-consumers` 双向查询，且只输出可由 generated gRPC client、静态 receiver 类型和项目内可执行调用链共同证明的正式关系。
+**Goal:** 为单个 Go BFF 项目提供精确的 `endpoint-assets` 资产查询与 `impact --grpc` 变更影响分析，且只输出可由 generated gRPC client、静态 receiver 类型和项目内可执行调用链共同证明的正式关系。
 
-**Architecture:** 先从当前 module 的只读依赖图构建 generated gRPC catalog，再复用统一的 AST receiver 类型解析器提取项目内 `GrpcCallFact`。查询层基于仅包含 `call` reference 的可执行图做确定性 BFS，并将 route/annotation handler 作为 endpoint 边界；`facts` 以 diagnostic 模式提取，两个新命令以 strict 模式执行，`impact` 完全关闭该能力。
+**Architecture:** 先从当前 module 的只读依赖图构建 generated gRPC catalog，再复用统一的 AST receiver 类型解析器提取项目内 `GrpcCallFact`。查询层基于仅包含 `call` reference 的可执行图做确定性 BFS，并将 route/annotation handler 作为 endpoint 边界；`facts` 以 diagnostic 模式提取，`endpoint-assets` 与带 `--grpc` 的 `impact` 以 strict 模式执行。`impact --grpc` 将 gRPC operation 作为 source，和可选 diff 结果合并为一份 impact JSON。
 
 **Tech Stack:** Go 1.24、标准库 `go/ast` / `go/parser` / `go/token` / `os/exec`、现有 `project` / `astindex` / `facts` / `graph` / `output` pipeline、JSON golden tests、真实 BFF smoke tests
+
+---
+
+## Current Architecture Revision
+
+对外边界已调整为：`endpoint-assets` 是独立的 BFF 接口资产查询；`impact --grpc` 将上游 gRPC
+operation 作为 impact source，可与 `--diff` 组合为同一份 impact JSON。`grpc-consumers` 仅保留为
+兼容别名，输出等同于 `impact --grpc`。下方原始分步计划保留为实施记录，涉及独立
+`grpc-consumers` 输出的内容不再是当前对外契约。
 
 ---
 
