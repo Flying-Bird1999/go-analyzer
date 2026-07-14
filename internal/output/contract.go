@@ -332,7 +332,7 @@ func commonDefinitions() map[string]any {
 			"streaming_mode":  stringType(),
 			"client_bindings": arrayOf(ref("grpc_client_binding")),
 			"evidence":        arrayOf(ref("evidence")),
-		}, "id", "full_method", "proto_package", "service", "method", "streaming_mode", "client_bindings", "evidence"),
+		}, "id", "full_method", "proto_package", "service", "method", "streaming_mode"),
 		"grpc_call": object(map[string]any{
 			"id":             stringType(),
 			"caller_symbol":  stringType(),
@@ -340,7 +340,7 @@ func commonDefinitions() map[string]any {
 			"client_binding": ref("grpc_client_binding"),
 			"span":           ref("source_span"),
 			"evidence":       arrayOf(ref("evidence")),
-		}, "id", "caller_symbol", "operation_id", "client_binding", "span", "evidence"),
+		}, "id", "caller_symbol", "operation_id", "client_binding", "span"),
 		"grpc_provider": object(map[string]any{
 			"id":                        stringType(),
 			"operation_id":              stringType(),

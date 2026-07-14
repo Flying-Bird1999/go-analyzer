@@ -8,9 +8,9 @@ package facts
 // 该事实仅供内部传播使用（json:"-"），不进入公开 facts JSON。
 type RouteGroupFlowFact struct {
 	// ID 是该流向事实的唯一标识。
-	ID string
+	ID string `json:"id"`
 	// ParentGroupID 是上游父级 group 的事实 ID。
-	ParentGroupID string
+	ParentGroupID string `json:"parent_group_id"`
 	// ChildGroupID 是下游子级 group 的事实 ID。
-	ChildGroupID string
+	ChildGroupID string `json:"child_group_id"`
 }

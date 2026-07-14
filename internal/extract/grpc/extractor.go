@@ -55,7 +55,22 @@ func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts
 						return true
 					}
 					types := scope.resolve(selector.X, call.Pos())
-					if len(types) != 1 {
+					if len(types) > 1 {
+						matched := 0
+						for _, t := range types {
+							k := BindingKey{GoPackage: t.PackagePath, ClientType: t.TypeName, GoMethod: selector.Sel.Name}
+							if _, ok := catalog.Lookup(k); ok {
+								matched++
+							}
+						}
+						if matched > 0 {
+							span := relativeSpan(p.Root, file, call.Pos(), call.End())
+							extractErr = &CallAmbiguityError{Caller: caller, Span: span}
+							return false
+						}
+						return true
+					}
+					if len(types) == 0 {
 						return true
 					}
 					key := BindingKey{GoPackage: types[0].PackagePath, ClientType: types[0].TypeName, GoMethod: selector.Sel.Name}

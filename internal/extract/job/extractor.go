@@ -118,7 +118,8 @@ func resolveHandler(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, e
 	}
 	if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 && parts[0] == fn.Recv.List[0].Names[0].Name {
 		receiver := astindex.ValueTypeFromTypeExpr(file, fn.Recv.List[0].Type)
-		if resolved, ok := idx.ResolveValueTypeMethod(receiver, append(parts[1:], "Execute")); ok {
+		remaining := append([]string(nil), parts[1:]...)
+		if resolved, ok := idx.ResolveValueTypeMethod(receiver, append(remaining, "Execute")); ok {
 			return resolved.ID, resolved.Confidence, true
 		}
 	}

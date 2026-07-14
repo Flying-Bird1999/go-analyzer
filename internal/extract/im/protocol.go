@@ -43,16 +43,20 @@ func discoverProtocolAnchors(p *project.Project, _ *astindex.Index) protocolAnch
 		for _, file := range pkg.Files {
 			for _, rawDecl := range file.AST.Decls {
 				switch decl := rawDecl.(type) {
-				case *ast.FuncDecl:
-					// 函数体内部包含锚点字面量时，把该函数记入对应集合。
-					id := functionSymbolID(file, decl)
-					scheme, endpoint := protocolLiterals(decl.Body)
-					if scheme {
-						schemes[id] = struct{}{}
-					}
-					if endpoint {
-						endpoints[id] = struct{}{}
-					}
+			case *ast.FuncDecl:
+				// 函数体内部包含锚点字面量时，把该函数记入对应集合。
+				// 无函数体的声明（如 //go:linkname 外部链接）直接跳过。
+				if decl.Body == nil {
+					break
+				}
+				id := functionSymbolID(file, decl)
+				scheme, endpoint := protocolLiterals(decl.Body)
+				if scheme {
+					schemes[id] = struct{}{}
+				}
+				if endpoint {
+					endpoints[id] = struct{}{}
+				}
 				case *ast.GenDecl:
 					kind := valueKind(decl.Tok)
 					if kind == "" {
@@ -97,7 +101,11 @@ func discoverProtocolAnchors(p *project.Project, _ *astindex.Index) protocolAnch
 
 // protocolLiterals 递归遍历 node，返回它是否包含 scheme 与 endpoint 两个字面量。
 // 用于判断一段表达式是否同时引用了 IM 协议的两个锚点。
+// node 为 nil 时返回 (false, false)，防御无函数体 FuncDecl 等边界情况。
 func protocolLiterals(node ast.Node) (bool, bool) {
+	if node == nil {
+		return false, false
+	}
 	var scheme bool
 	var endpoint bool
 	ast.Inspect(node, func(current ast.Node) bool {

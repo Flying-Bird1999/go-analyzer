@@ -86,7 +86,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	// 第 3 步：把每条 reference 关联到其 span 所在的 route（route-scoped）或 group
 	// （assigned-group），建立依赖 symbol -> 路由的映射。
 	for _, ref := range store.References {
-		if ref.ToSymbol == "" {
+		if ref.ToSymbol == "" || ref.FromSymbol == "" {
 			continue
 		}
 		// route-scoped：reference span 落在 route span 内，且引用的不是该 route 的

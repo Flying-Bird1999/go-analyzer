@@ -388,9 +388,6 @@ func relinkUnresolvedRoutesForDeletedHandler(idx *astindex.Index, store *facts.S
 		if !link.LinkRoute(idx, store, &store.Routes[i]) {
 			continue
 		}
-		if store.Routes[i].HandlerSymbol != handler {
-			continue
-		}
 	}
 }
 

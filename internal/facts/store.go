@@ -42,8 +42,8 @@ type DiagnosticFact struct {
 	Severity string `json:"severity"`
 	// Message 是人类可读的诊断说明。
 	Message string `json:"message"`
-	// Span 是诊断关联的源码位置区间，缺失时不输出。
-	Span SourceSpan `json:"span,omitempty"`
+	// Span 是诊断关联的源码位置区间，无具体位置时为 nil 不输出。
+	Span *SourceSpan `json:"span,omitempty"`
 	// RelatedFactIDs 列出与诊断相关的其他事实 ID，缺失时不输出。
 	RelatedFactIDs []string `json:"related_fact_ids,omitempty"`
 }

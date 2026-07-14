@@ -49,6 +49,8 @@ type treeContext struct {
 	symbols map[facts.SymbolID]facts.SymbolFact
 	// annotations 是按注解 ID 索引的注解事实，用于注解根展开。
 	annotations map[string]facts.AnnotationFact
+	// jobs 是按 job ID 索引的 job 注册事实，用于 job 注册变更根直接命中。
+	jobs map[string]facts.JobRegistrationFact
 }
 
 // AnalyzeTrees 是影响分析的主入口：为 Store 中每个 ChangeFact 独立展开一棵影响树，
@@ -109,12 +111,16 @@ func newTreeContext(store *facts.Store) *treeContext {
 		im:          graph.NewIMGraph(store),
 		symbols:     map[facts.SymbolID]facts.SymbolFact{},
 		annotations: map[string]facts.AnnotationFact{},
+		jobs:        map[string]facts.JobRegistrationFact{},
 	}
 	for _, symbol := range store.Symbols {
 		context.symbols[symbol.ID] = symbol
 	}
 	for _, annotation := range store.Annotations {
 		context.annotations[annotation.ID] = annotation
+	}
+	for _, job := range store.JobRegistrations {
+		context.jobs[job.ID] = job
 	}
 	return context
 }
@@ -131,7 +137,7 @@ func newTreeBuilder(context *treeContext, change facts.ChangeFact) *treeBuilder 
 
 // buildRoot 按领域优先级把 ChangeFact 映射成对应类型的根节点并展开。
 //
-// 优先级顺序：路由 > 路由组 > 中间件 > 注解 > 符号 > 文件降级。
+// 优先级顺序：路由 > 路由组 > 中间件 > 注解 > Job 注册 > 符号 > 文件降级。
 // 这样可以让领域根（如直接 diff 命中路由/注解）优先进入对应子图，
 // 避免落入纯符号传播导致 endpoint 漏报。
 func (b *treeBuilder) buildRoot() Node {
@@ -168,7 +174,21 @@ func (b *treeBuilder) buildRoot() Node {
 	if annotation, ok := b.annotations[b.change.TargetID]; ok {
 		return b.annotationRootNode(annotation)
 	}
-	// 5) 符号根：沿反向引用图递归展开。
+	// 5) Job 注册领域根：直接命中某条 job 注册语句。
+	if job, ok := b.jobs[b.change.TargetID]; ok {
+		return Node{
+			ID:         job.ID,
+			Kind:       "job",
+			Name:       job.Name,
+			File:       job.Span.File,
+			Relation:   "registered_job",
+			Span:       job.Span,
+			Confidence: b.change.Confidence,
+			Level:      0,
+			Children:   []Node{},
+		}
+	}
+	// 6) 符号根：沿反向引用图递归展开。
 	if b.change.SymbolID != "" {
 		root := b.symbolNode(b.change.SymbolID, 0)
 		root.Confidence = b.change.Confidence
@@ -177,7 +197,7 @@ func (b *treeBuilder) buildRoot() Node {
 		b.expandSymbol(&root, path)
 		return root
 	}
-	// 6) 文件降级根：无法映射到任何语义事实时保留为文件级根，无子节点。
+	// 7) 文件降级根：无法映射到任何语义事实时保留为文件级根，无子节点。
 	return Node{
 		ID:         b.change.File,
 		Kind:       "file",
@@ -213,7 +233,7 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 		child.Raw = ref.ToRaw
 		child.Span = ref.Span
 		child.File = b.symbolFile(ref.FromSymbol, child.File)
-		child.Confidence = ref.Confidence
+		child.Confidence = facts.CombineConfidence(node.Confidence, ref.Confidence)
 		if path[ref.FromSymbol] {
 			// 命中环路：标记后不再递归展开，避免无限循环。
 			child.Cycle = true
@@ -420,13 +440,13 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 // method 或 path 时，才使用已解析 route 补齐对应字段。route 节点仍保留完整解析路径，供
 // review 与辅助校验，不得覆盖完整 annotation。
 func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
-	method := annotation.Method
+	method := strings.ToUpper(annotation.Method)
 	path := annotation.Path
 	endpointRelation := "annotation_endpoint"
 	endpointSpan := annotation.Span
 	endpointConfidence := facts.ConfidenceHigh
 	if method == "" {
-		method = route.Method
+		method = strings.ToUpper(route.Method)
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
 		endpointConfidence = facts.ConfidenceMedium

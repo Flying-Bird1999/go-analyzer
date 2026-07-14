@@ -30,6 +30,36 @@ const (
 	ConfidenceLow Confidence = "low"
 )
 
+// CombineConfidence 返回沿传播链路合并后的置信度——取链路上最弱的一跳。
+// parent 为空时取 edge，edge 为空时取 parent，两者都为空时返回空串。
+// 这保证弱根（如 file_changed/low）经 high 边到达 endpoint 后，结论仍为 low，
+// 不会被最后一跳的高置信度静默升级。
+func CombineConfidence(parent, edge Confidence) Confidence {
+	rank := func(c Confidence) int {
+		switch c {
+		case ConfidenceLow:
+			return 1
+		case ConfidenceMedium:
+			return 2
+		case ConfidenceHigh:
+			return 3
+		default:
+			return 0
+		}
+	}
+	pr, er := rank(parent), rank(edge)
+	if pr == 0 {
+		return edge
+	}
+	if er == 0 {
+		return parent
+	}
+	if pr <= er {
+		return parent
+	}
+	return edge
+}
+
 // ReferenceFact 描述一条“FromSymbol 依赖 ToSymbol”的代码依赖边。
 // 边方向为 FromSymbol depends on ToSymbol，graph 阶段构造反向索引供 impact 传播使用。
 type ReferenceFact struct {

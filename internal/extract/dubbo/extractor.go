@@ -57,7 +57,12 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 						continue
 					}
 					mapper := mappers[typeKey(providerType.PackagePath, providerType.TypeName)]
-					for _, method := range config.methods {
+					// service-level config（无 Methods）：枚举 provider 类型的全部公开方法。
+					methods := config.methods
+					if len(methods) == 0 {
+						methods = enumeratePublicMethods(idx, providerType, mapper, config.span)
+					}
+					for _, method := range methods {
 						goMethod, ok := mapper[method.name]
 						if !ok {
 							goMethod, ok = uniqueGoMethod(idx, providerType, method.name)
@@ -115,7 +120,7 @@ func collectServiceConfigs(root string, file *project.File, fn *ast.FuncDecl) []
 				config.methods = methodNames(root, file, kv.Value)
 			}
 		}
-		if config.interfaceName != "" && len(config.methods) > 0 {
+		if config.interfaceName != "" {
 			out = append(out, config)
 		}
 		return false
@@ -274,6 +279,33 @@ func uniqueGoMethod(idx *astindex.Index, valueType astindex.ValueType, protocolM
 		match = symbol.Name
 	}
 	return match, match != ""
+}
+
+// enumeratePublicMethods returns all exported methods of the provider type as
+// methodConfig entries. Used when a ServiceConfig has no explicit Methods field
+// (service-level export, intended to expose all methods of the interface).
+func enumeratePublicMethods(idx *astindex.Index, providerType astindex.ValueType, mapper map[string]string, serviceSpan facts.SourceSpan) []methodConfig {
+	var out []methodConfig
+	for _, symbol := range idx.Symbols {
+		if symbol.Kind != "method" || symbol.PackagePath != providerType.PackagePath || symbol.Receiver != providerType.TypeName {
+			continue
+		}
+		if !ast.IsExported(symbol.Name) {
+			continue
+		}
+		// Determine protocol method name: check if mapper explicitly maps this Go method.
+		// If not, default to Go method name (Dubbo convention: same name).
+		protoName := symbol.Name
+		for proto, goMethod := range mapper {
+			if goMethod == symbol.Name {
+				protoName = proto
+				break
+			}
+		}
+		out = append(out, methodConfig{name: protoName, span: serviceSpan})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
 }
 
 func functionSymbol(file *project.File, fn *ast.FuncDecl) facts.SymbolID {

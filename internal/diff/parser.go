@@ -135,11 +135,9 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			current.Status = StatusAdded
 		case strings.HasPrefix(line, "deleted file mode"):
 			current.Status = StatusDeleted
-		case strings.HasPrefix(line, "--- "):
-			// `---`/`+++` 行比 `diff --git` 行更权威（支持 rename / quoted path），覆盖之。
-			current.OldPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "--- ")))
-		case strings.HasPrefix(line, "+++ "):
-			current.NewPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "+++ ")))
+		case strings.HasPrefix(line, "GIT binary patch"), strings.HasPrefix(line, "Binary files "):
+			// binary patch：关闭 hunk 解析，后续 base85 行不应被当作内容行。
+			hunkActive = false
 		case strings.HasPrefix(line, "@@ "):
 			// 新 hunk 开始：先关闭上一个 hunk 的删除块，再解析行号起点。
 			flushHunk()
@@ -150,7 +148,13 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			oldLine = oldStart
 			newLine = newStart
 			hunkActive = true
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ "):
+		case !hunkActive && strings.HasPrefix(line, "--- "):
+			// `---`/`+++` 行只在非 hunk 区识别为路径头，避免 hunk 内以 `-- ` 开头的
+			// 删除行（如 SQL 注释）被误当成路径头。
+			current.OldPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "--- ")))
+		case !hunkActive && strings.HasPrefix(line, "+++ "):
+			current.NewPath = normalizeDiffPath(strings.TrimSpace(strings.TrimPrefix(line, "+++ ")))
+		case hunkActive && strings.HasPrefix(line, "+"):
 			// 新增行：删除被新增替换，故只刷出删除块但不追加 anchor range。
 			flushDeletion(false)
 			if current.Status != StatusDeleted {
@@ -162,7 +166,7 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 				})
 			}
 			newLine++
-		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
+		case hunkActive && strings.HasPrefix(line, "-"):
 			// 删除行：进入或延续删除块累积，记下新版本锚点（紧随其后那行）。
 			if !deletionPending {
 				deletionPending = true
@@ -172,7 +176,7 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			}
 			deletedLines = append(deletedLines, strings.TrimPrefix(line, "-"))
 			oldLine++
-		case strings.HasPrefix(line, " "):
+		case hunkActive && strings.HasPrefix(line, " "):
 			// 上下文行：删除块到此结束，追加 anchor range 以便 mapper 命中 surviving 内容。
 			flushDeletion(true)
 			if current.Status != StatusDeleted {

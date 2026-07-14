@@ -31,8 +31,8 @@ type GrpcOperationFact struct {
 	Service        string              `json:"service"`
 	Method         string              `json:"method"`
 	StreamingMode  GrpcStreamingMode   `json:"streaming_mode"`
-	ClientBindings []GrpcClientBinding `json:"client_bindings"`
-	Evidence       []EvidenceFact      `json:"evidence"`
+	ClientBindings []GrpcClientBinding `json:"client_bindings,omitempty"`
+	Evidence       []EvidenceFact      `json:"evidence,omitempty"`
 }
 
 // GrpcCallFact 描述项目内一次已被精确证明的 generated client 调用。
@@ -42,7 +42,7 @@ type GrpcCallFact struct {
 	OperationID   string            `json:"operation_id"`
 	ClientBinding GrpcClientBinding `json:"client_binding"`
 	Span          SourceSpan        `json:"span"`
-	Evidence      []EvidenceFact    `json:"evidence"`
+	Evidence      []EvidenceFact    `json:"evidence,omitempty"`
 }
 
 // GrpcProviderFact describes one canonical operation exposed by a concrete

@@ -8,12 +8,16 @@ import "gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 // 转换时把强类型的 Code/Severity 降级为字符串，并对 RelatedFactIDs 做防御性拷贝，
 // 避免外部修改影响原始切片。
 func ToFact(d Diagnostic) facts.DiagnosticFact {
+	var span *facts.SourceSpan
+	if d.Span.File != "" || d.Span.StartLine != 0 {
+		span = &d.Span
+	}
 	return facts.DiagnosticFact{
 		ID:       d.ID,
 		Code:     string(d.Code),
 		Severity: string(d.Severity),
 		Message:  d.Message,
-		Span:     d.Span,
+		Span:     span,
 		// 拷贝 RelatedFactIDs，避免与传入诊断共享底层数组。
 		RelatedFactIDs: append([]string(nil), d.RelatedFactIDs...),
 	}
@@ -31,7 +35,7 @@ func AddFact(store *facts.Store, d Diagnostic) {
 			Code:           Code(existing.Code),
 			Severity:       Severity(existing.Severity),
 			Message:        existing.Message,
-			Span:           existing.Span,
+			Span:           derefSpan(existing.Span),
 			RelatedFactIDs: existing.RelatedFactIDs,
 		})
 	}
@@ -43,4 +47,12 @@ func AddFact(store *facts.Store, d Diagnostic) {
 	for _, item := range list {
 		store.Diagnostics = append(store.Diagnostics, ToFact(item))
 	}
+}
+
+// derefSpan 安全解引用 *SourceSpan，nil 时返回零值。
+func derefSpan(span *facts.SourceSpan) facts.SourceSpan {
+	if span != nil {
+		return *span
+	}
+	return facts.SourceSpan{}
 }

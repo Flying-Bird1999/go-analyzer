@@ -80,5 +80,11 @@ func strictAnalysisError(err error) error {
 	if errors.As(err, &serverAmbiguity) {
 		return &AnalysisError{Code: "grpc_server_binding_ambiguous", Err: err}
 	}
-	return &AnalysisError{Code: "grpc_catalog_failed", Err: err}
+	// 若 err 本身已是 AnalysisError，透传以保留原始 Code；
+	// 否则使用通用码而非 grpc_catalog_failed，避免误报 gRPC catalog 故障。
+	var existing *AnalysisError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &AnalysisError{Code: "analysis_failed", Err: err}
 }

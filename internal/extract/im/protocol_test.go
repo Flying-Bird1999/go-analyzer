@@ -76,6 +76,31 @@ func SendIM(event string, body any) {}
 	}
 }
 
+// TestDiscoverProtocolAnchorsBodylessFuncDecl 验证无函数体的 FuncDecl（如
+// //go:linkname 外部链接声明）不会导致 protocolLiterals panic。
+// 这是 P0-1 的回归测试：修复前 discoverProtocolAnchors 在 sc1-server 上直接 SIGSEGV。
+func TestDiscoverProtocolAnchorsBodylessFuncDecl(t *testing.T) {
+	// 无函数体声明 + 协议锚点字面量在同一文件中，确保不会 panic。
+	p, idx := loadProtocolProject(t, map[string]string{
+		"stub.go": `package stub
+
+import _ "unsafe"
+
+const Scheme = "broadcast://"
+const Endpoint = "/broadcast/send"
+
+//go:linkname ExternalFn example.com/external.ExternalFn
+func ExternalFn()
+`,
+	})
+	// 修复前：panic (SIGSEGV)；修复后：正常返回。
+	anchors := discoverProtocolAnchors(p, idx)
+	// bodyless func 不贡献锚点（无 body 可扫），但 const 贡献了锚点。
+	if len(anchors.SchemeSymbols) == 0 {
+		t.Fatalf("expected scheme anchor from const, got %#v", anchors)
+	}
+}
+
 // loadProtocolProject 构造一个临时协议测试项目，返回 project/index 二元组。
 func loadProtocolProject(t *testing.T, files map[string]string) (*project.Project, *astindex.Index) {
 	t.Helper()

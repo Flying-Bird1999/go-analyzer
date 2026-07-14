@@ -128,6 +128,9 @@ func (a *analyzer) indexGrpcContracts(store *facts.Store) {
 		if !ok {
 			continue
 		}
+		if !a.registrationIsLive(provider.RegistrationSymbol) {
+			continue
+		}
 		contract := Contract{
 			ID: operation.ID, Kind: ContractGrpcOperation, Identity: operation.FullMethod, IdentityResolution: IdentityStatic,
 			Relation: "exposed_grpc_operation", Registration: provider.Span, Confidence: provider.Confidence, GrpcOperation: operation,
@@ -214,11 +217,10 @@ func (a *analyzer) buildRoot(change facts.ChangeFact) (impact.Node, []ContractIm
 	a.expandSymbol(&root, map[facts.SymbolID]bool{change.SymbolID: true}, contracts)
 	return root, sortedContractImpacts(contracts)
 }
-
 func (a *analyzer) contractsForChange(change facts.ChangeFact) []Contract {
 	contracts := append([]Contract(nil), a.contractsByFactID[change.TargetID]...)
 	if change.Kind == facts.ChangeKindDubboServiceChanged {
-		contracts = append([]Contract(nil), a.dubboServices[a.dubboServiceByFactID[change.TargetID]]...)
+		contracts = append(contracts, a.dubboServices[a.dubboServiceByFactID[change.TargetID]]...)
 	}
 	var routes []facts.RouteRegistrationFact
 	switch change.Kind {
@@ -261,7 +263,7 @@ func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool,
 		child.Relation = referenceRelation(ref.Kind)
 		child.Raw = ref.ToRaw
 		child.Span = ref.Span
-		child.Confidence = ref.Confidence
+		child.Confidence = facts.CombineConfidence(node.Confidence, ref.Confidence)
 		if path[ref.FromSymbol] {
 			child.Cycle = true
 		} else {

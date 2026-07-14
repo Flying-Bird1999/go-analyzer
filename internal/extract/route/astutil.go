@@ -67,7 +67,6 @@ func joinPath(prefix, path string) string {
 	if out == "" {
 		return "/"
 	}
-	out = strings.ReplaceAll(out, "//", "/")
 	if len(out) > 1 {
 		out = strings.TrimRight(out, "/")
 	}

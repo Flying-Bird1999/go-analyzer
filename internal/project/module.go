@@ -22,8 +22,9 @@ func ReadModulePath(root string) (string, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			modulePath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			modulePath := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
 			if modulePath != "" {
 				return modulePath, nil
 			}
