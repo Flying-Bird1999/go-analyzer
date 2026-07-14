@@ -2,7 +2,7 @@
 
 本文是下一位 agent 熟悉 `go-analyzer` 的长期入口，描述稳定的架构边界、模块职责、分析规则和全源码审查要求。
 
-阅读顺序：先读本文，再读 [ARCHITECTURE.md](ARCHITECTURE.md)、[服务入口设计](docs/service-external-impact/design.md) 和 [输出契约](docs/contracts/output-contract.md)。
+阅读顺序：先读本文和 [ARCHITECTURE.md](ARCHITECTURE.md)，随后以源码、测试、CLI 实际行为和 JSON Schema 为准。`docs/` 下的文件不属于本轮 Review 范围，也不作为架构或输出结论的事实依据。
 
 ## 1. 项目定位与边界
 
@@ -99,7 +99,7 @@ HTTP、Dubbo、Job 还要求 registration liveness：注册函数有项目内引
 
 ### 6.1 BFF 输出
 
-`impact` 输出 endpoint、IM event、按 diff 文件组织的传播树，以及在输入 `--grpc` 时的 consumer/call-site 证据。`fileSources` 保留原始 diff、变更根与递归影响树；`summary` 是全局去重的正式结论。具体字段以 `docs/contracts/output-contract.md` 和 `schema --type impact` 为准。
+`impact` 输出 endpoint、IM event、按 diff 文件组织的传播树，以及在输入 `--grpc` 时的 consumer/call-site 证据。`fileSources` 保留原始 diff、变更根与递归影响树；`summary` 是全局去重的正式结论。字段定义以 `internal/output` 实现和 `schema --type impact` 为准。
 
 ### 6.2 服务入口输出
 
@@ -143,9 +143,9 @@ HTTP、Dubbo、Job 还要求 registration liveness：注册函数有项目内引
 | `internal/facts`、`internal/graph`、`internal/link` | fact identity、反向引用方向、去重、循环保护、route-handler 连接 |
 | `internal/impact`、`internal/serviceimpact` | changed root 可达性、终点过滤、liveness、confidence、terminal relation |
 | `internal/output` | 去重、排序、空数组、Schema、BFF/service-entry 输出隔离 |
-| `testdata`、`*_test.go`、`docs` | 正反例覆盖、CLI help/Schema/文档与实现的漂移 |
+| `testdata`、`*_test.go` | 正反例覆盖、CLI help/Schema 与实现的一致性 |
 
-真实验证至少覆盖 `sc1-server`、`sc2-server`。涉及 BFF 或 gRPC consumer 时，还应使用同级真实 BFF 项目。没有对应真实范式时，review 结论必须标为“未验证”，不能推断为已支持。
+真实验证至少覆盖 `sc1-server`、`sc2-server`。涉及 BFF 或 gRPC consumer 时，还应使用同级真实 BFF 项目。没有对应真实范式时，review 结论必须标为“未验证”，不能推断为已支持。`docs/` 下的文件不审查、不产生 findings，也不需要为其补齐漂移修复。
 
 ### 7.2 必须审查的维度
 
@@ -153,7 +153,7 @@ HTTP、Dubbo、Job 还要求 registration liveness：注册函数有项目内引
 2. **正确性与健壮性**：追踪每一种 change kind 到 terminal；重点检查同名符号、多注册、同函数多 provider、wrapper、闭包、方法值、跨包引用、nil/空集合、循环引用和文件级变更。
 3. **静态分析准确性**：每项影响结论必须可回溯到 AST、facts、调用链或注册证据；动态 route/version、反射、外部 SDK、无法唯一解析 receiver 均不得产出伪确定结论。
 4. **协议语义**：gRPC server 注册、HTTP route、Dubbo ServiceConfig/provider 顺序绑定、XXL-Job map 注册，以及方法级与 service 级配置的影响范围。
-5. **输出契约**：字段语义、协议分组、排序、空数组、source summary、Schema 与文档一致性；重点检查旧镜像字段不会复活。
+5. **输出契约**：字段语义、协议分组、排序、空数组、source summary、Schema 与 CLI 实际输出一致性；重点检查旧镜像字段不会复活。
 6. **失败语义与可观测性**：非法/未应用 diff、越界路径、解析失败、无结果与 diagnostics 是否稳定；JSON stdout 不得被日志、timing 或调试字段污染。
 7. **性能与可维护性**：重复 AST 扫描、图遍历复杂度、map 遍历不稳定、隐式全局状态、难以扩展的协议分支。只报告能定位到代码的风险。
 8. **测试有效性**：既审正例也审反例，包括多 provider、同 interface 多 method、service-level fan-out、动态 HTTP、未注册 handler、无引用注册函数、同名调用和真实多文件 diff。
