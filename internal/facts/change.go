@@ -17,6 +17,12 @@ const (
 	ChangeKindRouteDeleted ChangeKind = "route_deleted"
 	// ChangeKindMiddlewareChanged 表示某个 middleware 被改动，进入 RouteGraph 找其后注册的 route。
 	ChangeKindMiddlewareChanged ChangeKind = "middleware_changed"
+	// ChangeKindJobRegistrationChanged 表示静态任务注册语句被改动。
+	ChangeKindJobRegistrationChanged ChangeKind = "job_registration_changed"
+	// ChangeKindDubboProviderChanged 表示 Dubbo method provider 注册配置被改动。
+	ChangeKindDubboProviderChanged ChangeKind = "dubbo_provider_changed"
+	// ChangeKindDubboServiceChanged 表示 Dubbo interface/version 等 service 级注册配置被改动。
+	ChangeKindDubboServiceChanged ChangeKind = "dubbo_service_changed"
 	// ChangeKindAnnotationChanged 表示某个 annotation 被改动，直接落到 endpoint。
 	ChangeKindAnnotationChanged ChangeKind = "annotation_changed"
 	// ChangeKindFileChanged 是文件级 fallback root，无法映射到更精确语义 fact 时使用。

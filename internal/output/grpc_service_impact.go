@@ -7,29 +7,57 @@ import (
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/grpcimpact"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/serviceimpact"
 )
 
 // GrpcImpactDocument intentionally mirrors ImpactDocument: summary first,
 // source-local trees second, optional module sources, then a terminal-to-source
 // reverse summary.
 type GrpcImpactDocument struct {
-	Summary                     GrpcImpactSummary            `json:"summary"`
-	FileSources                 []GrpcFileSourceImpact       `json:"fileSources"`
-	ModuleSources               []GrpcModuleSourceImpact     `json:"moduleSources,omitempty"`
-	GrpcOperationSourcesSummary []GrpcOperationSourceSummary `json:"grpcOperationSourcesSummary"`
+	Summary             ServiceEntryImpactGroups        `json:"summary"`
+	FileSources         []GrpcFileSourceImpact          `json:"fileSources"`
+	ModuleSources       []GrpcModuleSourceImpact        `json:"moduleSources,omitempty"`
+	EntrySourcesSummary ServiceEntrySourceSummaryGroups `json:"entrySourcesSummary"`
 }
 
-type GrpcImpactSummary struct {
-	ImpactedGrpcOperationCount int                    `json:"impactedGrpcOperationCount"`
-	ImpactedGrpcOperations     []GrpcOperationSummary `json:"impactedGrpcOperations"`
+// ServiceEntryImpactGroups is the sole protocol grouping used by the service
+// impact JSON. Every field is always emitted as an array, including when empty.
+type ServiceEntryImpactGroups struct {
+	Grpc  []ServiceContractSummary `json:"grpc"`
+	Dubbo []ServiceContractSummary `json:"dubbo"`
+	HTTP  []ServiceContractSummary `json:"http"`
+	Job   []ServiceContractSummary `json:"job"`
 }
 
 type GrpcFileSourceImpact struct {
-	SourceFile             string                 `json:"sourceFile"`
-	Diff                   string                 `json:"diff,omitempty"`
-	Symbols                map[string]ImpactNode  `json:"symbols"`
-	ImpactedGrpcOperations []GrpcOperationSummary `json:"impactedGrpcOperations"`
+	SourceFile string                   `json:"sourceFile"`
+	Diff       string                   `json:"diff,omitempty"`
+	Symbols    map[string]ImpactNode    `json:"symbols"`
+	Impacts    ServiceEntryImpactGroups `json:"impacts"`
+}
+
+type ServiceContractSummary struct {
+	ID                 string                           `json:"id"`
+	Kind               serviceimpact.ContractKind       `json:"kind"`
+	Identity           string                           `json:"identity"`
+	IdentityResolution serviceimpact.IdentityResolution `json:"identityResolution"`
+	FullMethod         string                           `json:"fullMethod,omitempty"`
+	Method             string                           `json:"method,omitempty"`
+	Path               string                           `json:"path,omitempty"`
+	LocalPath          string                           `json:"localPath,omitempty"`
+	PathExpression     string                           `json:"pathExpression,omitempty"`
+	JobName            string                           `json:"jobName,omitempty"`
+	DubboInterface     string                           `json:"dubboInterface,omitempty"`
+	DubboVersion       string                           `json:"dubboVersion,omitempty"`
+	DubboVersionExpr   string                           `json:"dubboVersionExpression,omitempty"`
+	DubboMethod        string                           `json:"dubboMethod,omitempty"`
+	Registration       ContractRegistrationSummary      `json:"registration"`
+}
+
+type ContractRegistrationSummary struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
 }
 
 type GrpcModuleSourceImpact struct {
@@ -43,12 +71,21 @@ type GrpcModuleSourceImpact struct {
 	SourceFiles       []GrpcFileSourceImpact `json:"sourceFiles,omitempty"`
 }
 
-type GrpcOperationSourceSummary struct {
-	Grpc    GrpcOperationSummary        `json:"grpc"`
-	Sources []GrpcOperationImpactSource `json:"sources"`
+type ContractSourceSummary struct {
+	Contract ServiceContractSummary     `json:"contract"`
+	Sources  []ServiceEntryImpactSource `json:"sources"`
 }
 
-type GrpcOperationImpactSource struct {
+// ServiceEntrySourceSummaryGroups is the reverse entry-to-source projection,
+// grouped by the same protocol keys as summary and file source impacts.
+type ServiceEntrySourceSummaryGroups struct {
+	Grpc  []ContractSourceSummary `json:"grpc"`
+	Dubbo []ContractSourceSummary `json:"dubbo"`
+	HTTP  []ContractSourceSummary `json:"http"`
+	Job   []ContractSourceSummary `json:"job"`
+}
+
+type ServiceEntryImpactSource struct {
 	SourceType    string                      `json:"sourceType"`
 	SourceFile    string                      `json:"sourceFile,omitempty"`
 	ModulePath    string                      `json:"modulePath,omitempty"`
@@ -67,8 +104,8 @@ type GrpcImpactDocumentOptions struct {
 }
 
 type grpcFileSourceBuilder struct {
-	source     GrpcFileSourceImpact
-	operations map[string]GrpcOperationSummary
+	source    GrpcFileSourceImpact
+	contracts map[string]ServiceContractSummary
 }
 
 type grpcModuleSourceBuilder struct {
@@ -76,13 +113,13 @@ type grpcModuleSourceBuilder struct {
 	files  map[string]*grpcFileSourceBuilder
 }
 
-// BuildGrpcImpactDocument projects gRPC impact trees into a deterministic
-// BFF-impact-compatible document shape.
-func BuildGrpcImpactDocument(fileChanges []diff.FileChange, result grpcimpact.TreeResult, opts GrpcImpactDocumentOptions) GrpcImpactDocument {
+// BuildGrpcImpactDocument projects service entry impact trees into a
+// deterministic BFF-impact-compatible document shape.
+func BuildGrpcImpactDocument(fileChanges []diff.FileChange, result serviceimpact.TreeResult, opts GrpcImpactDocumentOptions) GrpcImpactDocument {
 	files := map[string]*grpcFileSourceBuilder{}
 	modules := buildGrpcModuleBuilders(opts.ModuleChanges)
 	usages := indexModuleUsages(opts.ModuleUsages)
-	global := map[string]GrpcOperationSummary{}
+	globalContracts := map[string]ServiceContractSummary{}
 
 	for _, change := range fileChanges {
 		file := changedFile(change)
@@ -106,20 +143,19 @@ func BuildGrpcImpactDocument(fileChanges []diff.FileChange, result grpcimpact.Tr
 			node = mergeImpactNodes(existing, node)
 		}
 		builder.source.Symbols[key] = node
-		for _, item := range root.Operations {
-			summary := grpcOperationSummary(item.Operation)
-			builder.operations[summary.FullMethod] = summary
-			global[summary.FullMethod] = summary
+		for _, item := range root.Contracts {
+			contract := serviceContractSummary(item.Contract)
+			builder.contracts[contract.ID] = contract
+			globalContracts[contract.ID] = contract
 		}
 	}
 
 	doc := GrpcImpactDocument{
-		Summary:                     buildGrpcImpactSummary(global),
-		FileSources:                 finalizeGrpcFileSources(files),
-		ModuleSources:               finalizeGrpcModuleSources(modules),
-		GrpcOperationSourcesSummary: []GrpcOperationSourceSummary{},
+		Summary:       buildServiceEntryImpactGroups(globalContracts),
+		FileSources:   finalizeGrpcFileSources(files),
+		ModuleSources: finalizeGrpcModuleSources(modules),
 	}
-	doc.GrpcOperationSourcesSummary = buildGrpcOperationSourcesSummary(doc)
+	doc.EntrySourcesSummary = buildEntrySourcesSummary(doc)
 	return normalizeGrpcImpactDocument(doc)
 }
 
@@ -132,8 +168,28 @@ func RenderGrpcImpactJSON(doc GrpcImpactDocument) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-func grpcOperationSummary(operation facts.GrpcOperationFact) GrpcOperationSummary {
-	return GrpcOperationSummary{FullMethod: operation.FullMethod, ProtoPackage: operation.ProtoPackage, Service: operation.Service, Method: operation.Method}
+func serviceContractSummary(contract serviceimpact.Contract) ServiceContractSummary {
+	registration := ContractRegistrationSummary{File: contract.Registration.File, Line: contract.Registration.StartLine, Column: contract.Registration.StartCol}
+	out := ServiceContractSummary{
+		ID: contract.ID, Kind: contract.Kind, Identity: contract.Identity, IdentityResolution: contract.IdentityResolution, Registration: registration,
+	}
+	switch contract.Kind {
+	case serviceimpact.ContractGrpcOperation:
+		out.FullMethod = contract.GrpcOperation.FullMethod
+	case serviceimpact.ContractHTTPEndpoint:
+		out.Method = contract.Route.Method
+		out.Path = contract.Route.ResolvedPath
+		out.LocalPath = contract.Route.LocalPath
+		out.PathExpression = contract.Route.PathRaw
+	case serviceimpact.ContractDubboMethod:
+		out.DubboInterface = contract.Dubbo.Interface
+		out.DubboVersion = contract.Dubbo.Version
+		out.DubboVersionExpr = contract.Dubbo.VersionExpression
+		out.DubboMethod = contract.Dubbo.Method
+	case serviceimpact.ContractJob:
+		out.JobName = contract.Job.Name
+	}
+	return out
 }
 
 func ensureGrpcFileSource(files map[string]*grpcFileSourceBuilder, file string) *grpcFileSourceBuilder {
@@ -142,14 +198,14 @@ func ensureGrpcFileSource(files map[string]*grpcFileSourceBuilder, file string) 
 		return existing
 	}
 	builder := &grpcFileSourceBuilder{
-		source:     GrpcFileSourceImpact{SourceFile: file, Symbols: map[string]ImpactNode{}, ImpactedGrpcOperations: []GrpcOperationSummary{}},
-		operations: map[string]GrpcOperationSummary{},
+		source:    GrpcFileSourceImpact{SourceFile: file, Symbols: map[string]ImpactNode{}, Impacts: newServiceEntryImpactGroups()},
+		contracts: map[string]ServiceContractSummary{},
 	}
 	files[file] = builder
 	return builder
 }
 
-func grpcSourceBuilderForRoot(files map[string]*grpcFileSourceBuilder, modules map[string]*grpcModuleSourceBuilder, usages map[string]facts.ModuleUsageFact, root grpcimpact.RootImpact) *grpcFileSourceBuilder {
+func grpcSourceBuilderForRoot(files map[string]*grpcFileSourceBuilder, modules map[string]*grpcModuleSourceBuilder, usages map[string]facts.ModuleUsageFact, root serviceimpact.RootImpact) *grpcFileSourceBuilder {
 	if root.Change.Source == "go_mod_diff" {
 		if usage, ok := usages[root.Change.SourceFactID]; ok {
 			if module := modules[usage.ModulePath]; module != nil {
@@ -167,10 +223,10 @@ func finalizeGrpcFileSources(files map[string]*grpcFileSourceBuilder) []GrpcFile
 		for key, node := range builder.source.Symbols {
 			builder.source.Symbols[key] = normalizeImpactNode(node)
 		}
-		for _, operation := range builder.operations {
-			builder.source.ImpactedGrpcOperations = append(builder.source.ImpactedGrpcOperations, operation)
+		for _, contract := range builder.contracts {
+			builder.source.Impacts.add(contract)
 		}
-		sortGrpcOperationSummaries(builder.source.ImpactedGrpcOperations)
+		builder.source.Impacts.sort()
 		out = append(out, builder.source)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SourceFile < out[j].SourceFile })
@@ -203,37 +259,70 @@ func finalizeGrpcModuleSources(modules map[string]*grpcModuleSourceBuilder) []Gr
 	return out
 }
 
-func buildGrpcImpactSummary(operations map[string]GrpcOperationSummary) GrpcImpactSummary {
-	out := GrpcImpactSummary{ImpactedGrpcOperations: make([]GrpcOperationSummary, 0, len(operations))}
-	for _, operation := range operations {
-		out.ImpactedGrpcOperations = append(out.ImpactedGrpcOperations, operation)
+func buildServiceEntryImpactGroups(contracts map[string]ServiceContractSummary) ServiceEntryImpactGroups {
+	out := newServiceEntryImpactGroups()
+	for _, contract := range contracts {
+		out.add(contract)
 	}
-	sortGrpcOperationSummaries(out.ImpactedGrpcOperations)
-	out.ImpactedGrpcOperationCount = len(out.ImpactedGrpcOperations)
+	out.sort()
 	return out
 }
 
-func sortGrpcOperationSummaries(items []GrpcOperationSummary) {
-	sort.Slice(items, func(i, j int) bool { return items[i].FullMethod < items[j].FullMethod })
+func sortServiceContractSummaries(items []ServiceContractSummary) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Kind != items[j].Kind {
+			return items[i].Kind < items[j].Kind
+		}
+		if items[i].Identity != items[j].Identity {
+			return items[i].Identity < items[j].Identity
+		}
+		return items[i].ID < items[j].ID
+	})
 }
 
-func buildGrpcOperationSourcesSummary(doc GrpcImpactDocument) []GrpcOperationSourceSummary {
+func newServiceEntryImpactGroups() ServiceEntryImpactGroups {
+	return ServiceEntryImpactGroups{
+		Grpc: []ServiceContractSummary{}, Dubbo: []ServiceContractSummary{}, HTTP: []ServiceContractSummary{}, Job: []ServiceContractSummary{},
+	}
+}
+
+func (groups *ServiceEntryImpactGroups) add(contract ServiceContractSummary) {
+	switch contract.Kind {
+	case serviceimpact.ContractGrpcOperation:
+		groups.Grpc = append(groups.Grpc, contract)
+	case serviceimpact.ContractDubboMethod:
+		groups.Dubbo = append(groups.Dubbo, contract)
+	case serviceimpact.ContractHTTPEndpoint:
+		groups.HTTP = append(groups.HTTP, contract)
+	case serviceimpact.ContractJob:
+		groups.Job = append(groups.Job, contract)
+	}
+}
+
+func (groups *ServiceEntryImpactGroups) sort() {
+	sortServiceContractSummaries(groups.Grpc)
+	sortServiceContractSummaries(groups.Dubbo)
+	sortServiceContractSummaries(groups.HTTP)
+	sortServiceContractSummaries(groups.Job)
+}
+
+func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryGroups {
 	type builder struct {
-		grpc    GrpcOperationSummary
-		sources []GrpcOperationImpactSource
+		contract ServiceContractSummary
+		sources  []ServiceEntryImpactSource
 	}
 	builders := map[string]*builder{}
-	addFile := func(file GrpcFileSourceImpact, metadata GrpcOperationImpactSource) {
-		for _, operation := range file.ImpactedGrpcOperations {
-			current := builders[operation.FullMethod]
+	addFile := func(file GrpcFileSourceImpact, metadata ServiceEntryImpactSource) {
+		for _, contract := range file.Impacts.all() {
+			current := builders[contract.ID]
 			if current == nil {
-				current = &builder{grpc: operation}
-				builders[operation.FullMethod] = current
+				current = &builder{contract: contract}
+				builders[contract.ID] = current
 			}
 			source := metadata
 			for _, key := range sortedImpactNodeKeys(file.Symbols) {
 				root := file.Symbols[key]
-				path, ok := shortestGrpcOperationPath(root, operation.FullMethod)
+				path, ok := shortestContractPath(root, contract.ID)
 				if !ok {
 					continue
 				}
@@ -254,14 +343,14 @@ func buildGrpcOperationSourcesSummary(doc GrpcImpactDocument) []GrpcOperationSou
 		}
 	}
 	for _, file := range doc.FileSources {
-		addFile(file, GrpcOperationImpactSource{SourceType: "file", SourceFile: file.SourceFile})
+		addFile(file, ServiceEntryImpactSource{SourceType: "file", SourceFile: file.SourceFile})
 	}
 	for _, module := range doc.ModuleSources {
 		for _, file := range module.SourceFiles {
-			addFile(file, GrpcOperationImpactSource{SourceType: "module", SourceFile: file.SourceFile, ModulePath: module.ModulePath, ChangeType: module.ChangeType, VersionBefore: module.VersionBefore, VersionAfter: module.VersionAfter})
+			addFile(file, ServiceEntryImpactSource{SourceType: "module", SourceFile: file.SourceFile, ModulePath: module.ModulePath, ChangeType: module.ChangeType, VersionBefore: module.VersionBefore, VersionAfter: module.VersionAfter})
 		}
 	}
-	out := make([]GrpcOperationSourceSummary, 0, len(builders))
+	groups := newServiceEntrySourceSummaryGroups()
 	for _, current := range builders {
 		sort.Slice(current.sources, func(i, j int) bool {
 			if current.sources[i].SourceType != current.sources[j].SourceType {
@@ -272,19 +361,19 @@ func buildGrpcOperationSourcesSummary(doc GrpcImpactDocument) []GrpcOperationSou
 			}
 			return current.sources[i].SourceFile < current.sources[j].SourceFile
 		})
-		out = append(out, GrpcOperationSourceSummary{Grpc: current.grpc, Sources: current.sources})
+		groups.add(ContractSourceSummary{Contract: current.contract, Sources: current.sources})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Grpc.FullMethod < out[j].Grpc.FullMethod })
-	return out
+	groups.sort()
+	return groups
 }
 
-func shortestGrpcOperationPath(root ImpactNode, fullMethod string) ([]ImpactNode, bool) {
-	if root.Kind == "grpc_operation" && root.FullMethod == fullMethod {
+func shortestContractPath(root ImpactNode, contractID string) ([]ImpactNode, bool) {
+	if root.ID == contractID {
 		return []ImpactNode{root}, true
 	}
 	var best []ImpactNode
 	for _, child := range root.Children {
-		path, ok := shortestGrpcOperationPath(child, fullMethod)
+		path, ok := shortestContractPath(child, contractID)
 		if !ok {
 			continue
 		}
@@ -305,23 +394,88 @@ func sortedImpactNodeKeys(nodes map[string]ImpactNode) []string {
 	return keys
 }
 
-func normalizeGrpcImpactDocument(doc GrpcImpactDocument) GrpcImpactDocument {
-	if doc.Summary.ImpactedGrpcOperations == nil {
-		doc.Summary.ImpactedGrpcOperations = []GrpcOperationSummary{}
+func (groups ServiceEntryImpactGroups) all() []ServiceContractSummary {
+	out := make([]ServiceContractSummary, 0, len(groups.Grpc)+len(groups.Dubbo)+len(groups.HTTP)+len(groups.Job))
+	out = append(out, groups.Grpc...)
+	out = append(out, groups.Dubbo...)
+	out = append(out, groups.HTTP...)
+	out = append(out, groups.Job...)
+	return out
+}
+
+func newServiceEntrySourceSummaryGroups() ServiceEntrySourceSummaryGroups {
+	return ServiceEntrySourceSummaryGroups{
+		Grpc: []ContractSourceSummary{}, Dubbo: []ContractSourceSummary{}, HTTP: []ContractSourceSummary{}, Job: []ContractSourceSummary{},
 	}
+}
+
+func (groups *ServiceEntrySourceSummaryGroups) add(summary ContractSourceSummary) {
+	switch summary.Contract.Kind {
+	case serviceimpact.ContractGrpcOperation:
+		groups.Grpc = append(groups.Grpc, summary)
+	case serviceimpact.ContractDubboMethod:
+		groups.Dubbo = append(groups.Dubbo, summary)
+	case serviceimpact.ContractHTTPEndpoint:
+		groups.HTTP = append(groups.HTTP, summary)
+	case serviceimpact.ContractJob:
+		groups.Job = append(groups.Job, summary)
+	}
+}
+
+func (groups *ServiceEntrySourceSummaryGroups) sort() {
+	for _, items := range []*[]ContractSourceSummary{&groups.Grpc, &groups.Dubbo, &groups.HTTP, &groups.Job} {
+		sort.Slice(*items, func(i, j int) bool {
+			if (*items)[i].Contract.Identity != (*items)[j].Contract.Identity {
+				return (*items)[i].Contract.Identity < (*items)[j].Contract.Identity
+			}
+			return (*items)[i].Contract.ID < (*items)[j].Contract.ID
+		})
+	}
+}
+
+func normalizeGrpcImpactDocument(doc GrpcImpactDocument) GrpcImpactDocument {
+	doc.Summary = normalizeServiceEntryImpactGroups(doc.Summary)
 	if doc.FileSources == nil {
 		doc.FileSources = []GrpcFileSourceImpact{}
 	}
-	if doc.GrpcOperationSourcesSummary == nil {
-		doc.GrpcOperationSourcesSummary = []GrpcOperationSourceSummary{}
-	}
+	doc.EntrySourcesSummary = normalizeServiceEntrySourceSummaryGroups(doc.EntrySourcesSummary)
 	for i := range doc.FileSources {
 		if doc.FileSources[i].Symbols == nil {
 			doc.FileSources[i].Symbols = map[string]ImpactNode{}
 		}
-		if doc.FileSources[i].ImpactedGrpcOperations == nil {
-			doc.FileSources[i].ImpactedGrpcOperations = []GrpcOperationSummary{}
-		}
+		doc.FileSources[i].Impacts = normalizeServiceEntryImpactGroups(doc.FileSources[i].Impacts)
 	}
 	return doc
+}
+
+func normalizeServiceEntryImpactGroups(groups ServiceEntryImpactGroups) ServiceEntryImpactGroups {
+	if groups.Grpc == nil {
+		groups.Grpc = []ServiceContractSummary{}
+	}
+	if groups.Dubbo == nil {
+		groups.Dubbo = []ServiceContractSummary{}
+	}
+	if groups.HTTP == nil {
+		groups.HTTP = []ServiceContractSummary{}
+	}
+	if groups.Job == nil {
+		groups.Job = []ServiceContractSummary{}
+	}
+	return groups
+}
+
+func normalizeServiceEntrySourceSummaryGroups(groups ServiceEntrySourceSummaryGroups) ServiceEntrySourceSummaryGroups {
+	if groups.Grpc == nil {
+		groups.Grpc = []ContractSourceSummary{}
+	}
+	if groups.Dubbo == nil {
+		groups.Dubbo = []ContractSourceSummary{}
+	}
+	if groups.HTTP == nil {
+		groups.HTTP = []ContractSourceSummary{}
+	}
+	if groups.Job == nil {
+		groups.Job = []ContractSourceSummary{}
+	}
+	return groups
 }

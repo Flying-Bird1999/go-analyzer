@@ -105,40 +105,43 @@ Top-level shape:
   last in the rendered JSON. It is always present and is an empty array when no
   endpoint is impacted.
 
-## gRPC Service Impact Output
+## Service Entry Impact Output
 
-`grpc-impact` uses a separate contract for gRPC Provider projects while retaining the BFF impact source-tree structure:
+`grpc-impact` uses a separate contract for Go service projects while retaining the BFF impact source-tree structure. The command name is preserved for compatibility.
 
 ```json
 {
   "summary": {
-    "impactedGrpcOperationCount": 1,
-    "impactedGrpcOperations": [
+    "grpc": [
       {
+		"kind": "grpc_operation",
         "fullMethod": "/package.Service/Method",
-        "protoPackage": "package",
-        "service": "Service",
-        "method": "Method"
+        "identity": "/package.Service/Method",
+        "identityResolution": "static"
       }
-    ]
+    ],
+    "dubbo": [],
+    "http": [],
+    "job": []
   },
   "fileSources": [
     {
       "sourceFile": "provider/service.go",
       "diff": "...",
       "symbols": {},
-      "impactedGrpcOperations": []
+	  "impacts": {"grpc": [], "dubbo": [], "http": [], "job": []}
     }
   ],
-  "grpcOperationSourcesSummary": []
+  "entrySourcesSummary": {"grpc": [], "dubbo": [], "http": [], "job": []}
 }
 ```
 
-- `summary` is the deduplicated formal result.
+- `summary` is the deduplicated formal result, grouped by `grpc`, `dubbo`, `http`, and `job`.
 - `fileSources` retains the applied diff and recursive `ImpactNode` evidence.
+- `fileSources[].impacts` uses the same four protocol keys.
 - `moduleSources` is emitted only for semantic go.mod changes.
-- `grpcOperationSourcesSummary` is the operation-to-file/module reverse view.
-- gRPC terminal nodes use `kind=grpc_operation`, `relation=exposed_grpc_operation`, and canonical `fullMethod`.
+- `entrySourcesSummary` is the protocol-grouped contract-to-file/module reverse view.
+- Terminal relations are `exposed_grpc_operation`, `exposed_http_endpoint`, `exposed_dubbo_method`, and `registered_job`.
 
 ### `fileSources`
 

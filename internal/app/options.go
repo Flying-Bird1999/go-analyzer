@@ -30,7 +30,7 @@ type ImpactOptions struct {
 	BuildContext project.BuildContextOptions
 }
 
-// GrpcImpactOptions configures impact analysis for one gRPC provider project.
+// GrpcImpactOptions configures service entry impact analysis for one Go service project.
 type GrpcImpactOptions struct {
 	ProjectPath      string
 	DiffPath         string

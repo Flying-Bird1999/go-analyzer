@@ -2,6 +2,7 @@
 package link
 
 import (
+	"go/ast"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
@@ -62,7 +63,34 @@ func ResolveHandlerSymbolWithConfidence(idx *astindex.Index, route facts.RouteRe
 	}
 	if len(parts) >= 3 {
 		// 三段及以上：一定是 pkg.Var.Field...Method 形式，统一交给 astindex 走值类型链解析，置信度由其内部推断。
-		return idx.ResolveSelectorMethodWithConfidence(file, parts)
+		if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts); ok {
+			return resolved, true
+		}
+		if receiver, ok := routeFunctionReceiverType(idx, route, parts[0]); ok {
+			return idx.ResolveValueTypeMethod(receiver, parts[1:])
+		}
 	}
 	return astindex.ResolvedSymbol{}, false
+}
+
+func routeFunctionReceiverType(idx *astindex.Index, route facts.RouteRegistrationFact, receiverName string) (astindex.ValueType, bool) {
+	symbol, ok := idx.Symbols[route.RouteFunc]
+	if !ok || symbol.Receiver == "" {
+		return astindex.ValueType{}, false
+	}
+	file := fileByRelativePath(idx.Project, route.File)
+	if file == nil {
+		return astindex.ValueType{}, false
+	}
+	for _, decl := range file.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != symbol.Name || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 {
+			continue
+		}
+		if fn.Recv.List[0].Names[0].Name != receiverName {
+			return astindex.ValueType{}, false
+		}
+		return astindex.ValueType{PackagePath: symbol.PackagePath, TypeName: symbol.Receiver, Confidence: facts.ConfidenceHigh}, true
+	}
+	return astindex.ValueType{}, false
 }

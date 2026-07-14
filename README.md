@@ -1,6 +1,6 @@
 # go-analyzer
 
-`go-analyzer` 是面向单个 Go 服务项目的影响范围分析工具。当前支持 BFF 项目的 HTTP/IM 影响分析，以及 gRPC Provider 项目的 canonical operation 影响分析。
+`go-analyzer` 是面向单个 Go 服务项目的影响范围分析工具。当前支持 BFF 的 HTTP/IM 与 gRPC 依赖分析，以及后端服务的 gRPC/HTTP/Dubbo/XXL-Job 入站契约影响分析。
 
 当前已经完成基于变更后项目的符号级影响分析闭环，并输出按 diff 来源组织的原始传播树、接口摘要和 IM event 摘要。
 
@@ -139,7 +139,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 | 命令 / 参数 | 用途 | 面向 |
 | --- | --- | --- |
 | `impact` | 从已应用 diff 和/或上游 gRPC operation 分析受影响 HTTP 接口 / IM event | 接入 |
-| `grpc-impact` | 从已应用 diff 分析当前 gRPC 服务项目受影响的 canonical operations | 接入 |
+| `grpc-impact` | 从已应用 diff 分析后端服务受影响的 gRPC/HTTP/Dubbo/XXL-Job 入口 | 接入 |
 | `endpoint-assets` | 查询一个或多个精确 endpoint 的 gRPC 依赖 | 接入 |
 | `facts` | 输出项目 facts JSON，用于调试抽取结果与 diagnostics | 调试 |
 | `schema` | 输出 facts / impact JSON Schema，校验稳定输出契约 | 调试 |
@@ -155,11 +155,11 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 - `impact` JSON **不含** diagnostics（设计如此，保证接入输出稳定）。
 - 用 `facts` 查看项目级诊断，例如非变更文件解析失败产生的 `package_load_failed`。
 - 用 `--timings` 查看各 stage 耗时（写到 stderr，不污染 stdout 的 JSON）。
-- 用 `schema --type facts|impact` 校验或对齐输出契约。
+- 用 `schema --type facts|impact|grpc-impact` 校验或对齐输出契约。
 
 `endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`impact` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`，可与 `--diff` 组合。gRPC 关系仅在 generated client、静态 receiver 类型和项目内可执行调用链共同证明时输出；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。
 
-`grpc-impact` 使用 generated `ServiceDesc`、实际 `RegisterXxxServer` 调用和具体 provider method 建立服务端 operation 终点。命令只分析当前 gRPC 项目，不查询 BFF；详细边界见 [gRPC service impact design](docs/grpc-service-impact/design.md)。
+`grpc-impact` 在单个后端服务项目内输出已注册 gRPC、HTTP、Dubbo 和 XXL-Job 入口；命令不查询 BFF，Pulsar/IM 为后续待办。详细边界见 [service external impact design](docs/service-external-impact/design.md)。
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 提供 `--diff` 时，`impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。`--diff` 与 `--grpc` 至少提供一个。

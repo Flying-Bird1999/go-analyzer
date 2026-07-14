@@ -31,6 +31,10 @@ type Document struct {
 	GrpcCalls []facts.GrpcCallFact `json:"grpc_calls"`
 	// GrpcProviders are project-local gRPC server registration bindings.
 	GrpcProviders []facts.GrpcProviderFact `json:"grpc_providers"`
+	// DubboProviders are exported Dubbo interface methods bound to concrete handlers.
+	DubboProviders []facts.DubboProviderFact `json:"dubbo_providers"`
+	// JobRegistrations are statically named XXL-Job handler bindings.
+	JobRegistrations []facts.JobRegistrationFact `json:"job_registrations"`
 	// Links 是 route-handler / handler-annotation / middleware symbol 关联。
 	Links []facts.LinkFact `json:"links"`
 	// Diagnostics 是可恢复的不确定性诊断。

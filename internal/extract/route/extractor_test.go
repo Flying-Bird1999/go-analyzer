@@ -207,6 +207,37 @@ func TestExtractDynamicRoutePathKeepsRawExpression(t *testing.T) {
 	assertDiagnosticCode(t, store, "route_dynamic_path")
 }
 
+func TestExtractDynamicGroupPrefixDoesNotInventResolvedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/dynamic-group\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type RouterGroup struct{}
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) GET(path string, handler any) {}
+func Handle() {}
+func Register(root *RouterGroup, configuredPrefix string) {
+	group := root.Group(configuredPrefix)
+	group.GET("/health", Handle)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := extractFixture(t, root)
+	if len(store.Routes) != 1 {
+		t.Fatalf("routes = %#v", store.Routes)
+	}
+	route := store.Routes[0]
+	if route.ResolvedPath != "" {
+		t.Fatalf("resolved path = %q", route.ResolvedPath)
+	}
+	if route.PathRaw != `configuredPrefix + "/health"` {
+		t.Fatalf("path raw = %q", route.PathRaw)
+	}
+}
+
 // TestExtractUnresolvedHandlerEmitsDiagnostic 验证 handler 表达式无法精确解析时发出对应诊断。
 func TestExtractUnresolvedHandlerEmitsDiagnostic(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "unresolved-handler")

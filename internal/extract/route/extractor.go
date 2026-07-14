@@ -327,16 +327,17 @@ func collectStmt(
 				continue
 			}
 			// 右侧是路由组调用（Group/工厂/包装器）：登记新组并记录其组调用中间件。
-			if parent, prefix, ok := groupCall(file, funcs, stringConsts, groups, s.Rhs[i]); ok {
+			if parent, prefix, prefixRaw, ok := groupCall(file, funcs, stringConsts, groups, s.Rhs[i]); ok {
 				statementIndex := cursor.Next()
 				groupID := routeGroupID(routeFunc, name.Name, statementIndex)
-				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix, rootVar: parent.rootVar}
+				groups[name.Name] = groupContext{id: groupID, varName: name.Name, prefix: prefix, prefixRaw: prefixRaw, rootVar: parent.rootVar}
 				store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
 					ID:             groupID,
 					GroupVar:       name.Name,
 					ParentGroupID:  parent.id,
 					ParentGroupVar: parent.varName,
 					Prefix:         prefix,
+					PrefixRaw:      prefixRaw,
 					RouteFunc:      routeFunc,
 					StatementIndex: statementIndex,
 					Span:           spanFor(p, file, s.Pos(), s.End()),
@@ -802,61 +803,85 @@ func groupCall(
 	stringConsts map[string]map[string]string,
 	groups map[string]groupContext,
 	expr ast.Expr,
-) (parent groupContext, prefix string, ok bool) {
+) (parent groupContext, prefix, prefixRaw string, ok bool) {
 	if ident, ok := expr.(*ast.Ident); ok {
 		parent, ok := groups[ident.Name]
 		if !ok {
-			return groupContext{}, "", false
+			return groupContext{}, "", "", false
 		}
-		return parent, parent.prefix, true
+		return parent, parent.prefix, parent.prefixRaw, true
 	}
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {
-		return groupContext{}, "", false
+		return groupContext{}, "", "", false
 	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if ok && selector.Sel.Name == "Group" {
 		parentIdent, ok := selector.X.(*ast.Ident)
 		if !ok {
-			return groupContext{}, "", false
+			return groupContext{}, "", "", false
 		}
 		parent, ok = groups[parentIdent.Name]
 		if !ok {
-			return groupContext{}, "", false
+			return groupContext{}, "", "", false
 		}
-		local, ok := routeStringArg(file, stringConsts, call.Args[0])
-		if !ok {
-			local = exprString(call.Args[0])
+		local, resolved := routeStringArg(file, stringConsts, call.Args[0])
+		if resolved && parent.prefixRaw == "" {
+			return parent, joinPath(parent.prefix, local), "", true
 		}
-		return parent, joinPath(parent.prefix, local), true
+		localRaw := exprString(call.Args[0])
+		if resolved {
+			localRaw = strconv.Quote(local)
+		}
+		return parent, "", joinRoutePathExpression(parent.prefix, parent.prefixRaw, localRaw), true
 	}
 	name := shortCallName(call)
 	if isRouteGroupFactory(name) || isRouteGroupWrapper(name) {
 		if unresolvedSelectorRouteFunction(file, funcs, call.Fun) {
-			return groupContext{}, "", false
+			return groupContext{}, "", "", false
 		}
 		if callee, resolved := resolveRouteFunctionCall(file, call.Fun); resolved {
 			if target, projectFunction := funcs[callee]; projectFunction && !target.returnsGroup {
-				return groupContext{}, "", false
+				return groupContext{}, "", "", false
 			}
 		}
 	}
 	if isRouteGroupFactory(name) {
-		parent, prefix, ok := groupCall(file, funcs, stringConsts, groups, call.Args[0])
+		parent, prefix, prefixRaw, ok := groupCall(file, funcs, stringConsts, groups, call.Args[0])
 		if !ok {
-			return groupContext{}, "", false
+			return groupContext{}, "", "", false
 		}
 		if len(call.Args) > 1 {
-			if local, ok := routeStringArg(file, stringConsts, call.Args[1]); ok {
-				prefix = joinPath(parent.prefix, local)
+			if local, resolved := routeStringArg(file, stringConsts, call.Args[1]); resolved {
+				if prefixRaw == "" {
+					prefix = joinPath(prefix, local)
+				} else {
+					prefixRaw = joinRoutePathExpression("", prefixRaw, strconv.Quote(local))
+				}
+			} else {
+				prefixRaw = joinRoutePathExpression(prefix, prefixRaw, exprString(call.Args[1]))
+				prefix = ""
 			}
 		}
-		return parent, prefix, true
+		return parent, prefix, prefixRaw, true
 	}
 	if !isRouteGroupWrapper(name) {
-		return groupContext{}, "", false
+		return groupContext{}, "", "", false
 	}
 	return groupCall(file, funcs, stringConsts, groups, call.Args[0])
+}
+
+func joinRoutePathExpression(staticPrefix, rawPrefix, localRaw string) string {
+	parts := make([]string, 0, 3)
+	if rawPrefix != "" {
+		parts = append(parts, rawPrefix)
+	} else if staticPrefix != "" && staticPrefix != "/" {
+		parts = append(parts, strconv.Quote(staticPrefix))
+	}
+	if localRaw != "" {
+		parts = append(parts, localRaw)
+	}
+	return strings.Join(parts, " + ")
 }
 
 // routeStringArg 解析路径参数为字符串：支持字面量、包内常量名、字符串拼接与括号包裹。
@@ -900,14 +925,22 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 	}
 	wrappers := append(groupWrappers, parsed.HandlerWrappers...)
 	resolved := ""
-	if parsed.PathRaw == "" {
+	if parsed.PathRaw == "" && group.prefixRaw == "" {
 		resolved = joinPath(group.prefix, parsed.LocalPath)
+	}
+	pathRaw := parsed.PathRaw
+	if group.prefixRaw != "" {
+		localRaw := parsed.PathRaw
+		if localRaw == "" {
+			localRaw = strconv.Quote(parsed.LocalPath)
+		}
+		pathRaw = joinRoutePathExpression("", group.prefixRaw, localRaw)
 	}
 	route := facts.RouteRegistrationFact{
 		ID:             routeID(routeFunc, parsed.Method, parsed.LocalPath, statementIndex),
 		Method:         parsed.Method,
 		LocalPath:      parsed.LocalPath,
-		PathRaw:        parsed.PathRaw,
+		PathRaw:        pathRaw,
 		ResolvedPath:   resolved,
 		GroupID:        group.id,
 		GroupVar:       group.varName,
@@ -924,7 +957,7 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		Span:       route.Span,
 		Confidence: facts.ConfidenceHigh,
 	}}
-	if parsed.PathRaw != "" {
+	if pathRaw != "" {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{
 			Code:           diagnostics.CodeRouteDynamicPath,
 			Severity:       diagnostics.SeverityWarning,

@@ -16,20 +16,22 @@ import (
 // 该函数是 facts 命令的对外契约实现，相同 Store 产出字节级一致输出。
 func RenderJSON(store *facts.Store) ([]byte, error) {
 	doc := Document{
-		Project:        store.Project,
-		Symbols:        append([]facts.SymbolFact(nil), store.Symbols...),
-		Annotations:    append([]facts.AnnotationFact(nil), store.Annotations...),
-		RouteGroups:    append([]facts.RouteGroupFact(nil), store.RouteGroups...),
-		Routes:         append([]facts.RouteRegistrationFact(nil), store.Routes...),
-		Middleware:     append([]facts.MiddlewareBindingFact(nil), store.Middleware...),
-		References:     append([]facts.ReferenceFact(nil), store.References...),
-		Modules:        append([]facts.ModuleDependencyFact(nil), store.Modules...),
-		IMEvents:       append([]facts.IMEventFact(nil), store.IMEvents...),
-		GrpcOperations: append([]facts.GrpcOperationFact(nil), store.GrpcOperations...),
-		GrpcCalls:      append([]facts.GrpcCallFact(nil), store.GrpcCalls...),
-		GrpcProviders:  append([]facts.GrpcProviderFact(nil), store.GrpcProviders...),
-		Links:          append([]facts.LinkFact(nil), store.Links...),
-		Diagnostics:    append([]facts.DiagnosticFact(nil), store.Diagnostics...),
+		Project:          store.Project,
+		Symbols:          append([]facts.SymbolFact(nil), store.Symbols...),
+		Annotations:      append([]facts.AnnotationFact(nil), store.Annotations...),
+		RouteGroups:      append([]facts.RouteGroupFact(nil), store.RouteGroups...),
+		Routes:           append([]facts.RouteRegistrationFact(nil), store.Routes...),
+		Middleware:       append([]facts.MiddlewareBindingFact(nil), store.Middleware...),
+		References:       append([]facts.ReferenceFact(nil), store.References...),
+		Modules:          append([]facts.ModuleDependencyFact(nil), store.Modules...),
+		IMEvents:         append([]facts.IMEventFact(nil), store.IMEvents...),
+		GrpcOperations:   append([]facts.GrpcOperationFact(nil), store.GrpcOperations...),
+		GrpcCalls:        append([]facts.GrpcCallFact(nil), store.GrpcCalls...),
+		GrpcProviders:    append([]facts.GrpcProviderFact(nil), store.GrpcProviders...),
+		DubboProviders:   append([]facts.DubboProviderFact(nil), store.DubboProviders...),
+		JobRegistrations: append([]facts.JobRegistrationFact(nil), store.JobRegistrations...),
+		Links:            append([]facts.LinkFact(nil), store.Links...),
+		Diagnostics:      append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
 	// 各类事实按 ID 字典序排序，保证相同事实集合产生稳定输出，便于 golden 与 diff。
 	sort.Slice(doc.Symbols, func(i, j int) bool {
@@ -64,6 +66,12 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	})
 	sort.Slice(doc.GrpcProviders, func(i, j int) bool {
 		return doc.GrpcProviders[i].ID < doc.GrpcProviders[j].ID
+	})
+	sort.Slice(doc.DubboProviders, func(i, j int) bool {
+		return doc.DubboProviders[i].ID < doc.DubboProviders[j].ID
+	})
+	sort.Slice(doc.JobRegistrations, func(i, j int) bool {
+		return doc.JobRegistrations[i].ID < doc.JobRegistrations[j].ID
 	})
 	sort.Slice(doc.Links, func(i, j int) bool {
 		return doc.Links[i].ID < doc.Links[j].ID
@@ -114,6 +122,12 @@ func ensureNonNilSlices(doc *Document) {
 	}
 	if doc.GrpcProviders == nil {
 		doc.GrpcProviders = []facts.GrpcProviderFact{}
+	}
+	if doc.DubboProviders == nil {
+		doc.DubboProviders = []facts.DubboProviderFact{}
+	}
+	if doc.JobRegistrations == nil {
+		doc.JobRegistrations = []facts.JobRegistrationFact{}
 	}
 	if doc.Links == nil {
 		doc.Links = []facts.LinkFact{}

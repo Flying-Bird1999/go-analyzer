@@ -14,7 +14,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-// TestMapRangesToSemanticFacts 验证同一文件不同行能分别映射到注解、符号、路由、中间件四类语义根。
+// TestMapRangesToSemanticFacts 验证同一文件不同行能分别映射到注解、符号、路由、中间件和 Job 注册语义根。
 func TestMapRangesToSemanticFacts(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
@@ -35,12 +35,17 @@ func TestMapRangesToSemanticFacts(t *testing.T) {
 		ID:   "middleware:auth",
 		Span: facts.SourceSpan{File: "router/router.go", StartLine: 21, EndLine: 21},
 	})
+	store.JobRegistrations = append(store.JobRegistrations, facts.JobRegistrationFact{
+		ID: "job_registration:refresh", HandlerSymbol: "func:example.com/project/jobs::Refresh",
+		Span: facts.SourceSpan{File: "jobs/jobs.go", StartLine: 22, EndLine: 22},
+	})
 
 	changes := []FileChange{
 		{NewPath: "controller/common.go", Ranges: []LineRange{{StartLine: 11, EndLine: 11}}},
 		{NewPath: "controller/common.go", Ranges: []LineRange{{StartLine: 25, EndLine: 25}}},
 		{NewPath: "router/router.go", Ranges: []LineRange{{StartLine: 20, EndLine: 20}}},
 		{NewPath: "router/router.go", Ranges: []LineRange{{StartLine: 21, EndLine: 21}}},
+		{NewPath: "jobs/jobs.go", Ranges: []LineRange{{StartLine: 22, EndLine: 22}}},
 	}
 
 	got := MapChanges(changes, store, "git_diff")
@@ -48,6 +53,7 @@ func TestMapRangesToSemanticFacts(t *testing.T) {
 	assertChangeKind(t, got, facts.ChangeKindSymbolChanged)
 	assertChangeKind(t, got, facts.ChangeKindRouteChanged)
 	assertChangeKind(t, got, facts.ChangeKindMiddlewareChanged)
+	assertChangeKind(t, got, facts.ChangeKindJobRegistrationChanged)
 }
 
 // TestMapRealRouteFixtureRange 验证基于 middleware-order 真实 fixture 的中间件行能正确映射。
@@ -154,6 +160,23 @@ func TestMapChangesMapsRouteGroupBeforeEnclosingSymbol(t *testing.T) {
 		Ranges:  []LineRange{{StartLine: 15, EndLine: 15}},
 	}}, store, "git_diff")
 	if len(got) != 1 || got[0].Kind != facts.ChangeKindRouteGroupChanged || got[0].TargetID != "route_group:api" {
+		t.Fatalf("mapped change = %#v", got)
+	}
+}
+
+func TestMapChangesMapsSingleDubboMethodRegistration(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.Symbols = append(store.Symbols, facts.SymbolFact{
+		ID: "func:example.com/project/provider::Export", Kind: "func",
+		Span: facts.SourceSpan{File: "provider/api.go", StartLine: 10, EndLine: 40},
+	})
+	store.DubboProviders = append(store.DubboProviders,
+		facts.DubboProviderFact{ID: "dubbo:first", HandlerSymbol: "method:example.com/project/provider:API:First", Span: facts.SourceSpan{File: "provider/api.go", StartLine: 20, EndLine: 22}},
+		facts.DubboProviderFact{ID: "dubbo:second", HandlerSymbol: "method:example.com/project/provider:API:Second", Span: facts.SourceSpan{File: "provider/api.go", StartLine: 23, EndLine: 25}},
+	)
+
+	got := MapChanges([]FileChange{{NewPath: "provider/api.go", Ranges: []LineRange{{StartLine: 24, EndLine: 24}}}}, store, "git_diff")
+	if len(got) != 1 || got[0].Kind != facts.ChangeKindDubboProviderChanged || got[0].TargetID != "dubbo:second" {
 		t.Fatalf("mapped change = %#v", got)
 	}
 }

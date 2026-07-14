@@ -19,7 +19,7 @@ import (
 func factsTopLevelKeys() []string {
 	return []string{
 		"project", "symbols", "annotations", "route_groups", "routes",
-		"middleware", "references", "modules", "im_events", "grpc_operations", "grpc_calls", "grpc_providers", "links", "diagnostics",
+		"middleware", "references", "modules", "im_events", "grpc_operations", "grpc_calls", "grpc_providers", "dubbo_providers", "job_registrations", "links", "diagnostics",
 	}
 }
 
@@ -131,6 +131,8 @@ func TestFactsFactStructsAlignSchemaDefinitions(t *testing.T) {
 		"grpc_client_binding": reflect.TypeOf(facts.GrpcClientBinding{}),
 		"grpc_call":           reflect.TypeOf(facts.GrpcCallFact{}),
 		"grpc_provider":       reflect.TypeOf(facts.GrpcProviderFact{}),
+		"dubbo_provider":      reflect.TypeOf(facts.DubboProviderFact{}),
+		"job_registration":    reflect.TypeOf(facts.JobRegistrationFact{}),
 		"link":                reflect.TypeOf(facts.LinkFact{}),
 		"diagnostic":          reflect.TypeOf(facts.DiagnosticFact{}),
 		"source_span":         reflect.TypeOf(facts.SourceSpan{}),
@@ -173,6 +175,9 @@ func TestFactsSchemaRequiredAlignsOmitempty(t *testing.T) {
 		"grpc_operation":      reflect.TypeOf(facts.GrpcOperationFact{}),
 		"grpc_client_binding": reflect.TypeOf(facts.GrpcClientBinding{}),
 		"grpc_call":           reflect.TypeOf(facts.GrpcCallFact{}),
+		"grpc_provider":       reflect.TypeOf(facts.GrpcProviderFact{}),
+		"dubbo_provider":      reflect.TypeOf(facts.DubboProviderFact{}),
+		"job_registration":    reflect.TypeOf(facts.JobRegistrationFact{}),
 		"link":                reflect.TypeOf(facts.LinkFact{}),
 		"diagnostic":          reflect.TypeOf(facts.DiagnosticFact{}),
 		"source_span":         reflect.TypeOf(facts.SourceSpan{}),

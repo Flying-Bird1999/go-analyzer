@@ -22,6 +22,8 @@ type RouteGroupFact struct {
 	ParentGroupVar string `json:"parent_group_var,omitempty"`
 	// Prefix 是该 group 自身声明的前缀，子 group 的完整前缀由父级前缀拼接而来。
 	Prefix string `json:"prefix"`
+	// PrefixRaw 是无法静态解析的 group prefix 表达式；存在时不得把 Prefix 当作完整路径。
+	PrefixRaw string `json:"prefix_raw,omitempty"`
 	// RouteFunc 是声明该 group 的 route function symbol ID。
 	RouteFunc SymbolID `json:"route_func"`
 	// StatementIndex 是该 group 创建语句在 route function 内的语句序号，用于中间件顺序判断。

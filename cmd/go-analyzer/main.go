@@ -52,7 +52,7 @@ func run(args []string) error {
 func runGrpcImpact(args []string) error {
 	fs := flag.NewFlagSet("grpc-impact", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	projectPath := fs.String("project", "", "absolute gRPC project path")
+	projectPath := fs.String("project", "", "absolute Go service project path")
 	diffPath := fs.String("diff", "", "absolute unified diff file path")
 	impactConfigPath := fs.String("impact-config", "", "optional absolute impact config path")
 	format := fs.String("format", "json", "output format")
@@ -319,10 +319,10 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
 	case "grpc-impact":
 		return `用法:
-  go-analyzer grpc-impact --project /absolute/path/to/grpc-project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--timings]
+  go-analyzer grpc-impact --project /absolute/path/to/go-service --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--timings]
 
-基于已经应用到变更后源码的 unified diff，分析当前 gRPC 服务项目受影响的 canonical gRPC operations。
-命令只分析单个 gRPC 项目，不查询 BFF，也不执行跨仓编排。
+基于已经应用到变更后源码的 unified diff，分析当前服务受影响的 gRPC、HTTP、Dubbo 和 XXL-Job 入站契约。
+命令只分析单个 Go 服务项目，不查询 BFF，也不执行跨仓编排；Pulsar/IM 为后续能力。
 `
 	case "endpoint-assets":
 		return `用法:
@@ -345,7 +345,7 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 
 对外接入命令:
   impact  从 unified diff 和/或上游 gRPC operation 分析受影响 HTTP 接口和 IM event。
-  grpc-impact  从 gRPC 服务项目 unified diff 分析受影响 canonical gRPC operations。
+  grpc-impact  从 Go 服务项目 unified diff 分析受影响的入站服务契约。
   endpoint-assets  查询 BFF endpoint 的 gRPC 依赖。
 
 CLI 路径参数必须使用绝对路径。

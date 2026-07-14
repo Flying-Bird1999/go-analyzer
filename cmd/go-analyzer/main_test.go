@@ -210,8 +210,18 @@ func TestSchemaCommandWritesGrpcImpactSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(out, []byte(`"title": "go-analyzer gRPC provider impact tree"`)) {
+	if !bytes.Contains(out, []byte(`"title": "go-analyzer service entry impact tree"`)) {
 		t.Fatalf("schema output = %s", out)
+	}
+	for _, want := range []string{`"entrySourcesSummary"`, `"grpc"`, `"dubbo"`, `"http"`, `"job"`} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("schema output missing %q: %s", want, out)
+		}
+	}
+	for _, obsolete := range []string{`"impactedContracts"`, `"impactedGrpcOperations"`, `"contractSourcesSummary"`, `"grpcOperationSourcesSummary"`} {
+		if bytes.Contains(out, []byte(obsolete)) {
+			t.Fatalf("schema output leaked obsolete field %q: %s", obsolete, out)
+		}
 	}
 }
 

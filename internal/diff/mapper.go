@@ -67,6 +67,8 @@ type changeIndex struct {
 	groups      map[string][]facts.RouteGroupFact
 	routes      map[string][]facts.RouteRegistrationFact
 	middleware  map[string][]facts.MiddlewareBindingFact
+	jobs        map[string][]facts.JobRegistrationFact
+	dubbo       map[string][]facts.DubboProviderFact
 	symbols     map[string][]facts.SymbolFact
 }
 
@@ -78,6 +80,8 @@ func newChangeIndex(store *facts.Store) changeIndex {
 		groups:      map[string][]facts.RouteGroupFact{},
 		routes:      map[string][]facts.RouteRegistrationFact{},
 		middleware:  map[string][]facts.MiddlewareBindingFact{},
+		jobs:        map[string][]facts.JobRegistrationFact{},
+		dubbo:       map[string][]facts.DubboProviderFact{},
 		symbols:     map[string][]facts.SymbolFact{},
 	}
 	for _, annotation := range store.Annotations {
@@ -95,6 +99,14 @@ func newChangeIndex(store *facts.Store) changeIndex {
 	for _, binding := range store.Middleware {
 		file := filepath.ToSlash(binding.Span.File)
 		index.middleware[file] = append(index.middleware[file], binding)
+	}
+	for _, job := range store.JobRegistrations {
+		file := filepath.ToSlash(job.Span.File)
+		index.jobs[file] = append(index.jobs[file], job)
+	}
+	for _, provider := range store.DubboProviders {
+		file := filepath.ToSlash(provider.Span.File)
+		index.dubbo[file] = append(index.dubbo[file], provider)
 	}
 	for _, symbol := range store.Symbols {
 		file := filepath.ToSlash(symbol.Span.File)
@@ -149,7 +161,25 @@ func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string
 			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, confidence)
 		}
 	}
-	// 5. symbol：选最小包含声明。外层 type 包含内层 var 时优先选内层更具体的 var。
+	// 5. XXL-Job 注册行优先于外层注册函数 symbol。
+	for _, job := range index.jobs[file] {
+		if spanContains(job.Span, file, r) {
+			return changeFact(baseIndex, facts.ChangeKindJobRegistrationChanged, job.ID, job.HandlerSymbol, file, r, source, confidence)
+		}
+	}
+	// 6. Dubbo method 注册配置优先于外层 export 函数。
+	for _, provider := range index.dubbo[file] {
+		if spanContains(provider.Span, file, r) {
+			return changeFact(baseIndex, facts.ChangeKindDubboProviderChanged, provider.ID, provider.HandlerSymbol, file, r, source, confidence)
+		}
+	}
+	// 7. Dubbo service 级配置影响该 interface 下全部 method。
+	for _, provider := range index.dubbo[file] {
+		if spanContains(provider.ServiceSpan, file, r) {
+			return changeFact(baseIndex, facts.ChangeKindDubboServiceChanged, provider.ID, provider.RegistrationSymbol, file, r, source, confidence)
+		}
+	}
+	// 8. symbol：选最小包含声明。外层 type 包含内层 var 时优先选内层更具体的 var。
 	var selected *facts.SymbolFact
 	for _, symbol := range index.symbols[file] {
 		if spanContains(symbol.Span, file, r) {
@@ -163,7 +193,7 @@ func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string
 	if selected != nil {
 		return changeFact(baseIndex, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
 	}
-	// 6. 兜底：无法映射到任何语义事实时落到 file root，confidence 为 low。
+	// 9. 兜底：无法映射到任何语义事实时落到 file root，confidence 为 low。
 	return changeFact(baseIndex, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
 }
 

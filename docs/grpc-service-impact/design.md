@@ -1,92 +1,51 @@
 # gRPC Service Impact
 
+> This document records the gRPC-specific evidence model. The current command also emits HTTP, Dubbo and XXL-Job contracts; see [service external impact design](../service-external-impact/design.md).
+
 ## Scope
 
-`grpc-impact` analyzes one gRPC provider repository and answers:
-
-```text
-Which registered canonical gRPC operations are affected by this applied diff?
-```
-
-It does not query BFF repositories or orchestrate cross-repository analysis.
-
-## Command
+`grpc-impact` analyzes one already-updated Go service repository and one applied unified diff. It does not query BFF repositories or orchestrate cross-repository analysis.
 
 ```bash
 go-analyzer grpc-impact \
-  --project /absolute/path/to/grpc-project \
+  --project /absolute/path/to/go-service \
   --diff /absolute/path/to/change.diff \
   --format json
 ```
 
-The diff must already be applied to the project snapshot. Build-context and optional impact-config flags follow the BFF `impact` command.
+The command name is retained for compatibility. Its formal result is now the set of affected registered service contracts: `grpc_operation`, `http_endpoint`, `dubbo_method`, and `job`.
 
-## Evidence Model
+## gRPC Evidence
 
-An exposed operation requires these facts:
+A gRPC operation requires all of the following:
 
-1. A generated `ServiceDesc` provides `ServiceName`, method names and streaming mode.
-2. Project source calls the matching generated `RegisterXxxServer` function.
-3. The registration argument resolves to one concrete project type when a handler binding is claimed.
-4. The concrete method symbol matches the generated server method.
+1. Generated `ServiceDesc` metadata supplies the canonical service and method identity.
+2. Project source calls the matching `RegisterXxxServer` function.
+3. The registration argument resolves to one concrete project type.
+4. The concrete handler method matches the generated server method.
 
-Supported implementation expressions include direct struct values, project constructors, registration-struct fields, and generic container wrappers. Constructor functions may be passed as values to a container and may declare an interface return when every explicit return proves the same project-local concrete type. Ambiguous implementations are rejected instead of guessed.
-
-The protobuf descriptor method is the canonical RPC method and retains its original case. Older generators can emit lower-camel RPC names while the Go server interface uses exported upper-camel methods; the analyzer maps these only when one interface method matches case-insensitively.
-
-## Pipeline
-
-```text
-project + applied diff
-  -> shared project loader / AST index / symbols / references
-  -> generated server catalog
-  -> RegisterXxxServer provider bindings
-  -> ChangeFact mapping
-  -> shared ReverseGraph
-  -> registered gRPC operation terminals
-  -> stable JSON
-```
-
-Generated packages are read from repository source first, using the nearest `go.mod` for nested-module import identity. Missing packages are loaded selectively from the active module graph; unrelated dependencies are not traversed.
+Direct values, project constructors, registration-struct fields, and resolvable generic container wrappers are supported. Ambiguous implementations are rejected rather than guessed. Generated packages are read from repository source first, including nested modules, and otherwise loaded selectively from the active module graph.
 
 ## Output
 
-The contract follows BFF impact terminology and nesting:
+`summary` is the single protocol-grouped result map:
 
 ```json
 {
-  "summary": {
-    "impactedGrpcOperationCount": 1,
-    "impactedGrpcOperations": [
-      {
-        "fullMethod": "/package.Service/Method",
-        "protoPackage": "package",
-        "service": "Service",
-        "method": "Method"
-      }
-    ]
-  },
-  "fileSources": [],
-  "grpcOperationSourcesSummary": []
+  "grpc": [],
+  "dubbo": [],
+  "http": [],
+  "job": []
 }
 ```
 
-`fileSources[].symbols` uses the same recursive `ImpactNode` contract as BFF impact. A gRPC terminal has `kind=grpc_operation`, `relation=exposed_grpc_operation`, and `fullMethod`.
+The same four keys appear in `fileSources[].impacts` and the reverse `entrySourcesSummary`. No gRPC-only mirror fields are emitted. `fileSources[].symbols` retains the recursive evidence chain; the gRPC terminal relation remains `exposed_grpc_operation`.
 
-## Current Boundary
+## Boundaries
 
-- The public terminal is a registered canonical gRPC operation.
-- Outbound gRPC, Pulsar, HTTP, Dubbo and database assets are not additional provider terminals in this phase.
-- Proto compatibility classification is not implemented yet.
+- Pulsar and IM producer/consumer analysis is a follow-up item.
+- Outbound gRPC, HTTP and Dubbo calls are not provider terminals.
+- Proto compatibility classification is not implemented.
 - Cross-repository `gRPC -> BFF -> frontend` orchestration remains external.
 
-## Real-Project Validation
-
-Validation uses already-applied, comment-only diffs and restores both repositories after analysis.
-
-| Project | Diff scope | Result |
-| --- | --- | --- |
-| `sc1-server` | 5 files across mc, message and user; direct providers plus downstream application/shared helpers | 11 deduplicated operations. `ChatBotProxyService/Proxy` and `MessageTemplateAdminService/CreateTemplate` each retain two independent source files. Internal reuse of `MerchantTokenClientService.GetToken` is preserved as auditable chains to seven additional registered operations. |
-| `sc2-server` | 7 files across channel, trade, medium and message; direct providers plus downstream channel/trade services | 5 deduplicated operations. `StoreChannelConfigService/Bind` and `TradeService/EstimateCost` each retain two independent source files; all five operations match their expected service and method exactly. |
-
-The sc2 case covers direct constructors, constructors passed as function values to `MustProvideAtOnce[...]`, interface-returning constructors, nested proto modules, and lower-camel descriptor methods. No sibling methods were reported for direct provider changes.
+Real-project validation and protocol-specific evidence rules are maintained in the service entry design document to avoid duplicating status in two places.

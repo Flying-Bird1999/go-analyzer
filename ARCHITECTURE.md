@@ -1,17 +1,17 @@
 # go-analyzer Architecture
 
-> 状态：当前实现基线，更新于 2026-07-13。
+> 状态：当前实现基线，更新于 2026-07-14。
 > 读者：维护者、评审者和后续迭代 agent。
 
 ## 1. 定位
 
-`go-analyzer` 面向**单个 Go 服务项目**进行静态分析，当前支持 BFF 与 gRPC Provider 两类项目。它不聚合多个仓库；调用方需要跨 gRPC、BFF 或前端串联时，应分别执行并自行编排。
+`go-analyzer` 面向**单个 Go 服务项目**进行静态分析，当前支持 BFF 与通用后端服务两类项目。它不聚合多个仓库；调用方需要跨 gRPC、BFF 或前端串联时，应分别执行并自行编排。
 
 核心问题：
 
 ```text
 一份 BFF 源码快照中，代码 diff 和/或上游 gRPC operation 关联哪些 HTTP endpoint 与出站 IM event？
-一份 gRPC 服务源码快照中，代码 diff 关联哪些 canonical gRPC operation？
+一份后端服务源码快照中，代码 diff 关联哪些已注册 gRPC、HTTP、Dubbo 或 XXL-Job 入口？
 ```
 
 系统只输出可由静态事实证明的关系，不猜测运行时注入、反射、外部 SDK 内部调用或动态路由。
@@ -21,10 +21,10 @@
 | 命令 | 用途 | 输入 |
 | --- | --- | --- |
 | `impact` | 统一影响分析主入口 | `--diff` 和/或可重复的 `--grpc` |
-| `grpc-impact` | gRPC Provider 项目影响分析 | `--diff` |
+| `grpc-impact` | 后端服务入口契约影响分析 | `--diff` |
 | `endpoint-assets` | 查询 BFF endpoint 依赖的 gRPC | 可重复的 `--endpoint` |
 | `facts` | 提取与调试项目事实 | `--project` |
-| `schema` | 输出 facts/impact JSON Schema | `--type facts|impact` |
+| `schema` | 输出稳定 JSON Schema | `--type facts|impact|grpc-impact` |
 
 所有路径参数必须为绝对路径。`impact` 至少需要一个 `--diff` 或 `--grpc`；两者可组合，输出一份 JSON。`--timings` 仅写 stderr，绝不污染 JSON stdout。
 
@@ -41,7 +41,7 @@ impact --diff --grpc
 
 `endpoint-assets` 的输入格式为 `METHOD /path`，与 controller annotation 协议对齐；gRPC 输入必须是 canonical full method：`/package.Service/Method`。
 
-`grpc-impact` 与 BFF `impact` 是独立领域命令。前者只产出当前 gRPC 项目的受影响 operation，不查询 BFF；跨仓串联属于外部编排层。
+`grpc-impact` 与 BFF `impact` 是独立领域命令。前者产出当前后端服务项目受影响的入站契约，不查询 BFF；跨仓串联属于外部编排层。命令名为兼容保留。
 
 ## 3. 核心模型
 
@@ -69,6 +69,8 @@ project source
 | `GrpcOperationFact` | generated client transport 中的 canonical gRPC operation |
 | `GrpcCallFact` | BFF 调用点、静态 client binding 与 operation 关联 |
 | `GrpcProviderFact` | gRPC 注册函数、具体实现、handler 与 operation 的关联 |
+| `DubboProviderFact` | Dubbo interface/method、配置与具体 handler 的关联 |
+| `JobRegistrationFact` | XXL-Job 名称、注册函数与 handler 的关联 |
 | `IMEventFact` | 出站 IM event 及其依赖 |
 | `ChangeFact` | diff 映射得到的传播根 |
 
@@ -76,13 +78,13 @@ project source
 
 ### 4.1 Facts 构建
 
-`internal/app/buildBaseFacts` 负责共享的项目加载、AST 索引、module 与 symbol facts。BFF `buildFacts` 在其上增加 annotation、route、reference、IM 和可选 gRPC client 抽取；`grpc-impact` 只增加 reference、generated server catalog 与 provider binding 抽取。
+`internal/app/buildBaseFacts` 负责共享的项目加载、AST 索引、module 与 symbol facts。BFF `buildFacts` 在其上增加 annotation、route、reference、IM 和可选 gRPC client 抽取；`grpc-impact` 增加 reference、route/link、Dubbo provider、XXL-Job 以及 generated gRPC server 抽取。
 
 ```text
 project.Load
   -> astindex.Build
   -> common symbol/module facts
-  -> BFF domain extraction OR gRPC provider extraction
+  -> BFF domain extraction OR service entry extraction
 ```
 
 gRPC extraction mode：
@@ -168,16 +170,16 @@ impact --grpc B contains endpoint A
 
 `impact --grpc` consumer 的 `relation` 固定为 `may_call`：静态调用链可达，但不承诺每次 HTTP 请求都会执行 RPC。
 
-### 6.1 gRPC Provider Impact
+### 6.1 服务入口契约影响
 
-`grpc-impact` 的 operation 身份来自 generated `ServiceDesc`，服务暴露关系来自实际 `RegisterXxxServer(server, implementation)` 调用。具体 handler 必须由注册实参静态类型与 generated server method 共同证明。
+`grpc-impact` 将不同协议原子 fact 投影为统一 service contract，正式终点包括 `grpc_operation`、`http_endpoint`、`dubbo_method` 和 `job`。只有存在真实注册证据且注册函数接入项目引用链时才进入 summary。
 
 ```text
 diff -> ChangeFact -> ReverseGraph -> concrete handler
-  -> GrpcProviderFact -> /package.Service/Method
+  -> protocol fact -> serviceimpact contract
 ```
 
-当前覆盖直接 struct 实例、项目 constructor、注册器 struct 字段，以及可解析具体类型或 constructor 的泛型容器包装。无法唯一确定实现类型时不猜测；注册事实仍保留，但不会把任意 handler 绑定到 operation。
+gRPC 身份来自 generated `ServiceDesc` 与实际 `RegisterXxxServer`；HTTP 复用 route/link facts；Dubbo 要求 `ServiceConfig`、`SetProviderService` 与 `MethodMapper` 三类证据；Job 要求静态任务名与唯一 handler。动态 HTTP path 或 Dubbo version 标记为 `symbolic`，不伪造运行时值。
 
 generated server package 优先从仓内源码读取，并按最近的 `go.mod` 恢复嵌套 module import path；仓内不存在时，只读加载实际被 `RegisterXxxServer` 使用的依赖包，不扫描无关依赖图。
 
@@ -193,7 +195,7 @@ generated server package 优先从仓内源码读取，并按最近的 `go.mod` 
 | `internal/graph` | ReverseGraph、RouteGraph、CallGraph、IMGraph 查询视图 | 修改 facts |
 | `internal/dependency` | endpoint <-> gRPC 双向查询 | CLI、diff 解析 |
 | `internal/impact` | 从 ChangeFact 构造传播树 | gRPC catalog 猜测 |
-| `internal/grpcimpact` | 从 ChangeFact 传播到 gRPC provider operation | HTTP route、IM 或跨仓查询 |
+| `internal/serviceimpact` | 从 ChangeFact 传播到已注册服务入口契约 | 协议 AST 抽取、出站依赖或跨仓查询 |
 | `internal/output` | 稳定排序、JSON、Schema | 生产或补全业务事实 |
 
 依赖方向：
@@ -232,16 +234,26 @@ project / astindex
 
 ```json
 {
-  "summary": {},
+  "summary": {
+    "grpc": [],
+    "dubbo": [],
+    "http": [],
+    "job": []
+  },
   "fileSources": [],
-  "grpcOperationSourcesSummary": []
+  "entrySourcesSummary": {
+    "grpc": [],
+    "dubbo": [],
+    "http": [],
+    "job": []
+  }
 }
 ```
 
-- `summary`：全局去重的 canonical gRPC operations。
-- `fileSources`：Diff、changed roots、完整传播树和来源内 operation 摘要。
+- `summary`：全局去重的服务入口契约，固定按 `grpc`、`dubbo`、`http`、`job` 分组。
+- `fileSources`：Diff、changed roots、完整传播树和同形的 `impacts` 分组摘要。
 - `moduleSources`：仅在 go.mod 形成语义 module change 时输出。
-- `grpcOperationSourcesSummary`：operation -> file/module source 的轻量反查。
+- `entrySourcesSummary`：按相同协议分组的 entry -> file/module source 反查。
 
 `impact` 不输出 `buildContext` 或 diagnostics。需要排查事实和 diagnostics 时使用 `facts`。字段级 schema、排序规则和兼容性要求以 [output contract](docs/contracts/output-contract.md) 为准。
 

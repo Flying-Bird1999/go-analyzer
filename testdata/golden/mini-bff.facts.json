@@ -1,10 +1,12 @@
 {
   "annotations": [],
   "diagnostics": [],
+  "dubbo_providers": [],
   "grpc_calls": [],
   "grpc_operations": [],
   "grpc_providers": [],
   "im_events": [],
+  "job_registrations": [],
   "links": [],
   "middleware": [],
   "modules": [],

@@ -9,16 +9,20 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
+	dubboextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/dubbo"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/gomod"
 	grpcextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/grpc"
+	jobextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/job"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
-	"gopkg.inshopline.com/bff/go-analyzer/internal/grpcimpact"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/link"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/serviceimpact"
 )
 
-// RunGrpcImpact returns the gRPC provider impact JSON without timing metadata.
+// RunGrpcImpact returns the service entry impact JSON without timing metadata.
 func RunGrpcImpact(opts GrpcImpactOptions) ([]byte, error) {
 	result, err := RunGrpcImpactWithMetrics(opts)
 	if err != nil {
@@ -27,8 +31,8 @@ func RunGrpcImpact(opts GrpcImpactOptions) ([]byte, error) {
 	return result.Output, nil
 }
 
-// RunGrpcImpactWithMetrics analyzes one already-applied diff in a gRPC server
-// project and returns affected canonical operations.
+// RunGrpcImpactWithMetrics analyzes one already-applied diff in a Go service
+// project and returns affected registered entry contracts.
 func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
 	if opts.ProjectPath == "" {
 		return RunResult{}, errors.New("project path is required")
@@ -109,9 +113,9 @@ func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
 		return RunResult{}, err
 	}
 
-	var tree grpcimpact.TreeResult
+	var tree serviceimpact.TreeResult
 	if err := recorder.measure("grpc_impact_analyze", func() error {
-		tree = grpcimpact.AnalyzeTrees(store)
+		tree = serviceimpact.AnalyzeTrees(store)
 		return nil
 	}); err != nil {
 		return RunResult{}, err
@@ -137,6 +141,26 @@ func buildGrpcServiceFacts(projectPath string, buildContext project.BuildContext
 	}
 	if err := recorder.measure("reference_extract", func() error {
 		return reference.Extract(built.project, built.index, built.store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("route_extract", func() error {
+		return route.Extract(built.project, built.index, built.store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("route_link", func() error {
+		return link.Run(built.index, built.store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("job_extract", func() error {
+		return jobextract.Extract(built.project, built.index, built.store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("dubbo_provider_extract", func() error {
+		return dubboextract.Extract(built.project, built.index, built.store)
 	}); err != nil {
 		return builtFacts{}, err
 	}

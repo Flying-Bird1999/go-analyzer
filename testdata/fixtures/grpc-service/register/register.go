@@ -9,4 +9,5 @@ func provide[T any](factory func() T) T { return factory() }
 
 func Providers(server api.Registrar) {
 	api.RegisterEchoServiceServer(server, provide[api.EchoServiceServer](provider.NewEchoServer))
+	provider.ExportReplyAPI()
 }

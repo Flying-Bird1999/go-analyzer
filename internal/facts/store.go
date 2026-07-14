@@ -84,6 +84,10 @@ type Store struct {
 	GrpcCalls []GrpcCallFact `json:"grpc_calls"`
 	// GrpcProviders are canonical operations exposed by concrete gRPC server registrations.
 	GrpcProviders []GrpcProviderFact `json:"grpc_providers"`
+	// JobRegistrations are statically named XXL-Job tasks bound to project handlers.
+	JobRegistrations []JobRegistrationFact `json:"job_registrations"`
+	// DubboProviders are exported Dubbo interface methods bound to project handlers.
+	DubboProviders []DubboProviderFact `json:"dubbo_providers"`
 	// Links 是 route-handler 与 handler-annotation 的关联事实，由 linker 写入。
 	Links []LinkFact `json:"links"`
 	// Diagnostics 是各阶段记录的可恢复不确定性诊断。
@@ -110,23 +114,25 @@ func NewStore(root, modulePath string, buildContext ...BuildContextFact) *Store 
 			ModulePath:   modulePath,
 			BuildContext: effectiveBuildContext,
 		},
-		Symbols:         []SymbolFact{},
-		Annotations:     []AnnotationFact{},
-		RouteGroups:     []RouteGroupFact{},
-		RouteGroupFlows: []RouteGroupFlowFact{},
-		Routes:          []RouteRegistrationFact{},
-		Middleware:      []MiddlewareBindingFact{},
-		Changes:         []ChangeFact{},
-		References:      []ReferenceFact{},
-		Modules:         []ModuleDependencyFact{},
-		ModuleChanges:   []ModuleChangeFact{},
-		ModuleUsages:    []ModuleUsageFact{},
-		IMEvents:        []IMEventFact{},
-		GrpcOperations:  []GrpcOperationFact{},
-		GrpcCalls:       []GrpcCallFact{},
-		GrpcProviders:   []GrpcProviderFact{},
-		Links:           []LinkFact{},
-		Diagnostics:     []DiagnosticFact{},
+		Symbols:          []SymbolFact{},
+		Annotations:      []AnnotationFact{},
+		RouteGroups:      []RouteGroupFact{},
+		RouteGroupFlows:  []RouteGroupFlowFact{},
+		Routes:           []RouteRegistrationFact{},
+		Middleware:       []MiddlewareBindingFact{},
+		Changes:          []ChangeFact{},
+		References:       []ReferenceFact{},
+		Modules:          []ModuleDependencyFact{},
+		ModuleChanges:    []ModuleChangeFact{},
+		ModuleUsages:     []ModuleUsageFact{},
+		IMEvents:         []IMEventFact{},
+		GrpcOperations:   []GrpcOperationFact{},
+		GrpcCalls:        []GrpcCallFact{},
+		GrpcProviders:    []GrpcProviderFact{},
+		JobRegistrations: []JobRegistrationFact{},
+		DubboProviders:   []DubboProviderFact{},
+		Links:            []LinkFact{},
+		Diagnostics:      []DiagnosticFact{},
 	}
 }
 
