@@ -76,5 +76,9 @@ func strictAnalysisError(err error) error {
 	if errors.As(err, &ambiguity) {
 		return &AnalysisError{Code: "grpc_call_ambiguous", Err: err}
 	}
+	var serverAmbiguity *grpcextract.ServerImplementationAmbiguityError
+	if errors.As(err, &serverAmbiguity) {
+		return &AnalysisError{Code: "grpc_server_binding_ambiguous", Err: err}
+	}
 	return &AnalysisError{Code: "grpc_catalog_failed", Err: err}
 }

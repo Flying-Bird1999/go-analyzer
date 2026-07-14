@@ -16,7 +16,7 @@ var schemaDocuments = map[string]map[string]any{
 		"title":                "go-analyzer facts output",
 		"type":                 "object",
 		"additionalProperties": false,
-		"required":             []string{"project", "symbols", "annotations", "route_groups", "routes", "middleware", "references", "modules", "im_events", "grpc_operations", "grpc_calls", "links", "diagnostics"},
+		"required":             []string{"project", "symbols", "annotations", "route_groups", "routes", "middleware", "references", "modules", "im_events", "grpc_operations", "grpc_calls", "grpc_providers", "links", "diagnostics"},
 		"properties": map[string]any{
 			"project":         ref("project"),
 			"symbols":         arrayOf(ref("symbol")),
@@ -29,6 +29,7 @@ var schemaDocuments = map[string]map[string]any{
 			"im_events":       arrayOf(ref("im_event")),
 			"grpc_operations": arrayOf(ref("grpc_operation")),
 			"grpc_calls":      arrayOf(ref("grpc_call")),
+			"grpc_providers":  arrayOf(ref("grpc_provider")),
 			"links":           arrayOf(ref("link")),
 			"diagnostics":     arrayOf(ref("diagnostic")),
 		},
@@ -50,6 +51,21 @@ var schemaDocuments = map[string]map[string]any{
 			"endpointSourcesSummary": arrayOf(ref("endpoint_source_summary")),
 		},
 		"$defs": impactDefinitions(),
+	},
+	"grpc-impact": {
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"$id":                  "https://gopkg.inshopline.com/bff/go-analyzer/schemas/grpc-impact.v1alpha1.schema.json",
+		"title":                "go-analyzer gRPC provider impact tree",
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"summary", "fileSources", "grpcOperationSourcesSummary"},
+		"properties": map[string]any{
+			"summary":                     ref("grpc_impact_summary"),
+			"fileSources":                 arrayOf(ref("grpc_file_source_impact")),
+			"moduleSources":               arrayOf(ref("grpc_module_source_impact")),
+			"grpcOperationSourcesSummary": arrayOf(ref("grpc_operation_source_summary")),
+		},
+		"$defs": grpcImpactDefinitions(),
 	},
 }
 
@@ -99,6 +115,7 @@ func factsDefinitions() map[string]any {
 		"grpc_call",
 		"grpc_client_binding",
 		"grpc_operation",
+		"grpc_provider",
 		"im_event",
 		"im_event_dependency",
 		"im_event_evidence",
@@ -112,6 +129,20 @@ func factsDefinitions() map[string]any {
 		"source_span",
 		"symbol",
 		"wrapper",
+	)
+}
+
+func grpcImpactDefinitions() map[string]any {
+	return selectDefinitions(
+		"endpoint_root_symbol_summary",
+		"grpc_file_source_impact",
+		"grpc_impact_summary",
+		"grpc_module_source_impact",
+		"grpc_operation_impact_source",
+		"grpc_operation_source_summary",
+		"grpc_operation_summary",
+		"impact_node",
+		"module_replacement",
 	)
 }
 
@@ -304,6 +335,21 @@ func commonDefinitions() map[string]any {
 			"span":           ref("source_span"),
 			"evidence":       arrayOf(ref("evidence")),
 		}, "id", "caller_symbol", "operation_id", "client_binding", "span", "evidence"),
+		"grpc_provider": object(map[string]any{
+			"id":                        stringType(),
+			"operation_id":              stringType(),
+			"generated_go_package":      stringType(),
+			"register_function":         stringType(),
+			"server_interface":          stringType(),
+			"implementation_go_package": stringType(),
+			"implementation_type":       stringType(),
+			"implementation_symbol":     stringType(),
+			"handler_symbol":            stringType(),
+			"registration_symbol":       stringType(),
+			"span":                      ref("source_span"),
+			"evidence":                  arrayOf(ref("evidence")),
+			"confidence":                confidenceType(),
+		}, "id", "operation_id", "generated_go_package", "register_function", "server_interface", "registration_symbol", "span", "confidence"),
 		// impact_node 是 impact 传播树的递归节点定义；children 自引用 impact_node，实现完整传播链路。
 		"impact_node": object(map[string]any{
 			"id":         stringType(),
@@ -319,7 +365,43 @@ func commonDefinitions() map[string]any {
 			"children":   arrayOf(ref("impact_node")),
 			"method":     stringType(),
 			"path":       stringType(),
+			"fullMethod": stringType(),
 		}, "id", "kind", "level", "children"),
+		"grpc_impact_summary": object(map[string]any{
+			"impactedGrpcOperationCount": numberType(),
+			"impactedGrpcOperations":     arrayOf(ref("grpc_operation_summary")),
+		}, "impactedGrpcOperationCount", "impactedGrpcOperations"),
+		"grpc_file_source_impact": object(map[string]any{
+			"sourceFile":             stringType(),
+			"diff":                   stringType(),
+			"symbols":                map[string]any{"type": "object", "additionalProperties": ref("impact_node")},
+			"impactedGrpcOperations": arrayOf(ref("grpc_operation_summary")),
+		}, "sourceFile", "symbols", "impactedGrpcOperations"),
+		"grpc_module_source_impact": object(map[string]any{
+			"modulePath":        stringType(),
+			"changeType":        stringType(),
+			"versionBefore":     stringType(),
+			"versionAfter":      stringType(),
+			"replacementBefore": ref("module_replacement"),
+			"replacementAfter":  ref("module_replacement"),
+			"basis":             stringType(),
+			"sourceFiles":       arrayOf(ref("grpc_file_source_impact")),
+		}, "modulePath", "changeType", "basis"),
+		"grpc_operation_impact_source": object(map[string]any{
+			"sourceType":    stringType(),
+			"sourceFile":    stringType(),
+			"modulePath":    stringType(),
+			"changeType":    stringType(),
+			"versionBefore": stringType(),
+			"versionAfter":  stringType(),
+			"rootSymbols":   arrayOf(ref("endpoint_root_symbol_summary")),
+			"chains":        arrayOf(arrayOf(stringType())),
+			"confidence":    confidenceType(),
+		}, "sourceType", "rootSymbols", "chains", "confidence"),
+		"grpc_operation_source_summary": object(map[string]any{
+			"grpc":    ref("grpc_operation_summary"),
+			"sources": arrayOf(ref("grpc_operation_impact_source")),
+		}, "grpc", "sources"),
 		"module_replacement": object(map[string]any{
 			"path":    stringType(),
 			"version": stringType(),

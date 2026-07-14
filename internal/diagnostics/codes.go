@@ -43,6 +43,10 @@ const (
 	CodeGrpcCatalogFailed Code = "grpc_catalog_failed"
 	// CodeGrpcCallAmbiguous：项目调用的 receiver 无法唯一收敛到 generated binding。
 	CodeGrpcCallAmbiguous Code = "grpc_call_ambiguous"
+	// CodeGrpcServerBindingUnresolved: a generated registration is known but its concrete provider type is not statically provable.
+	CodeGrpcServerBindingUnresolved Code = "grpc_server_binding_unresolved"
+	// CodeGrpcServerBindingAmbiguous: multiple concrete provider types remain possible.
+	CodeGrpcServerBindingAmbiguous Code = "grpc_server_binding_ambiguous"
 )
 
 // Severity 是诊断严重级别的类型。

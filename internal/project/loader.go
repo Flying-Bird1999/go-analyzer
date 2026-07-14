@@ -51,6 +51,7 @@ func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
 		BuildContext: effectiveBuildContext(buildCtx),
 		Packages:     map[string]*Package{},
 		Diagnostics:  []LoadDiagnostic{},
+		moduleRoots:  map[string]string{absRoot: modulePath},
 	}
 	if err := filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -193,14 +194,34 @@ func (p *Project) loadFile(path string) error {
 
 // packagePathForDir 将磁盘目录转换为完整包路径（module path 加上相对子路径）。
 func (p *Project) packagePathForDir(dir string) (string, error) {
-	rel, err := filepath.Rel(p.Root, dir)
+	moduleRoot, modulePath := p.moduleForDir(dir)
+	rel, err := filepath.Rel(moduleRoot, dir)
 	if err != nil {
 		return "", err
 	}
 	if rel == "." {
-		return p.ModulePath, nil
+		return modulePath, nil
 	}
-	return p.ModulePath + "/" + filepath.ToSlash(rel), nil
+	return modulePath + "/" + filepath.ToSlash(rel), nil
+}
+
+func (p *Project) moduleForDir(dir string) (string, string) {
+	for current := dir; ; current = filepath.Dir(current) {
+		if modulePath := p.moduleRoots[current]; modulePath != "" {
+			return current, modulePath
+		}
+		if current != p.Root {
+			if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
+				if modulePath, readErr := ReadModulePath(current); readErr == nil {
+					p.moduleRoots[current] = modulePath
+					return current, modulePath
+				}
+			}
+		}
+		if current == p.Root || filepath.Dir(current) == current {
+			return p.Root, p.ModulePath
+		}
+	}
 }
 
 // importMap 从文件 import 列表构建“导入别名/包名 -> import path”的映射，

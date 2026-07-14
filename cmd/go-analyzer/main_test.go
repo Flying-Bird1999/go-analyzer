@@ -178,12 +178,49 @@ func TestSchemaCommandWritesFactsSchema(t *testing.T) {
 	}
 }
 
+func TestGrpcImpactCommandWritesCanonicalOperation(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "grpc-service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffPath := filepath.Join(t.TempDir(), "change.diff")
+	writeMainTestFile(t, filepath.Dir(diffPath), filepath.Base(diffPath), `diff --git a/service/reply.go b/service/reply.go
+--- a/service/reply.go
++++ b/service/reply.go
+@@ -3,5 +3,5 @@ package service
+ func BuildReply() string {
+-	return "old"
++	return "pong"
+ }
+`)
+	out, err := runWithCapturedStdoutBytes(t, []string{"grpc-impact", "--project", root, "--diff", diffPath, "--format", "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"fullMethod": "/example.echo.v1.EchoService/ping"`)) {
+		t.Fatalf("grpc-impact output = %s", out)
+	}
+	if bytes.Contains(out, []byte(`/example.echo.v1.EchoService/Health`)) {
+		t.Fatalf("grpc-impact should not include unaffected operation: %s", out)
+	}
+}
+
+func TestSchemaCommandWritesGrpcImpactSchema(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"schema", "--type", "grpc-impact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"title": "go-analyzer gRPC provider impact tree"`)) {
+		t.Fatalf("schema output = %s", out)
+	}
+}
+
 func TestHelpCommandListsCommands(t *testing.T) {
 	out, err := runWithCapturedStdoutBytes(t, []string{"help"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"impact", "HTTP 接口", "IM event", "绝对路径"} {
+	for _, want := range []string{"impact", "grpc-impact", "HTTP 接口", "IM event", "绝对路径"} {
 		if !bytes.Contains(out, []byte(want)) {
 			t.Fatalf("help output missing %q: %s", want, out)
 		}

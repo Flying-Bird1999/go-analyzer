@@ -82,6 +82,8 @@ type Store struct {
 	GrpcOperations []GrpcOperationFact `json:"grpc_operations"`
 	// GrpcCalls 是项目内精确匹配 generated client binding 的调用点。
 	GrpcCalls []GrpcCallFact `json:"grpc_calls"`
+	// GrpcProviders are canonical operations exposed by concrete gRPC server registrations.
+	GrpcProviders []GrpcProviderFact `json:"grpc_providers"`
 	// Links 是 route-handler 与 handler-annotation 的关联事实，由 linker 写入。
 	Links []LinkFact `json:"links"`
 	// Diagnostics 是各阶段记录的可恢复不确定性诊断。
@@ -122,6 +124,7 @@ func NewStore(root, modulePath string, buildContext ...BuildContextFact) *Store 
 		IMEvents:        []IMEventFact{},
 		GrpcOperations:  []GrpcOperationFact{},
 		GrpcCalls:       []GrpcCallFact{},
+		GrpcProviders:   []GrpcProviderFact{},
 		Links:           []LinkFact{},
 		Diagnostics:     []DiagnosticFact{},
 	}

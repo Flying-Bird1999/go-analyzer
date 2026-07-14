@@ -84,6 +84,70 @@ func DiscoverDependencies(ctx context.Context, root string, opts BuildContextOpt
 	return packages, nil
 }
 
+// DiscoverDependencyPackages resolves only the requested package sources.
+// Unlike DiscoverDependencies it does not traverse ./..., so unrelated broken
+// packages cannot block analyzers that need a small, statically known subset.
+func DiscoverDependencyPackages(ctx context.Context, root string, opts BuildContextOptions, importPaths []string) ([]DependencyPackage, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	modulePath, err := ReadModulePath(absRoot)
+	if err != nil {
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	paths := normalizeImportPaths(importPaths)
+	if len(paths) == 0 {
+		return []DependencyPackage{}, nil
+	}
+	before, err := moduleFileSnapshot(absRoot)
+	if err != nil {
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	args := []string{"list", "-json", "-mod=" + dependencyModuleMode(absRoot)}
+	if tags := normalizeBuildTags(opts.Tags); len(tags) > 0 {
+		args = append(args, "-tags="+strings.Join(tags, ","))
+	}
+	args = append(args, paths...)
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = absRoot
+	cmd.Env = dependencyCommandEnv(opts)
+	stdout, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, &DependencyDiscoveryError{Err: fmt.Errorf("go %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))}
+		}
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	after, err := moduleFileSnapshot(absRoot)
+	if err != nil {
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	if !sameModuleSnapshot(before, after) {
+		return nil, &DependencyDiscoveryError{Err: fmt.Errorf("go list modified go.mod or go.sum")}
+	}
+	packages, err := decodeDependencyPackages(stdout, modulePath)
+	if err != nil {
+		return nil, &DependencyDiscoveryError{Err: err}
+	}
+	return packages, nil
+}
+
+func normalizeImportPaths(paths []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
 type listedModule struct {
 	Path    string
 	Version string

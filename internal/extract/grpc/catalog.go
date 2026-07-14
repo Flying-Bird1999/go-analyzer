@@ -357,6 +357,8 @@ func baseTypeName(expr ast.Expr) string {
 	switch x := expr.(type) {
 	case *ast.StarExpr:
 		return baseTypeName(x.X)
+	case *ast.ParenExpr:
+		return baseTypeName(x.X)
 	case *ast.Ident:
 		return x.Name
 	case *ast.IndexExpr:

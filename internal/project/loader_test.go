@@ -168,6 +168,25 @@ func TaggedOnly() {}
 	}
 }
 
+func TestLoadUsesNearestNestedModulePath(t *testing.T) {
+	root := t.TempDir()
+	writeLoaderTestFile(t, root, "go.mod", "module example.com/root\n\ngo 1.24\n")
+	writeLoaderTestFile(t, root, "main.go", "package root\n")
+	writeLoaderTestFile(t, root, "proto/go.mod", "module example.com/api\n\ngo 1.24\n")
+	writeLoaderTestFile(t, root, "proto/order/service.go", "package order\n\ntype Request struct{}\n")
+
+	p, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Packages["example.com/api/order"] == nil {
+		t.Fatalf("nested module package not loaded with declared identity: %#v", p.Packages)
+	}
+	if p.Packages["example.com/root/proto/order"] != nil {
+		t.Fatalf("nested module package incorrectly attached to root module: %#v", p.Packages)
+	}
+}
+
 // writeLoaderTestFile 是加载器测试中向临时目录写入测试源码文件的辅助函数。
 func writeLoaderTestFile(t *testing.T, root, rel, content string) {
 	t.Helper()

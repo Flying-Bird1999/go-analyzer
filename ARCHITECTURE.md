@@ -5,13 +5,13 @@
 
 ## 1. 定位
 
-`go-analyzer` 面向**单个 Go BFF 项目**进行静态分析。它不聚合多个 BFF 仓；调用方需要多仓结果时，应分别执行并自行汇总。
+`go-analyzer` 面向**单个 Go 服务项目**进行静态分析，当前支持 BFF 与 gRPC Provider 两类项目。它不聚合多个仓库；调用方需要跨 gRPC、BFF 或前端串联时，应分别执行并自行编排。
 
 核心问题：
 
 ```text
-一份 BFF 源码快照中，某个代码 diff 和/或上游 gRPC operation 变更，
-最终关联哪些 HTTP endpoint 与出站 IM event？
+一份 BFF 源码快照中，代码 diff 和/或上游 gRPC operation 关联哪些 HTTP endpoint 与出站 IM event？
+一份 gRPC 服务源码快照中，代码 diff 关联哪些 canonical gRPC operation？
 ```
 
 系统只输出可由静态事实证明的关系，不猜测运行时注入、反射、外部 SDK 内部调用或动态路由。
@@ -21,6 +21,7 @@
 | 命令 | 用途 | 输入 |
 | --- | --- | --- |
 | `impact` | 统一影响分析主入口 | `--diff` 和/或可重复的 `--grpc` |
+| `grpc-impact` | gRPC Provider 项目影响分析 | `--diff` |
 | `endpoint-assets` | 查询 BFF endpoint 依赖的 gRPC | 可重复的 `--endpoint` |
 | `facts` | 提取与调试项目事实 | `--project` |
 | `schema` | 输出 facts/impact JSON Schema | `--type facts|impact` |
@@ -39,6 +40,8 @@ impact --diff --grpc
 ```
 
 `endpoint-assets` 的输入格式为 `METHOD /path`，与 controller annotation 协议对齐；gRPC 输入必须是 canonical full method：`/package.Service/Method`。
+
+`grpc-impact` 与 BFF `impact` 是独立领域命令。前者只产出当前 gRPC 项目的受影响 operation，不查询 BFF；跨仓串联属于外部编排层。
 
 ## 3. 核心模型
 
@@ -65,6 +68,7 @@ project source
 | `RouteRegistrationFact` | router 注册、local/resolved path、handler |
 | `GrpcOperationFact` | generated client transport 中的 canonical gRPC operation |
 | `GrpcCallFact` | BFF 调用点、静态 client binding 与 operation 关联 |
+| `GrpcProviderFact` | gRPC 注册函数、具体实现、handler 与 operation 的关联 |
 | `IMEventFact` | 出站 IM event 及其依赖 |
 | `ChangeFact` | diff 映射得到的传播根 |
 
@@ -72,14 +76,13 @@ project source
 
 ### 4.1 Facts 构建
 
-`internal/app/buildFacts` 是共享构建入口：
+`internal/app/buildBaseFacts` 负责共享的项目加载、AST 索引、module 与 symbol facts。BFF `buildFacts` 在其上增加 annotation、route、reference、IM 和可选 gRPC client 抽取；`grpc-impact` 只增加 reference、generated server catalog 与 provider binding 抽取。
 
 ```text
 project.Load
   -> astindex.Build
-  -> annotation / route / reference / IM extraction
-  -> route-handler-annotation linking
-  -> optional gRPC dependency discovery and extraction
+  -> common symbol/module facts
+  -> BFF domain extraction OR gRPC provider extraction
 ```
 
 gRPC extraction mode：
@@ -165,6 +168,19 @@ impact --grpc B contains endpoint A
 
 `impact --grpc` consumer 的 `relation` 固定为 `may_call`：静态调用链可达，但不承诺每次 HTTP 请求都会执行 RPC。
 
+### 6.1 gRPC Provider Impact
+
+`grpc-impact` 的 operation 身份来自 generated `ServiceDesc`，服务暴露关系来自实际 `RegisterXxxServer(server, implementation)` 调用。具体 handler 必须由注册实参静态类型与 generated server method 共同证明。
+
+```text
+diff -> ChangeFact -> ReverseGraph -> concrete handler
+  -> GrpcProviderFact -> /package.Service/Method
+```
+
+当前覆盖直接 struct 实例、项目 constructor、注册器 struct 字段，以及可解析具体类型或 constructor 的泛型容器包装。无法唯一确定实现类型时不猜测；注册事实仍保留，但不会把任意 handler 绑定到 operation。
+
+generated server package 优先从仓内源码读取，并按最近的 `go.mod` 恢复嵌套 module import path；仓内不存在时，只读加载实际被 `RegisterXxxServer` 使用的依赖包，不扫描无关依赖图。
+
 ## 7. 模块边界
 
 | 模块 | 职责 | 不应承担 |
@@ -177,6 +193,7 @@ impact --grpc B contains endpoint A
 | `internal/graph` | ReverseGraph、RouteGraph、CallGraph、IMGraph 查询视图 | 修改 facts |
 | `internal/dependency` | endpoint <-> gRPC 双向查询 | CLI、diff 解析 |
 | `internal/impact` | 从 ChangeFact 构造传播树 | gRPC catalog 猜测 |
+| `internal/grpcimpact` | 从 ChangeFact 传播到 gRPC provider operation | HTTP route、IM 或跨仓查询 |
 | `internal/output` | 稳定排序、JSON、Schema | 生产或补全业务事实 |
 
 依赖方向：
@@ -211,6 +228,21 @@ project / astindex
 - `grpcSources`：输入 gRPC operation、consumer 证据、client binding、call-site chain 与 endpoint 摘要。
 - `endpointSourcesSummary`：endpoint -> file/module/grpc source 的轻量反查。
 
+`grpc-impact` 最大化复用相同结构语义：
+
+```json
+{
+  "summary": {},
+  "fileSources": [],
+  "grpcOperationSourcesSummary": []
+}
+```
+
+- `summary`：全局去重的 canonical gRPC operations。
+- `fileSources`：Diff、changed roots、完整传播树和来源内 operation 摘要。
+- `moduleSources`：仅在 go.mod 形成语义 module change 时输出。
+- `grpcOperationSourcesSummary`：operation -> file/module source 的轻量反查。
+
 `impact` 不输出 `buildContext` 或 diagnostics。需要排查事实和 diagnostics 时使用 `facts`。字段级 schema、排序规则和兼容性要求以 [output contract](docs/contracts/output-contract.md) 为准。
 
 ## 9. 扩展原则
@@ -219,7 +251,7 @@ project / astindex
 
 1. 新语法模式：在对应 extractor 中提取 facts，并增加最小 fixture。
 2. 新静态关系：在 linker 或 graph 中建立查询视图，不在 output 补推。
-3. 新 impact source：复用 `RunImpact` 与统一 `ImpactDocument`，不要新增孤立报告命令。
+3. 同一领域的新 impact source 应合入该领域现有命令；不同公共终点领域可以拥有独立命令，但必须复用 base facts、Diff 与图能力。
 4. 新输出字段：同步 Go struct、Schema、output contract、golden；只输出已证明的事实。
 5. 新 gRPC pattern：先证明 generated transport、receiver binding、project call chain 三类证据仍完整；否则拒绝或诊断，不降级猜测。
 
@@ -231,6 +263,7 @@ project / astindex
 | --- | --- |
 | 字段级 JSON 与 Schema | [docs/contracts/output-contract.md](docs/contracts/output-contract.md) |
 | gRPC 专项设计 | [docs/bff-grpc-dependency-assets/design.md](docs/bff-grpc-dependency-assets/design.md) |
+| gRPC 服务影响设计 | [docs/grpc-service-impact/design.md](docs/grpc-service-impact/design.md) |
 | gRPC 实施与验收记录 | [docs/bff-grpc-dependency-assets/implementation-plan.md](docs/bff-grpc-dependency-assets/implementation-plan.md) |
 | 真实 BFF 验证 | [docs/validation/real-project-validation.md](docs/validation/real-project-validation.md) |
 | CLI 用法 | [README.md](README.md) |

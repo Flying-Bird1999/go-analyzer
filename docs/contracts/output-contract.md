@@ -105,6 +105,41 @@ Top-level shape:
   last in the rendered JSON. It is always present and is an empty array when no
   endpoint is impacted.
 
+## gRPC Service Impact Output
+
+`grpc-impact` uses a separate contract for gRPC Provider projects while retaining the BFF impact source-tree structure:
+
+```json
+{
+  "summary": {
+    "impactedGrpcOperationCount": 1,
+    "impactedGrpcOperations": [
+      {
+        "fullMethod": "/package.Service/Method",
+        "protoPackage": "package",
+        "service": "Service",
+        "method": "Method"
+      }
+    ]
+  },
+  "fileSources": [
+    {
+      "sourceFile": "provider/service.go",
+      "diff": "...",
+      "symbols": {},
+      "impactedGrpcOperations": []
+    }
+  ],
+  "grpcOperationSourcesSummary": []
+}
+```
+
+- `summary` is the deduplicated formal result.
+- `fileSources` retains the applied diff and recursive `ImpactNode` evidence.
+- `moduleSources` is emitted only for semantic go.mod changes.
+- `grpcOperationSourcesSummary` is the operation-to-file/module reverse view.
+- gRPC terminal nodes use `kind=grpc_operation`, `relation=exposed_grpc_operation`, and canonical `fullMethod`.
+
 ### `fileSources`
 
 Every ordinary changed file is retained, including changes that reach no

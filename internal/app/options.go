@@ -29,3 +29,12 @@ type ImpactOptions struct {
 	// BuildContext 是 Go 构建上下文（GOOS/GOARCH/tags/cgo）。
 	BuildContext project.BuildContextOptions
 }
+
+// GrpcImpactOptions configures impact analysis for one gRPC provider project.
+type GrpcImpactOptions struct {
+	ProjectPath      string
+	DiffPath         string
+	ImpactConfigPath string
+	Format           string
+	BuildContext     project.BuildContextOptions
+}

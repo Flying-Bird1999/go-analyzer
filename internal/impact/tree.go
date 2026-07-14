@@ -32,6 +32,8 @@ type Node struct {
 	Method string `json:"method,omitempty"`
 	// Path 用于端点/路由/注解节点，表示 HTTP path。
 	Path string `json:"path,omitempty"`
+	// FullMethod is set on canonical gRPC operation terminal nodes.
+	FullMethod string `json:"full_method,omitempty"`
 	// Children 是递归子节点。
 	Children []Node `json:"children"`
 }

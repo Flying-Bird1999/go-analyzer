@@ -278,6 +278,76 @@ const (
 type buildFactsOptions struct{ grpcMode grpcMode }
 
 func buildFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder, options buildFactsOptions) (builtFacts, error) {
+	built, err := buildBaseFacts(projectPath, buildContext, recorder)
+	if err != nil {
+		return builtFacts{}, err
+	}
+	p, idx, store := built.project, built.index, built.store
+	if err := recorder.measure("annotation_extract", func() error {
+		return annotation.Extract(p, idx, store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("route_extract", func() error {
+		return route.Extract(p, idx, store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("link", func() error {
+		return link.Run(idx, store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("reference_extract", func() error {
+		return reference.Extract(p, idx, store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if err := recorder.measure("im_extract", func() error {
+		return imextract.Extract(p, idx, store)
+	}); err != nil {
+		return builtFacts{}, err
+	}
+	if options.grpcMode != grpcModeOff {
+		dependencies, dependencyErr := discoverProjectDependencies(p, recorder)
+		if dependencyErr != nil {
+			if options.grpcMode == grpcModeStrict {
+				return builtFacts{}, dependencyErr
+			}
+			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:grpc_dependency_load", Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
+			return builtFacts{project: p, index: idx, store: store}, nil
+		}
+		if err := recorder.measure("grpc_extract", func() error {
+			catalog, catalogErr := grpcextract.BuildCatalog(dependencies)
+			if catalogErr != nil {
+				return catalogErr
+			}
+			calls, callErr := grpcextract.Extract(p, idx, catalog)
+			if callErr != nil {
+				return callErr
+			}
+			store.GrpcOperations = append(store.GrpcOperations, catalog.Operations...)
+			store.GrpcCalls = append(store.GrpcCalls, calls...)
+			return nil
+		}); err != nil {
+			if options.grpcMode == grpcModeStrict {
+				return builtFacts{}, err
+			}
+			code := diagnostics.CodeGrpcCatalogFailed
+			var ambiguity *grpcextract.CallAmbiguityError
+			if errors.As(err, &ambiguity) {
+				code = diagnostics.CodeGrpcCallAmbiguous
+			}
+			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:" + string(code), Code: code, Severity: diagnostics.SeverityWarning, Message: err.Error()})
+		}
+	}
+	return builtFacts{project: p, index: idx, store: store}, nil
+}
+
+// buildBaseFacts is shared by BFF impact and gRPC service impact. It owns only
+// project loading, declaration indexing, module facts and symbol projection;
+// domain extractors are added by their command-specific pipelines.
+func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (builtFacts, error) {
 	var p *project.Project
 	if err := recorder.measure("project_load", func() error {
 		var loadErr error
@@ -340,72 +410,20 @@ func buildFacts(projectPath string, buildContext project.BuildContextOptions, re
 	for _, id := range symbolIDs {
 		store.AddSymbol(idx.Symbols[id])
 	}
-	if err := recorder.measure("annotation_extract", func() error {
-		return annotation.Extract(p, idx, store)
-	}); err != nil {
-		return builtFacts{}, err
-	}
-	if err := recorder.measure("route_extract", func() error {
-		return route.Extract(p, idx, store)
-	}); err != nil {
-		return builtFacts{}, err
-	}
-	if err := recorder.measure("link", func() error {
-		return link.Run(idx, store)
-	}); err != nil {
-		return builtFacts{}, err
-	}
-	if err := recorder.measure("reference_extract", func() error {
-		return reference.Extract(p, idx, store)
-	}); err != nil {
-		return builtFacts{}, err
-	}
-	if err := recorder.measure("im_extract", func() error {
-		return imextract.Extract(p, idx, store)
-	}); err != nil {
-		return builtFacts{}, err
-	}
-	if options.grpcMode != grpcModeOff {
-		grpcBuildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
-		cgo := p.BuildContext.CgoEnabled
-		grpcBuildContext.CgoEnabled = &cgo
-		var dependencies []project.DependencyPackage
-		if err := recorder.measure("dependency_list", func() error {
-			var dependencyErr error
-			dependencies, dependencyErr = project.DiscoverDependencies(context.Background(), p.Root, grpcBuildContext)
-			return dependencyErr
-		}); err != nil {
-			if options.grpcMode == grpcModeStrict {
-				return builtFacts{}, err
-			}
-			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:grpc_dependency_load", Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: err.Error()})
-			return builtFacts{project: p, index: idx, store: store}, nil
-		}
-		if err := recorder.measure("grpc_extract", func() error {
-			catalog, catalogErr := grpcextract.BuildCatalog(dependencies)
-			if catalogErr != nil {
-				return catalogErr
-			}
-			calls, callErr := grpcextract.Extract(p, idx, catalog)
-			if callErr != nil {
-				return callErr
-			}
-			store.GrpcOperations = append(store.GrpcOperations, catalog.Operations...)
-			store.GrpcCalls = append(store.GrpcCalls, calls...)
-			return nil
-		}); err != nil {
-			if options.grpcMode == grpcModeStrict {
-				return builtFacts{}, err
-			}
-			code := diagnostics.CodeGrpcCatalogFailed
-			var ambiguity *grpcextract.CallAmbiguityError
-			if errors.As(err, &ambiguity) {
-				code = diagnostics.CodeGrpcCallAmbiguous
-			}
-			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:" + string(code), Code: code, Severity: diagnostics.SeverityWarning, Message: err.Error()})
-		}
-	}
 	return builtFacts{project: p, index: idx, store: store}, nil
+}
+
+func discoverProjectDependencies(p *project.Project, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
+	grpcBuildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
+	cgo := p.BuildContext.CgoEnabled
+	grpcBuildContext.CgoEnabled = &cgo
+	var dependencies []project.DependencyPackage
+	err := recorder.measure("dependency_list", func() error {
+		var dependencyErr error
+		dependencies, dependencyErr = project.DiscoverDependencies(context.Background(), p.Root, grpcBuildContext)
+		return dependencyErr
+	})
+	return dependencies, err
 }
 
 // moduleUsageChanges 把模块 usage 事实转换为可传播的 ChangeFact 列表。

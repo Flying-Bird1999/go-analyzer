@@ -16,6 +16,7 @@ type Project struct {
 	BuildContext BuildContext        // 实际生效的构建上下文（GOOS/GOARCH/Tags/CgoEnabled）。
 	Packages     map[string]*Package // 以完整包路径为键的 Package 集合。
 	Diagnostics  []LoadDiagnostic    // 加载阶段产生的可恢复诊断。
+	moduleRoots  map[string]string   // nested module root -> declared module path.
 }
 
 // LoadOptions 是加载项目时可选的输入参数，目前仅包含构建上下文配置。

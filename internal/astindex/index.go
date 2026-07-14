@@ -77,6 +77,9 @@ func (idx *Index) IsProjectPackage(packagePath string) bool {
 	if idx == nil || idx.Project == nil || idx.Project.ModulePath == "" || packagePath == "" {
 		return false
 	}
+	if _, ok := idx.Project.Packages[packagePath]; ok {
+		return true
+	}
 	modulePath := idx.Project.ModulePath
 	return packagePath == modulePath || strings.HasPrefix(packagePath, modulePath+"/")
 }

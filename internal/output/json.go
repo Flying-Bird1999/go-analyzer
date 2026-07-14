@@ -27,6 +27,7 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 		IMEvents:       append([]facts.IMEventFact(nil), store.IMEvents...),
 		GrpcOperations: append([]facts.GrpcOperationFact(nil), store.GrpcOperations...),
 		GrpcCalls:      append([]facts.GrpcCallFact(nil), store.GrpcCalls...),
+		GrpcProviders:  append([]facts.GrpcProviderFact(nil), store.GrpcProviders...),
 		Links:          append([]facts.LinkFact(nil), store.Links...),
 		Diagnostics:    append([]facts.DiagnosticFact(nil), store.Diagnostics...),
 	}
@@ -60,6 +61,9 @@ func RenderJSON(store *facts.Store) ([]byte, error) {
 	})
 	sort.Slice(doc.GrpcCalls, func(i, j int) bool {
 		return doc.GrpcCalls[i].ID < doc.GrpcCalls[j].ID
+	})
+	sort.Slice(doc.GrpcProviders, func(i, j int) bool {
+		return doc.GrpcProviders[i].ID < doc.GrpcProviders[j].ID
 	})
 	sort.Slice(doc.Links, func(i, j int) bool {
 		return doc.Links[i].ID < doc.Links[j].ID
@@ -107,6 +111,9 @@ func ensureNonNilSlices(doc *Document) {
 	}
 	if doc.GrpcCalls == nil {
 		doc.GrpcCalls = []facts.GrpcCallFact{}
+	}
+	if doc.GrpcProviders == nil {
+		doc.GrpcProviders = []facts.GrpcProviderFact{}
 	}
 	if doc.Links == nil {
 		doc.Links = []facts.LinkFact{}

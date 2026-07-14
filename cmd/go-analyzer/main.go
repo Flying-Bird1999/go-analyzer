@@ -38,6 +38,8 @@ func run(args []string) error {
 		return runFacts(args[1:])
 	case "impact":
 		return runImpact(args[1:])
+	case "grpc-impact":
+		return runGrpcImpact(args[1:])
 	case "endpoint-assets":
 		return runEndpointAssets(args[1:])
 	case "schema":
@@ -45,6 +47,47 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unsupported command %q", args[0])
 	}
+}
+
+func runGrpcImpact(args []string) error {
+	fs := flag.NewFlagSet("grpc-impact", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projectPath := fs.String("project", "", "absolute gRPC project path")
+	diffPath := fs.String("diff", "", "absolute unified diff file path")
+	impactConfigPath := fs.String("impact-config", "", "optional absolute impact config path")
+	format := fs.String("format", "json", "output format")
+	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
+	buildFlags := registerBuildContextFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validateAbsPath("project path", *projectPath); err != nil {
+		return err
+	}
+	if err := validateAbsPath("diff path", *diffPath); err != nil {
+		return err
+	}
+	if *impactConfigPath != "" {
+		if err := validateAbsPath("impact config path", *impactConfigPath); err != nil {
+			return err
+		}
+	}
+	buildContext, err := buildFlags.options()
+	if err != nil {
+		return err
+	}
+	result, err := app.RunGrpcImpactWithMetrics(app.GrpcImpactOptions{
+		ProjectPath: *projectPath, DiffPath: *diffPath, ImpactConfigPath: *impactConfigPath,
+		Format: *format, BuildContext: buildContext,
+	})
+	if err != nil {
+		return err
+	}
+	if *timings {
+		writeTimings(os.Stderr, result.Metrics)
+	}
+	_, err = os.Stdout.Write(result.Output)
+	return err
 }
 
 type stringList []string
@@ -234,7 +277,7 @@ func parseBuildTags(raw string) []string {
 func runSchema(args []string) error {
 	fs := flag.NewFlagSet("schema", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	schemaType := fs.String("type", "facts", "schema type: facts or impact")
+	schemaType := fs.String("type", "facts", "schema type: facts, impact, or grpc-impact")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -274,6 +317,13 @@ func usage(command string) string {
 --impact-config 为可选配置，仅用于 module 版本变更过滤；未传时自动尝试读取项目内 .analyzer/go-impact.config.json。
 Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
+	case "grpc-impact":
+		return `用法:
+  go-analyzer grpc-impact --project /absolute/path/to/grpc-project --diff /absolute/path/to/change.diff [--impact-config /absolute/path/to/go-impact.config.json] [--format json] [--timings]
+
+基于已经应用到变更后源码的 unified diff，分析当前 gRPC 服务项目受影响的 canonical gRPC operations。
+命令只分析单个 gRPC 项目，不查询 BFF，也不执行跨仓编排。
+`
 	case "endpoint-assets":
 		return `用法:
   go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id" [--endpoint "POST /orders"] [--format json] [--timings]
@@ -282,17 +332,20 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 		return `用法:
   go-analyzer schema --type facts
   go-analyzer schema --type impact
+  go-analyzer schema --type grpc-impact
 
-输出 facts/impact JSON Schema，用于校验稳定输出契约。
+输出 facts/impact/grpc-impact JSON Schema，用于校验稳定输出契约。
 `
 	default:
 		return `用法:
  go-analyzer help impact
+ go-analyzer help grpc-impact
  go-analyzer help endpoint-assets
  go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "/package.Service/Method"] [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
 对外接入命令:
   impact  从 unified diff 和/或上游 gRPC operation 分析受影响 HTTP 接口和 IM event。
+  grpc-impact  从 gRPC 服务项目 unified diff 分析受影响 canonical gRPC operations。
   endpoint-assets  查询 BFF endpoint 的 gRPC 依赖。
 
 CLI 路径参数必须使用绝对路径。

@@ -3,6 +3,7 @@
   "diagnostics": [],
   "grpc_calls": [],
   "grpc_operations": [],
+  "grpc_providers": [],
   "im_events": [],
   "links": [],
   "middleware": [],

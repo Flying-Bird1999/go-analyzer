@@ -29,6 +29,8 @@ type Document struct {
 	GrpcOperations []facts.GrpcOperationFact `json:"grpc_operations"`
 	// GrpcCalls 是项目内已证明的 generated client 调用事实。
 	GrpcCalls []facts.GrpcCallFact `json:"grpc_calls"`
+	// GrpcProviders are project-local gRPC server registration bindings.
+	GrpcProviders []facts.GrpcProviderFact `json:"grpc_providers"`
 	// Links 是 route-handler / handler-annotation / middleware symbol 关联。
 	Links []facts.LinkFact `json:"links"`
 	// Diagnostics 是可恢复的不确定性诊断。

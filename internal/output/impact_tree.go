@@ -91,6 +91,8 @@ type ImpactNode struct {
 	Method string `json:"method,omitempty"`
 	// Path 是 endpoint 终端的 HTTP path。
 	Path string `json:"path,omitempty"`
+	// FullMethod is the canonical identity of a gRPC operation terminal.
+	FullMethod string `json:"fullMethod,omitempty"`
 }
 
 // EndpointSummary 是去重后的受影响 HTTP 端点摘要。
@@ -501,6 +503,7 @@ func projectImpactNode(node impact.Node) ImpactNode {
 		Cycle:      node.Cycle,
 		Method:     node.Method,
 		Path:       node.Path,
+		FullMethod: node.FullMethod,
 		Children:   make([]ImpactNode, 0, len(node.Children)),
 	}
 	for _, child := range node.Children {
