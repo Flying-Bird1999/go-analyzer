@@ -22,6 +22,7 @@ type serviceConfig struct {
 	versionExpression string
 	methods           []methodConfig
 	span              facts.SourceSpan
+	end               token.Pos
 	raw               string
 }
 
@@ -45,17 +46,17 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 				if len(configs) == 0 {
 					continue
 				}
-				providerExpr, ok := providerServiceExpression(fn)
-				if !ok {
-					continue
-				}
-				providerType, ok := resolveProviderType(file, idx, fn, providerExpr)
-				if !ok {
-					continue
-				}
 				registration := functionSymbol(file, fn)
-				mapper := mappers[typeKey(providerType.PackagePath, providerType.TypeName)]
 				for _, config := range configs {
+					providerExpr, ok := providerServiceExpressionAfter(fn, config.end)
+					if !ok {
+						continue
+					}
+					providerType, ok := resolveProviderType(file, idx, fn, providerExpr)
+					if !ok {
+						continue
+					}
+					mapper := mappers[typeKey(providerType.PackagePath, providerType.TypeName)]
 					for _, method := range config.methods {
 						goMethod, ok := mapper[method.name]
 						if !ok {
@@ -93,7 +94,7 @@ func collectServiceConfigs(root string, file *project.File, fn *ast.FuncDecl) []
 		if !ok || !strings.HasSuffix(typeExpression(lit.Type), "ServiceConfig") {
 			return true
 		}
-		config := serviceConfig{span: sourceSpan(root, file, lit), raw: expression(lit)}
+		config := serviceConfig{span: sourceSpan(root, file, lit), end: lit.End(), raw: expression(lit)}
 		for _, element := range lit.Elts {
 			kv, ok := element.(*ast.KeyValueExpr)
 			if !ok {
@@ -154,7 +155,11 @@ func methodNames(root string, file *project.File, expr ast.Expr) []methodConfig 
 	return out
 }
 
-func providerServiceExpression(fn *ast.FuncDecl) (ast.Expr, bool) {
+// providerServiceExpressionAfter binds a ServiceConfig to the first following
+// SetProviderService call in the same export function. Exports can contain
+// unrelated registrations before a config, so choosing the first call in the
+// function would bind the config to the wrong implementation.
+func providerServiceExpressionAfter(fn *ast.FuncDecl, after token.Pos) (ast.Expr, bool) {
 	var out ast.Expr
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		if out != nil {
@@ -162,6 +167,9 @@ func providerServiceExpression(fn *ast.FuncDecl) (ast.Expr, bool) {
 		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) != 1 || !strings.HasSuffix(expression(call.Fun), ".SetProviderService") {
+			return true
+		}
+		if call.Pos() <= after {
 			return true
 		}
 		out = call.Args[0]

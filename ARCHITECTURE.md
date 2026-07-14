@@ -172,7 +172,7 @@ impact --grpc B contains endpoint A
 
 ### 6.1 服务入口契约影响
 
-`grpc-impact` 将不同协议原子 fact 投影为统一 service contract，正式终点包括 `grpc_operation`、`http_endpoint`、`dubbo_method` 和 `job`。只有存在真实注册证据且注册函数接入项目引用链时才进入 summary。
+`grpc-impact` 将不同协议原子 fact 投影为统一 service contract，正式终点包括 `grpc_operation`、`http_endpoint`、`dubbo_method` 和 `job`。只有存在真实注册证据，且注册函数已被项目引用或符合 `main`、`Register*`、`Initialize*` 启动约定时才进入 summary。
 
 ```text
 diff -> ChangeFact -> ReverseGraph -> concrete handler
@@ -278,6 +278,7 @@ project / astindex
 | gRPC 服务影响设计 | [docs/grpc-service-impact/design.md](docs/grpc-service-impact/design.md) |
 | gRPC 实施与验收记录 | [docs/bff-grpc-dependency-assets/implementation-plan.md](docs/bff-grpc-dependency-assets/implementation-plan.md) |
 | 真实 BFF 验证 | [docs/validation/real-project-validation.md](docs/validation/real-project-validation.md) |
+| 下一位 agent 交接 | [handoff.md](handoff.md) |
 | CLI 用法 | [README.md](README.md) |
 | 完整测试 | `go test ./...` |
 | 真实项目 smoke | `bash scripts/smoke-real-projects.sh` |

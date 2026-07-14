@@ -90,11 +90,11 @@ terminal relation 保持协议语义，不修改现有 gRPC 值：gRPC 使用 `e
 
 **HTTP**：复用当前独立的 route facts 与 linker，不复制 BFF endpoint annotation 语义。支持 group、HTTP verb、已知 middleware wrapper 与 function value handler。动态 group prefix 记录来源表达式和配置键。静态 path 的 identity 为 `METHOD resolvedPath`；动态 prefix 的稳定 ID 使用注册位置，输出 `localPath` 与 `pathExpression`，不伪造完整 URL。
 
-**Dubbo**：从启动链上的 `ExportProviders` 进入 `*ApiExport`，关联 `Provider.Services[key] = ServiceConfig`、`SetProviderService(instance)`、`MethodMapper` 和具体 method。identity 为 `interface@version/method`；version 动态时保留 symbolic 版本而不伪造值。
+**Dubbo**：从启动链上的 `ExportProviders` 进入 `*ApiExport`，关联 `Provider.Services[key] = ServiceConfig`、其后的 `SetProviderService(instance)`、`MethodMapper` 和具体 method。一个 export 内可存在无关 provider 注册，`ServiceConfig` 不得按函数内第一个 `SetProviderService` 绑定。identity 为 `interface@version/method`；version 动态时保留 symbolic 版本而不伪造值。
 
 **Job**：识别参数或返回值为 `map[string]jobx.TaskFunc`、`map[string]JobListener` 的注册函数及其静态 map 赋值。identity 为 job name，handler 为可调用符号。动态 task name 或无法唯一绑定的 handler 不进入正式结果。
 
-三类新增入口都需要 registration liveness：注册函数必须能通过项目引用、容器绑定或明确 framework adapter 连接到启动根。无法证明启动连接时仅保留诊断事实。这一规则不要求执行环境条件为真，只证明代码确实接入服务启动结构。
+三类新增入口都需要 registration liveness：注册函数必须被项目引用，或命名为 `main`、`Register*`、`Initialize*` 之一的启动约定入口。无法满足此条件时不进入正式 summary；当前实现不为此单独输出 diagnostics。这一规则不要求执行环境条件为真，只证明代码结构具备启动接入证据。
 
 ## 6. 输出契约
 
@@ -137,14 +137,14 @@ terminal relation 保持协议语义，不修改现有 gRPC 值：gRPC 使用 `e
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| A | 通用 terminal projection、JSON 兼容投影、schema/golden | 已完成 |
+| A | 通用 terminal projection、协议分组 JSON、schema/golden | 已完成 |
 | B | HTTP route 与 Job 注册 | 已完成 |
 | C | Dubbo provider | 已完成 |
 | D | 统一 contract projection、真实项目回归 | 已完成 |
 
 实现继续复用反向图，协议差异收敛在 extractor 与 terminal projection。Dubbo method 配置和 service 级配置使用不同 span/change kind：前者只影响单 method，后者影响该 interface 的全部 method。
 
-真实项目已分别构造 HTTP、Dubbo、XXL-Job 三文件 diff。`sc1-server` 精确得到 `POST /mc/sendMessage`、`ChatBoxAdviceApi/getAdvice`、`comment_match`；`sc2-server` 精确得到 symbolic `GET /count/:type`、`StoreChannelConfigApi@1.0.0/queryLoginConfig`、`UnReadCountScanJob`。同 interface 的 sibling Dubbo method 未被带出，验证后两个项目工作区已恢复。
+真实项目已覆盖两轮多文件 diff。`sc1-server` 精确得到 `POST /mc/sendMessage`、`ChatBoxAdviceApi/getAdvice`、`comment_match`；`sc2-server` 精确得到 symbolic `GET /count/:type`、`StoreChannelConfigApi@1.0.0/queryLoginConfig`、`UnReadCountScanJob`。复审轮中，`sc1-server` 同时覆盖 struct-field gRPC provider 与另外三类入口；`sc2-server` 覆盖多 provider Dubbo export、Dubbo service-level fan-out、gRPC、symbolic HTTP、Job，结果为 `grpc=1`、`dubbo=3`、`http=1`、`job=1`。验证后两个项目工作区已恢复。
 
 ## 8. 验收标准
 
@@ -154,7 +154,7 @@ terminal relation 保持协议语义，不修改现有 gRPC 值：gRPC 使用 `e
 4. 动态 path 不伪造最终值；JSON 明确显示 symbolic 状态和原始表达式。
 5. `go test ./...`、schema/golden、命令级 fixture 均通过。
 6. 在 `sc1-server`、`sc2-server` 分别覆盖 HTTP、Dubbo、Job 的真实范式；无对应范式的协议不得虚构“已验证”。
-7. 旧 gRPC JSON 字段、排序、terminal relation 和 schema 继续通过兼容测试。
+7. `summary`、`fileSources[].impacts`、`entrySourcesSummary` 均固定输出 `grpc/dubbo/http/job` 四个数组，且不存在旧的重复 gRPC 聚合字段。
 
 ## 9. 后续待办
 

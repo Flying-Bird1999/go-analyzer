@@ -2,7 +2,7 @@
 
 `go-analyzer` 是面向单个 Go 服务项目的影响范围分析工具。当前支持 BFF 的 HTTP/IM 与 gRPC 依赖分析，以及后端服务的 gRPC/HTTP/Dubbo/XXL-Job 入站契约影响分析。
 
-当前已经完成基于变更后项目的符号级影响分析闭环，并输出按 diff 来源组织的原始传播树、接口摘要和 IM event 摘要。
+当前已经完成基于变更后项目的符号级影响分析闭环：BFF 输出 HTTP/IM 影响；后端服务通过 `grpc-impact` 输出 gRPC、Dubbo、HTTP、XXL-Job 入站契约。
 
 ## 背景
 
@@ -125,7 +125,7 @@ go run ./cmd/go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service -
 
 ## CLI 使用
 
-对外接入可以使用 `impact` 和 `endpoint-assets`。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
+对外接入可以使用 `impact`、`endpoint-assets` 和 `grpc-impact`。CLI help 使用中文描述，命令名和参数名保持英文，便于脚本集成。CLI 边界要求输入路径使用绝对路径：
 
 ```bash
 go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolute/path/to/change.diff --format json
@@ -134,7 +134,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 
 ### 命令与参数参考
 
-`impact` 是对外接入命令；`facts`、`schema`、`--timings` 为开发调试能力（详见 ARCHITECTURE.md「内部调试契约」）。
+`impact`、`endpoint-assets`、`grpc-impact` 是对外接入命令；`facts`、`schema`、`--timings` 为开发调试能力（详见 ARCHITECTURE.md）。
 
 | 命令 / 参数 | 用途 | 面向 |
 | --- | --- | --- |
@@ -142,7 +142,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 | `grpc-impact` | 从已应用 diff 分析后端服务受影响的 gRPC/HTTP/Dubbo/XXL-Job 入口 | 接入 |
 | `endpoint-assets` | 查询一个或多个精确 endpoint 的 gRPC 依赖 | 接入 |
 | `facts` | 输出项目 facts JSON，用于调试抽取结果与 diagnostics | 调试 |
-| `schema` | 输出 facts / impact JSON Schema，校验稳定输出契约 | 调试 |
+| `schema` | 输出 facts / impact / grpc-impact JSON Schema，校验稳定输出契约 | 调试 |
 | `--project` | 目标项目根目录（绝对路径） | 接入 |
 | `--diff` | 已应用到变更后源码的 unified diff（绝对路径） | 接入 |
 | `--impact-config` | 可选 module 版本变更过滤配置（绝对路径） | 接入 |
@@ -159,7 +159,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 
 `endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`impact` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`，可与 `--diff` 组合。gRPC 关系仅在 generated client、静态 receiver 类型和项目内可执行调用链共同证明时输出；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。
 
-`grpc-impact` 在单个后端服务项目内输出已注册 gRPC、HTTP、Dubbo 和 XXL-Job 入口；命令不查询 BFF，Pulsar/IM 为后续待办。详细边界见 [service external impact design](docs/service-external-impact/design.md)。
+`grpc-impact` 在单个后端服务项目内输出已注册 gRPC、HTTP、Dubbo 和 XXL-Job 入口。JSON 固定按 `grpc`、`dubbo`、`http`、`job` 分组；命令不查询 BFF，Pulsar/IM 为后续待办。详细边界见 [service external impact design](docs/service-external-impact/design.md)，下一步工作见 [handoff](handoff.md)。
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 提供 `--diff` 时，`impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。`--diff` 与 `--grpc` 至少提供一个。

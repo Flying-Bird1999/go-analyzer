@@ -143,10 +143,10 @@ Top-level shape:
 - `entrySourcesSummary` is the protocol-grouped contract-to-file/module reverse view.
 - Terminal relations are `exposed_grpc_operation`, `exposed_http_endpoint`, `exposed_dubbo_method`, and `registered_job`.
 
-### `fileSources`
+### BFF `fileSources`
 
-Every ordinary changed file is retained, including changes that reach no
-endpoint:
+The following shape belongs to BFF `impact`, not `grpc-impact`. Service entry
+sources use the preceding `impacts: {grpc,dubbo,http,job}` shape.
 
 ```json
 {
@@ -176,7 +176,7 @@ endpoint:
 - `impactedIMEvents` is the sorted, deduplicated set of statically resolved IM
   event strings for this source.
 
-### `moduleSources`
+### BFF `moduleSources`
 
 Resolved dependency changes are separate from ordinary source changes:
 
