@@ -5,7 +5,12 @@
       {
         "method": "POST",
         "path": "/orders",
-        "routes": null
+        "routes": [
+          {
+            "method": "POST",
+            "path": "/orders"
+          }
+        ]
       }
     ],
     "impactedIMCount": 0,
@@ -135,7 +140,12 @@
         {
           "method": "POST",
           "path": "/orders",
-          "routes": null
+          "routes": [
+            {
+              "method": "POST",
+              "path": "/orders"
+            }
+          ]
         }
       ],
       "impactedIMEvents": []

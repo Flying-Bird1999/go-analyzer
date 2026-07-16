@@ -54,8 +54,43 @@ func ValidateApplied(root string, changes []FileChange) error {
 				)
 			}
 		}
+		// 纯删除 diff（如 git diff -U0，无上下文行也无新增行）没有任何 ExpectedLine，
+		// 此时仅靠"文件存在"无法区分已应用与过期快照。补充校验：被删除块不应仍原样
+		// 出现在其新版本锚点处；若仍完整出现，说明删除尚未应用到当前源码。
+		// 仅在无 ExpectedLine 时启用，避免影响带上下文的常规 diff。
+		if len(change.ExpectedLines) == 0 {
+			for _, block := range change.DeletedBlocks {
+				if deletedBlockStillPresent(lines, block) {
+					return fmt.Errorf(
+						"diff for %q does not match the post-change source: deleted lines still present near line %d",
+						path,
+						block.OldStartLine,
+					)
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// deletedBlockStillPresent 判断被删除块是否仍完整、连续地出现在其旧版本起始行处，
+// 用于识别未应用的纯删除 diff：未应用时文件仍是旧布局，被删行恰好落在 OldStartLine。
+// 要求整块逐行匹配，避免因单行 trivial 内容（如相邻重复的 "}"）产生误判；
+// 空块视为不成立。
+func deletedBlockStillPresent(lines []string, block DeletedBlock) bool {
+	if len(block.Lines) == 0 || block.OldStartLine <= 0 {
+		return false
+	}
+	start := block.OldStartLine - 1
+	if start+len(block.Lines) > len(lines) {
+		return false
+	}
+	for i, deleted := range block.Lines {
+		if lines[start+i] != deleted {
+			return false
+		}
+	}
+	return true
 }
 
 // projectPath 把 diff 中的相对路径解析为项目根下的绝对路径，并做安全校验：

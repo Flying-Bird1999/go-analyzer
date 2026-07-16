@@ -200,6 +200,74 @@ func TestFactsSchemaRequiredAlignsOmitempty(t *testing.T) {
 	}
 }
 
+// TestImpactDocumentStructsAlignSchemaDefinitions 断言 impact 与 grpc-impact 输出文档
+// 各结构体的 json 字段集合 == 对应 schema $def 的 properties 集合。这道护栏覆盖对外
+// impact/grpc-impact 契约（此前只有 facts 有对齐护栏），防止如 endpoint_summary.routes
+// 这类结构体新增字段却漏改 schema 的静默漂移再次发生。
+func TestImpactDocumentStructsAlignSchemaDefinitions(t *testing.T) {
+	type docCase struct {
+		schema string
+		defs   map[string]reflect.Type
+	}
+	cases := []docCase{
+		{
+			schema: "impact",
+			defs: map[string]reflect.Type{
+				"endpoint_summary":             reflect.TypeOf(EndpointSummary{}),
+				"dependency_endpoint":          reflect.TypeOf(dependencyEndpoint{}),
+				"dependency_symbol":            reflect.TypeOf(dependencySymbol{}),
+				"dependency_client":            reflect.TypeOf(dependencyClient{}),
+				"dependency_call_site":         reflect.TypeOf(dependencyCallSite{}),
+				"dependency_chain":             reflect.TypeOf(dependencyChain{}),
+				"endpoint_impact_source":       reflect.TypeOf(EndpointImpactSource{}),
+				"endpoint_root_symbol_summary": reflect.TypeOf(EndpointRootSymbolSummary{}),
+				"endpoint_source_summary":      reflect.TypeOf(EndpointSourceSummary{}),
+				"file_source_impact":           reflect.TypeOf(FileSourceImpact{}),
+				"grpc_consumer_impact":         reflect.TypeOf(GrpcConsumerImpact{}),
+				"grpc_operation_summary":       reflect.TypeOf(GrpcOperationSummary{}),
+				"grpc_source_impact":           reflect.TypeOf(GrpcSourceImpact{}),
+				"impact_node":                  reflect.TypeOf(ImpactNode{}),
+				"impact_summary":               reflect.TypeOf(ImpactSummary{}),
+				"module_source_impact":         reflect.TypeOf(ModuleSourceImpact{}),
+				"module_replacement":           reflect.TypeOf(ModuleReplacement{}),
+			},
+		},
+		{
+			schema: "grpc-impact",
+			defs: map[string]reflect.Type{
+				"service_contract_summary":            reflect.TypeOf(ServiceContractSummary{}),
+				"contract_registration_summary":       reflect.TypeOf(ContractRegistrationSummary{}),
+				"contract_source_summary":             reflect.TypeOf(ContractSourceSummary{}),
+				"service_entry_impact_groups":         reflect.TypeOf(ServiceEntryImpactGroups{}),
+				"service_entry_file_source_impact":    reflect.TypeOf(GrpcFileSourceImpact{}),
+				"service_entry_module_source_impact":  reflect.TypeOf(GrpcModuleSourceImpact{}),
+				"service_entry_source_summary_groups": reflect.TypeOf(ServiceEntrySourceSummaryGroups{}),
+				"service_entry_impact_source":         reflect.TypeOf(ServiceEntryImpactSource{}),
+				"endpoint_root_symbol_summary":        reflect.TypeOf(EndpointRootSymbolSummary{}),
+				"impact_node":                         reflect.TypeOf(ImpactNode{}),
+				"module_replacement":                  reflect.TypeOf(ModuleReplacement{}),
+			},
+		},
+	}
+	for _, dc := range cases {
+		defs := schemaDocuments[dc.schema]["$defs"].(map[string]any)
+		for name, typ := range dc.defs {
+			name, typ := name, typ
+			t.Run(dc.schema+"/"+name, func(t *testing.T) {
+				def, ok := defs[name].(map[string]any)
+				if !ok {
+					t.Fatalf("%s schema $defs missing %q", dc.schema, name)
+				}
+				want := keysSorted(jsonFieldNames(typ))
+				got := schemaKeys(def)
+				if !equalStringSlices(got, want) {
+					t.Errorf("%s/%s: schema properties = %#v, struct json fields = %#v", dc.schema, name, got, want)
+				}
+			})
+		}
+	}
+}
+
 // keysSorted 返回 map 键的排序切片，便于稳定比较。
 func keysSorted(m map[string]bool) []string {
 	out := make([]string, 0, len(m))

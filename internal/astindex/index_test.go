@@ -42,6 +42,42 @@ func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	}
 }
 
+// TestBuildDisambiguatesDuplicateInitSymbols 回归 P2-3：同包多个 func init()（Go 唯一允许
+// 同名的声明）必须各自保留独立符号与 span，而不是共用 func:<pkg>::init 相互覆盖。否则命中
+// 被覆盖 init 函数体的 diff 会丢失 symbol 级根、降级为 file_changed。
+func TestBuildDisambiguatesDuplicateInitSymbols(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/initpkg\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package main\n\nfunc init() { _ = 1 }\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "z.go"), []byte("package main\n\nfunc init() { _ = 2 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inits := 0
+	for id, symbol := range idx.Symbols {
+		if symbol.Name == "init" {
+			inits++
+			if symbol.Span.File == "" {
+				t.Fatalf("init symbol %q has empty file", id)
+			}
+		}
+	}
+	if inits != 2 {
+		t.Fatalf("expected 2 distinct init symbols, got %d: %#v", inits, idx.Symbols)
+	}
+}
+
 func TestIndexIsProjectPackage(t *testing.T) {
 	idx := &Index{Project: &project.Project{ModulePath: "example.com/app"}}
 	cases := []struct {

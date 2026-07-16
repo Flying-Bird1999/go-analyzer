@@ -15,6 +15,24 @@ func unwrapGenericCallee(expr ast.Expr) ast.Expr {
 	}
 }
 
+// containsCallExpr 判断表达式子树内是否存在函数调用。用于识别链式调用的接收者
+// 表达式（如 Helper(g).Method(...) 中的 Helper(g)），以便在选择器整体解析后仍
+// 单独遍历接收者子树、补齐被剪枝的调用引用。
+func containsCallExpr(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if found {
+			return false
+		}
+		if _, ok := node.(*ast.CallExpr); ok {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 // genericTypeArguments 提取泛型调用的显式类型实参列表；非泛型表达式返回 nil。
 func genericTypeArguments(expr ast.Expr) []ast.Expr {
 	switch x := expr.(type) {

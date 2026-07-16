@@ -1199,6 +1199,41 @@ func findReference(t *testing.T, store *facts.Store, from, to facts.SymbolID, ki
 	return facts.ReferenceFact{}
 }
 
+// TestExtractChainedReceiverCallReference 回归 P1-1：链式接收者调用 Helper(g).GET(...)
+// 中的 Helper(g) 调用必须被记为 call 引用。此前选择器整体解析后 return false 会剪掉
+// 接收者子树，导致此类中间件/守卫 helper 变更漏传播到其链式注册的 endpoint。
+func TestExtractChainedReceiverCallReference(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/chained\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) Group(path string) *Group { return g }
+func (g *Group) GET(path string, handler any) {}
+
+func Guard(g *Group) *Group { return g }
+func Handler() {}
+
+func Init(root *Group) {
+	chained := root.Group("/chained")
+	Guard(chained).GET("/a", Handler) // 链式：Guard(chained) 处于选择器接收者位置
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixtureRoot(t, root)
+	// 关键断言：Init 对 Guard 的 call 引用必须存在（此前链式形式会漏掉）。
+	findReference(t, store,
+		"func:example.com/chained::Init",
+		"func:example.com/chained::Guard",
+		facts.ReferenceKindCall,
+	)
+}
+
 // assertReferenceDiagnostic 断言存储中存在指定诊断码的引用相关诊断。
 func assertReferenceDiagnostic(t *testing.T, store *facts.Store, code string) {
 	t.Helper()

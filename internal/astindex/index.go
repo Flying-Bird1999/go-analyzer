@@ -13,6 +13,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"strconv"
 	"sort"
 	"strings"
 
@@ -300,9 +301,16 @@ func (idx *Index) indexStructFields(file *project.File, id facts.SymbolID, spec 
 // 剥离指针/泛型包装得到基础类型名，再拼出 method 符号 ID。
 func (idx *Index) indexFuncDecl(p *project.Project, pkg *project.Package, file *project.File, decl *ast.FuncDecl) {
 	if decl.Recv == nil || len(decl.Recv.List) == 0 {
-		id := FunctionSymbolID(pkg.Path, decl.Name.Name)
-		idx.Symbols[id] = symbolFact(p, file, id, "func", pkg.Path, "", decl.Name.Name, decl.Pos(), decl.End())
-		idx.indexCallableReturnType(file, id, decl)
+		fact := symbolFact(p, file, FunctionSymbolID(pkg.Path, decl.Name.Name), "func", pkg.Path, "", decl.Name.Name, decl.Pos(), decl.End())
+		// init 与空白标识符 _ 是 Go 唯一允许同包重名的函数声明，会导致
+		// func:<pkg>::init / func:<pkg>::_ 符号 ID 相互覆盖。它们无法被按名引用/调用，
+		// 因此用 <file>:<line> 消歧是安全的，且保证每个声明都保留独立 symbol 与 span，
+		// 使命中其函数体的 diff 仍降解为 symbol_changed 而非 file_changed。
+		if decl.Name.Name == "init" || decl.Name.Name == "_" {
+			fact.ID = facts.SymbolID(string(fact.ID) + "#" + fact.Span.File + ":" + strconv.Itoa(fact.Span.StartLine))
+		}
+		idx.Symbols[fact.ID] = fact
+		idx.indexCallableReturnType(file, fact.ID, decl)
 		return
 	}
 	receiver := ReceiverTypeName(decl.Recv.List[0].Type)
@@ -395,10 +403,13 @@ func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec
 	if len(spec.Values) == 0 {
 		return ValueType{}
 	}
-	valueIndex := index
-	if valueIndex >= len(spec.Values) {
-		valueIndex = 0
+	// 元组解包（var a, b = f()：名字数 > 值数）无法为除首名以外的名字确定单值类型；
+	// callableReturnType 只能给出首返回值类型，钳到 index 0 会把后续名字误判成首返回类型。
+	// 按"不猜测"原则，越界时直接放弃推断。
+	if index >= len(spec.Values) {
+		return ValueType{}
 	}
+	valueIndex := index
 	if call, ok := spec.Values[valueIndex].(*ast.CallExpr); ok {
 		if valueType, ok := idx.ResolveBuiltinNewType(file, call); ok {
 			return valueType

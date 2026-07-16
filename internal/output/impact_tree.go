@@ -299,7 +299,7 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 			if endpoint.Method == "" || endpoint.Path == "" {
 				continue
 			}
-			summary := EndpointSummary{Method: endpoint.Method, Path: endpoint.Path}
+			summary := EndpointSummary{Method: endpoint.Method, Path: endpoint.Path, Routes: routesForImpact(endpoint.Routes)}
 			endpointID := endpointKey(summary)
 			builder.endpoints[endpointID] = summary
 			globalEndpoints[endpointID] = summary
@@ -965,6 +965,16 @@ func RenderImpactTreeJSON(doc ImpactDocument) ([]byte, error) {
 // endpointKey 构造端点去重 key。用 \x00 分隔避免 method/path 拼接歧义。
 func endpointKey(endpoint EndpointSummary) string {
 	return endpoint.Method + "\x00" + endpoint.Path
+}
+
+// routesForImpact 把 impact 层解析出的路由候选投影为对外 dependencyEndpoint 列表。
+// 始终返回非 nil 切片，保证 routes 字段稳定输出为数组（空时为 []）而非 null。
+func routesForImpact(routes []impact.EndpointRoute) []dependencyEndpoint {
+	out := make([]dependencyEndpoint, 0, len(routes))
+	for _, route := range routes {
+		out = append(out, dependencyEndpoint{Method: route.Method, Path: route.Path})
+	}
+	return out
 }
 
 // sortEndpointSummaries 按 (Method, Path) 稳定排序端点摘要。

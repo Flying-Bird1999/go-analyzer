@@ -77,7 +77,8 @@ func extractFunctionBodyReferences(p *project.Project, file *project.File, idx *
 		return
 	}
 	resolver := newResolver(file, idx, scopedValueTypes{})
-	ast.Inspect(fn.Body, func(node ast.Node) bool {
+	var visit func(node ast.Node) bool
+	visit = func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.CallExpr:
 			// 先把泛型调用的显式类型实参当作 type 引用处理。
@@ -105,7 +106,12 @@ func extractFunctionBodyReferences(p *project.Project, file *project.File, idx *
 				targets = resolver.ResolveValueIDs(x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
-			// 选择器整体解析完毕，不再下钻以避免重复解析根 Ident。
+			// 选择器整体解析完毕，不再下钻以避免重复解析根 Ident；但接收者
+			// 表达式内若含调用（如链式 Helper(g).GET(...)），必须单独遍历该
+			// 子树，否则接收者位置的调用引用会被整体剪枝而漏掉。
+			if containsCallExpr(x.X) {
+				ast.Inspect(x.X, visit)
+			}
 			return false
 		case *ast.Ident:
 			// 跳过被忽略位置、调用函数位置以及局部变量。
@@ -115,7 +121,8 @@ func extractFunctionBodyReferences(p *project.Project, file *project.File, idx *
 			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
 		}
 		return true
-	})
+	}
+	ast.Inspect(fn.Body, visit)
 }
 
 // extractGenDeclTypeReferences 处理通用声明：type 声明的 FromSymbol 为该类型，
@@ -151,7 +158,8 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 	// callFuns 标记作为调用函数的选择器位置，需走接收者解析路径。
 	callFuns := callFunPositions(expr)
 	resolver := newResolver(file, idx, scopedValueTypes{})
-	ast.Inspect(expr, func(node ast.Node) bool {
+	var visit func(node ast.Node) bool
+	visit = func(node ast.Node) bool {
 		switch x := node.(type) {
 		case *ast.CallExpr:
 			for _, typeArgument := range genericTypeArguments(x.Fun) {
@@ -176,7 +184,12 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 				targets = resolver.ResolveValueIDs(x)
 			}
 			addValueReferenceFacts(p, file, store, from, x, targets)
-			// 选择器已整体解析，避免再回退到根 Ident 单独产生重复 value 引用。
+			// 选择器已整体解析，避免再回退到根 Ident 单独产生重复 value 引用；
+			// 但接收者表达式内含调用（链式 Helper(g).Method(...)）时必须单独
+			// 遍历该子树，否则接收者调用引用会被整体剪枝而漏掉。
+			if containsCallExpr(x.X) {
+				ast.Inspect(x.X, visit)
+			}
 			return false
 		case *ast.Ident:
 			if ignored[x.Pos()] || callFuns[x.Pos()] {
@@ -185,7 +198,8 @@ func extractInitializerReferences(p *project.Project, file *project.File, idx *a
 			addValueReferenceFacts(p, file, store, from, x, resolver.ResolveValueIDs(x))
 		}
 		return true
-	})
+	}
+	ast.Inspect(expr, visit)
 }
 
 // addCallReference 将一次调用解析为目标符号候选，并为每个候选写一条 call 引用边。

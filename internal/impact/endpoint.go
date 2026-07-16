@@ -16,4 +16,14 @@ type EndpointImpact struct {
 	AnnotationID string `json:"annotation_id"`
 	// HandlerSymbol 是端点对应的处理函数符号。
 	HandlerSymbol facts.SymbolID `json:"handler_symbol"`
+	// Routes 是该端点 handler 已静态解析出的路由候选（method + resolved path），
+	// 作为辅助证据随端点输出（ARCHITECTURE 第 5 节）。它可能为空或与注解路径漂移，
+	// 但不改变注解 endpoint 的正式身份。
+	Routes []EndpointRoute `json:"routes"`
+}
+
+// EndpointRoute 是端点 handler 关联的一条已解析路由候选。
+type EndpointRoute struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
 }

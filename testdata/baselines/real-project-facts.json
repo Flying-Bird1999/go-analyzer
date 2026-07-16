@@ -22,7 +22,7 @@
     "grpc_operations": 410,
     "grpc_calls": 252,
     "diagnostics": {
-      "symbol_reference_ambiguous_interface": 1
+      "symbol_reference_ambiguous_interface": 5
     },
     "grpc_cases": [
       {
@@ -58,7 +58,7 @@
       "route_dynamic_path": 2,
       "route_unresolved_handler": 3,
       "symbol_reference_unknown_interface_binding": 5,
-      "symbol_reference_unresolved": 389,
+      "symbol_reference_unresolved": 395,
       "type_reference_unresolved": 4
     }
   },
@@ -73,7 +73,7 @@
       "grpc_dependency_load_failed": 1,
       "route_dynamic_path": 34,
       "route_unresolved_handler": 1,
-      "symbol_reference_unresolved": 43
+      "symbol_reference_unresolved": 44
     }
   }
 }

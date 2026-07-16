@@ -148,6 +148,12 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			oldLine = oldStart
 			newLine = newStart
 			hunkActive = true
+		case strings.HasPrefix(line, "@@"):
+			// 以 @@ 开头但不是合法的 unified `@@ ` 头（该情况已在上一 case 消费）：
+			// 组合 diff 的 `@@@ ... @@@`、
+			// 或畸形/截断的 hunk 头。静默跳过会让该文件产出"零变更"的假结论（漏报），
+			// 故直接报错，与本解析器只接受标准 unified diff 的契约一致。
+			return nil, fmt.Errorf("unsupported diff hunk header (combined diffs are not supported): %q", line)
 		case !hunkActive && strings.HasPrefix(line, "--- "):
 			// `---`/`+++` 行只在非 hunk 区识别为路径头，避免 hunk 内以 `-- ` 开头的
 			// 删除行（如 SQL 注释）被误当成路径头。

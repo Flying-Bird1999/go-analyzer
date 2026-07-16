@@ -225,7 +225,7 @@ func (p *Project) moduleForDir(dir string) (string, string) {
 }
 
 // importMap 从文件 import 列表构建“导入别名/包名 -> import path”的映射，
-// 显式别名优先于 path 的 base 名，供后续引用解析使用。
+// 显式别名优先于 path 推断的默认包名，供后续引用解析使用。
 func importMap(file *ast.File) map[string]string {
 	imports := map[string]string{}
 	for _, spec := range file.Imports {
@@ -233,11 +233,38 @@ func importMap(file *ast.File) map[string]string {
 		if err != nil {
 			continue
 		}
-		name := filepath.Base(path)
+		name := defaultImportName(path)
 		if spec.Name != nil {
 			name = spec.Name.Name
 		}
 		imports[name] = path
 	}
 	return imports
+}
+
+// defaultImportName 从 import path 推断无别名时的默认包名。
+// import path 以 "/" 分隔（非平台分隔符，故不用 filepath.Base）；对语义化版本
+// 后缀 /vN（N>=2）回退到上一段，例如 github.com/foo/bar/v2 -> "bar"，
+// 使 `bar.X` 这类引用能正确解析。这只是启发式默认，真实包名可能仍与路径尾段
+// 不同（此时需依赖显式别名）。
+func defaultImportName(importPath string) string {
+	segments := strings.Split(strings.Trim(importPath, "/"), "/")
+	last := segments[len(segments)-1]
+	if len(segments) >= 2 && isMajorVersionSegment(last) {
+		return segments[len(segments)-2]
+	}
+	return last
+}
+
+// isMajorVersionSegment 判断路径尾段是否为语义化主版本形式 vN（N 为一个或多个数字）。
+func isMajorVersionSegment(segment string) bool {
+	if len(segment) < 2 || segment[0] != 'v' {
+		return false
+	}
+	for _, r := range segment[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

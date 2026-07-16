@@ -525,6 +525,7 @@ func (b *treeBuilder) endpointNode(
 		Path:          path,
 		AnnotationID:  annotationID,
 		HandlerSymbol: handler,
+		Routes:        b.resolvedRoutesForHandler(handler),
 	}
 	return Node{
 		ID:         id,
@@ -539,6 +540,34 @@ func (b *treeBuilder) endpointNode(
 		Path:       path,
 		Children:   []Node{},
 	}
+}
+
+// resolvedRoutesForHandler 收集指定 handler 已静态解析出的路由候选，作为 endpoint
+// 的辅助证据（ARCHITECTURE 第 5 节）。优先取 resolved path，缺失时退回 local path；
+// 无 method 或无任何 path 的路由跳过。顺序去重以保证输出稳定。
+func (b *treeBuilder) resolvedRoutesForHandler(handler facts.SymbolID) []EndpointRoute {
+	if handler == "" {
+		return nil
+	}
+	var out []EndpointRoute
+	seen := map[string]bool{}
+	for _, route := range b.routes.RoutesForHandler(handler) {
+		path := route.ResolvedPath
+		if path == "" {
+			path = route.LocalPath
+		}
+		if route.Method == "" || path == "" {
+			continue
+		}
+		candidate := EndpointRoute{Method: strings.ToUpper(route.Method), Path: path}
+		key := candidate.Method + "\x00" + candidate.Path
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, candidate)
+	}
+	return out
 }
 
 // referenceRelation 把引用边 kind 转成树中展示的 relation 字符串。

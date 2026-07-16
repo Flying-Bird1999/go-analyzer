@@ -226,8 +226,18 @@ func dependencyCommandEnv(opts BuildContextOptions) []string {
 		"GOWORK=off",
 		"GOOS="+ctx.GOOS,
 		"GOARCH="+ctx.GOARCH,
-		"CGO_ENABLED="+strconv.FormatBool(ctx.CgoEnabled),
+		// go 工具链只识别 CGO_ENABLED=0/1；"true"/"false" 会被忽略并回落到
+		// 平台默认，导致 --cgo 覆盖对 go list 子进程失效。
+		"CGO_ENABLED="+cgoEnabledEnv(ctx.CgoEnabled),
 	)
+}
+
+// cgoEnabledEnv 把布尔 cgo 开关转成 go 工具链认可的 "0"/"1"。
+func cgoEnabledEnv(enabled bool) string {
+	if enabled {
+		return "1"
+	}
+	return "0"
 }
 
 func dependencyModuleMode(root string) string {

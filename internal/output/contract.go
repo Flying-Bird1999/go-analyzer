@@ -212,7 +212,8 @@ func commonDefinitions() map[string]any {
 		"endpoint_summary": object(map[string]any{
 			"method": stringType(),
 			"path":   stringType(),
-		}, "method", "path"),
+			"routes": arrayOf(ref("dependency_endpoint")),
+		}, "method", "path", "routes"),
 		"endpoint_root_symbol_summary": object(map[string]any{
 			"id":   stringType(),
 			"kind": stringType(),
@@ -257,11 +258,12 @@ func commonDefinitions() map[string]any {
 		}, "id", "kind", "name", "file"),
 		"grpc_consumer_impact": object(map[string]any{
 			"endpoint": ref("dependency_endpoint"),
+			"routes":   arrayOf(ref("dependency_endpoint")),
 			"relation": stringType(),
 			"handlers": arrayOf(ref("dependency_symbol")),
 			"clients":  arrayOf(ref("dependency_client")),
 			"chains":   arrayOf(ref("dependency_chain")),
-		}, "endpoint", "relation", "handlers", "clients", "chains"),
+		}, "endpoint", "routes", "relation", "handlers", "clients", "chains"),
 		"grpc_operation_summary": object(map[string]any{
 			"fullMethod":   stringType(),
 			"protoPackage": stringType(),

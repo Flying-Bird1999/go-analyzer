@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -24,7 +25,16 @@ func ReadModulePath(root string) (string, error) {
 		line := strings.TrimSpace(scanner.Text())
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[0] == "module" {
-			modulePath := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+			// fields[1] 已按空白切分，天然排除行尾 `// 注释`；再截断无空格
+			// 紧贴的 `//`，并对带引号形式（module "example.com/x"）做去引号。
+			modulePath := fields[1]
+			if idx := strings.Index(modulePath, "//"); idx >= 0 {
+				modulePath = modulePath[:idx]
+			}
+			if unquoted, err := strconv.Unquote(modulePath); err == nil {
+				modulePath = unquoted
+			}
+			modulePath = strings.TrimSpace(modulePath)
 			if modulePath != "" {
 				return modulePath, nil
 			}
