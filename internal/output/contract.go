@@ -301,7 +301,7 @@ func commonDefinitions() map[string]any {
 			"confidence":    confidenceType(),
 			"span":          ref("source_span"),
 			"resolved":      boolType(),
-		}, "id", "sender_symbol", "dependencies", "evidence", "confidence", "span", "resolved"),
+		}, "id", "sender_symbol", "dependencies", "evidence", "confidence", "resolved"),
 		"im_event_dependency": object(map[string]any{
 			"symbol_id":  stringType(),
 			"relation":   stringType(),
@@ -451,7 +451,8 @@ func commonDefinitions() map[string]any {
 			"dubboVersionExpression": stringType(),
 			"dubboMethod":            stringType(),
 			"registration":           ref("contract_registration_summary"),
-		}, "id", "kind", "identity", "identityResolution", "registration"),
+			"confidence":             confidenceType(),
+		}, "id", "kind", "identity", "identityResolution", "registration", "confidence"),
 		"contract_source_summary": object(map[string]any{
 			"contract": ref("service_contract_summary"),
 			"sources":  arrayOf(ref("service_entry_impact_source")),

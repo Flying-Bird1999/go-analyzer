@@ -86,7 +86,10 @@ def walk(value):
         leaked = forbidden.intersection(value)
         if leaked:
             raise SystemExit(f"retired fields leaked into raw impact output: {sorted(leaked)}")
-        if "kind" in value and ("id" not in value or not isinstance(value.get("children"), list)):
+        # 仅校验递归 impact_node（必有 kind + level + children）。
+        # rootSymbols 等 endpoint_root_symbol_summary 轻量条目有 kind 但无 level/children，
+        # 不是树节点，不应被本规则标记。
+        if "kind" in value and "level" in value and ("id" not in value or not isinstance(value.get("children"), list)):
             raise SystemExit(f"invalid recursive impact node: {value}")
         for item in value.values():
             walk(item)
@@ -101,18 +104,26 @@ PY
 run_project() {
   local name="$1"
   local path="$2"
+  local kind="${3:-bff}"
   local out="${OUT_DIR}/${name}.facts.json"
 
-  echo "analyzing ${name} at ${path}"
+  echo "analyzing ${name} at ${path} (kind=${kind})"
   "${ANALYZER_BIN}" facts --project "${path}" --format json > "${out}"
   python3 -m json.tool "${out}" > /dev/null
-  python3 - "$out" "$FACTS_BASELINE" "$name" <<'PY'
+  PROJECT_KIND="${kind}" python3 - "$out" "$FACTS_BASELINE" "$name" <<'PY'
 import json
 import os
 import sys
 from collections import Counter
 
 out, baseline_path, name = sys.argv[1:4]
+# PROJECT_KIND=bff（默认）强制 BFF 专属硬不变量（每条 route 必须有 handler_symbol
+# 与 resolved_path，且 route_to_handler 链接数 == route 数）。这些不变量反映 BFF
+# 的 annotation-first 端点语义，不适用于后端服务项目（服务项目常用动态前缀 route、
+# 无 annotation 的内部路由）。server 模式只保留通用不变量（JSON 合法、route_to_handler
+# <= routes、诊断不回归、计数容差）。
+kind = os.environ.get("PROJECT_KIND", "bff")
+bff_strict = kind == "bff"
 # SMOKE_STRICT=1 restores exact-equality gating (use when deliberately
 # refreshing the baseline). Otherwise raw counts tolerate normal BFF drift
 # within SMOKE_FACTS_TOLERANCE (fractional, default 5%). The hard extraction
@@ -133,12 +144,20 @@ routes_without_handler = sum(1 for route in routes if not route.get("handler_sym
 routes_without_resolved_path = sum(1 for route in routes if not route.get("resolved_path"))
 
 # --- Hard invariants: these are the real contract and never tolerate drift. ---
-if routes_without_handler:
-    raise SystemExit(f"{routes_without_handler} routes have no handler_symbol")
-if routes_without_resolved_path:
-    raise SystemExit(f"{routes_without_resolved_path} routes have no resolved_path")
-if route_to_handler != len(routes):
-    raise SystemExit(f"route_to_handler links={route_to_handler}, routes={len(routes)}")
+# BFF 专属不变量：每条 route 必须有 handler_symbol 与 resolved_path，且 route_to_handler
+# 链接数精确等于 route 数。后端服务项目（kind=server）不强制这些，因其路由语义不同
+# （动态前缀、内部路由无 annotation 是正常现象）。
+if bff_strict:
+    if routes_without_handler:
+        raise SystemExit(f"{routes_without_handler} routes have no handler_symbol")
+    if routes_without_resolved_path:
+        raise SystemExit(f"{routes_without_resolved_path} routes have no resolved_path")
+    if route_to_handler != len(routes):
+        raise SystemExit(f"route_to_handler links={route_to_handler}, routes={len(routes)}")
+else:
+    # 通用不变量：route_to_handler 链接数不应超过 route 数（链接不应凭空多出）。
+    if route_to_handler > len(routes):
+        raise SystemExit(f"route_to_handler links={route_to_handler} exceeds routes={len(routes)}")
 
 diagnostics = Counter(diagnostic.get("code") for diagnostic in (data.get("diagnostics") or []))
 actual = {
@@ -903,6 +922,80 @@ print(
 PY
 }
 
+# run_grpc_impact_fixture 在 grpc-service fixture 上跑 grpc-impact 端到端，
+# 验证 gRPC/Dubbo/HTTP/Job 四协议的 service-entry 完整流水线（P2-b：服务项目 smoke
+# 此前只跑 facts，无法验证 grpc-impact 的最终输出契约）。
+# grpc-service fixture 同时注册了四种协议，diff 改动 service/reply.go，
+# 断言 summary 四分组各自至少命中一条契约、entrySourcesSummary 四分组齐全。
+run_grpc_impact_fixture() {
+  local project="${ROOT_DIR}/testdata/fixtures/grpc-service"
+  local patch="${ROOT_DIR}/testdata/diffs/grpc-service.diff"
+  local out="${OUT_DIR}/grpc-service.grpc-impact.json"
+
+  echo "analyzing grpc-service grpc-impact fixture"
+  "${ANALYZER_BIN}" grpc-impact --project "${project}" --diff "${patch}" --format json > "${out}"
+  python3 -m json.tool "${out}" > /dev/null
+  python3 - "$out" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+summary = data.get("summary") or {}
+entry = data.get("entrySourcesSummary") or {}
+# 四分组必须齐全且每组至少一条契约（grpc-service 注册了四种协议）。
+for group in ("grpc", "dubbo", "http", "job"):
+    contracts = summary.get(group) or []
+    if not contracts:
+        raise SystemExit(f"grpc-service summary.{group} empty; expected >=1 contract")
+    entry_group = entry.get(group) or []
+    # entrySourcesSummary 每组必须有实际反查结果（contract + sources），不能只是空数组。
+    # 输出规范固定生成空数组，仅检查 key 存在会让「四组都为空」也通过。
+    if not entry_group:
+        raise SystemExit(f"grpc-service entrySourcesSummary.{group} empty; expected >=1 reverse-lookup entry")
+    # 每条 summary 契约必须带 confidence 字段（P1-4 输出契约）。
+    for c in contracts:
+        if "confidence" not in c:
+            raise SystemExit(f"grpc-service summary.{group} contract missing confidence: {c}")
+    # 双向一致性：summary 与 entrySourcesSummary 的 contract ID 集合必须完全相等，
+    # 再逐项比较 confidence 与 sources 非空。
+    # 这避免「只在 reverse ID 存在于 summary 时比较」的单向校验漏掉：
+    #   - summary 有 contract 但反查缺失（漏报反查）
+    #   - 反查有孤儿 contract 不在 summary（脏数据）
+    summary_conf = {c["id"]: c["confidence"] for c in contracts}
+    reverse_conf = {rev.get("contract", {}).get("id"): rev for rev in entry_group}
+    summary_only = set(summary_conf) - set(reverse_conf)
+    reverse_only = set(reverse_conf) - set(summary_conf)
+    if summary_only:
+        raise SystemExit(
+            f"grpc-service {group}: summary contracts missing from entrySourcesSummary: {sorted(summary_only)}"
+        )
+    if reverse_only:
+        raise SystemExit(
+            f"grpc-service {group}: entrySourcesSummary contracts not in summary: {sorted(reverse_only)}"
+        )
+    # 集合相等后，逐项比较 confidence 与 sources 非空。
+    for rev_id, rev in reverse_conf.items():
+        rev_conf = rev.get("contract", {}).get("confidence")
+        if summary_conf[rev_id] != rev_conf:
+            raise SystemExit(
+                f"grpc-service entrySourcesSummary.{group} contract {rev_id} confidence={rev_conf} "
+                f"!= summary confidence={summary_conf[rev_id]}"
+            )
+        if not rev.get("sources"):
+            raise SystemExit(f"grpc-service entrySourcesSummary.{group} contract {rev_id} has no sources")
+print(
+    "grpc-service grpc-impact: grpc={grpc} dubbo={dubbo} http={http} job={job}".format(
+        grpc=len(summary.get("grpc") or []),
+        dubbo=len(summary.get("dubbo") or []),
+        http=len(summary.get("http") or []),
+        job=len(summary.get("job") or []),
+    )
+)
+PY
+}
+
 run_impact_case() {
   local name="$1"
   local method="$2"
@@ -942,6 +1035,8 @@ PY
 SC1_BFF="$(resolve_sibling "sl-sc1-bff-service" "sc1-bff-service")"
 SC1_ADMIN_BFF="$(resolve_sibling "sl-sc1-admin-bff" "sc1-admin-bff")"
 SC2_ADMIN_BFF="$(resolve_sibling "sl-sc2-admin-bff" "sl-sc2-admin-bff")"
+SC1_SERVER="$(resolve_sibling "sc1-server" "sc1-server")"
+SC2_SERVER="$(resolve_sibling "sc2-server" "sc2-server")"
 
 (cd "${ROOT_DIR}" && \
   GOCACHE="${GOCACHE:-/private/tmp/go-build-go-analyzer-smoke}" \
@@ -954,8 +1049,18 @@ run_project "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
 validate_grpc_queries "sl-sc1-admin-bff" "${SC1_ADMIN_BFF}"
 run_project "sl-sc2-admin-bff" "${SC2_ADMIN_BFF}"
 validate_grpc_queries "sl-sc2-admin-bff" "${SC2_ADMIN_BFF}"
+# 后端服务项目（kind=server）：放宽 BFF 专属硬不变量，但保留 panic 捕获与计数容差。
+# 这覆盖了 P0-1 类回归（//go:linkname 无函数体声明导致 IM extractor panic 在
+# sc1-server 上长期未被 BFF-only smoke 发现的系统性盲点）。
+run_project "sc1-server" "${SC1_SERVER}" "server"
+run_project "sc2-server" "${SC2_SERVER}" "server"
 run_impact_fixture
-run_impact_case "deleted-route" "POST" "/internal/orders"
+# grpc-service：验证 grpc-impact（服务端入口契约）四协议端到端输出（P2-b）。
+run_grpc_impact_fixture
+# deleted-route：被删除的路由注册路径是 /internal/orders，但 handler 注解是 @Post /public/orders。
+# 按 annotation-first 端点身份规则，正式 endpoint 取注解（/public/orders），被删除路由只是传播根证据。
+# 因此 summary 期望 POST /public/orders（注解），而非 /internal/orders（被删除的路由注册路径）。
+run_impact_case "deleted-route" "POST" "/public/orders"
 run_impact_case "gomod-impact" "GET" "/api/checkIn"
 run_impact_case "middleware-selector" "GET" "/orders"
 

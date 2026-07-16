@@ -123,7 +123,10 @@ func resolveHandler(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, e
 			return resolved.ID, resolved.Confidence, true
 		}
 	}
-	if valueType, ok := idx.ResolveSelectorReceiverType(file, append(parts, "Execute")); ok {
+	// 先 copy parts 再 append，避免 append 改写 parts 底层数组（与上面 receiver 分支的
+	// remaining := append([]string(nil), parts[1:]...) 风格一致）。
+	partsWithExecute := append(append([]string(nil), parts...), "Execute")
+	if valueType, ok := idx.ResolveSelectorReceiverType(file, partsWithExecute); ok {
 		if resolved, ok := idx.ResolveValueTypeMethod(valueType, []string{"Execute"}); ok {
 			return resolved.ID, resolved.Confidence, true
 		}

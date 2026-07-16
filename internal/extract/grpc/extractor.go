@@ -55,6 +55,15 @@ func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts
 						return true
 					}
 					types := scope.resolve(selector.X, call.Pos())
+					// 防御性歧义处理：当 receiver 解析出多个候选类型且其中有 catalog 命中时，
+					// 报告 CallAmbiguityError 而非静默丢弃。
+					//
+					// 注意：当前 functionScope.resolve（见下方 resolve/valueTypes 实现）在
+					// 单一标识符上最多返回 1 个 ValueType（interface 多实现被
+					// resolveUniqueInterfaceBinding 拒绝，map 索引分发无 IndexExpr 分支），
+					// 故本分支在现有架构下不可达。保留它是为未来 resolve 能力扩展
+					// （如 map 值接口分发、多返回值 constructor）做防御；届时仅需保证
+					// 歧义被 surface 而非静默丢失。详见 TestCallAmbiguityErrorFormatting。
 					if len(types) > 1 {
 						matched := 0
 						for _, t := range types {

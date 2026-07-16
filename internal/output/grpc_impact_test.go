@@ -7,6 +7,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/dependency"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/impact"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/serviceimpact"
 )
 
 func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
@@ -69,5 +70,114 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	}
 	if len(rendered.EndpointSourcesSummary) != 1 || rendered.EndpointSourcesSummary[0].Sources[0].GrpcFullMethod != operation.FullMethod {
 		t.Fatalf("endpoint sources = %#v", rendered.EndpointSourcesSummary)
+	}
+}
+
+// TestBuildGrpcImpactDocumentMergesContractConfidenceWeakest 验证 P1-a 修复：
+// 两个变更根以不同 confidence 命中同一 contract（如一个 low file-changed 根与一个 high
+// symbol 根都到达同一 handler），summary 的 contract confidence 应取两者中最弱值，
+// 而非被后写根覆盖。
+//
+// 修复前：grpc_service_impact.go 对 globalContracts/builder.contracts 直接赋值（last-write-wins），
+// summary confidence 由 root 遍历顺序决定，与 entrySourcesSummary（weakestConfidence(path)）不一致。
+// 修复后：mergeContractSummary 按最弱合并 confidence。
+func TestBuildGrpcImpactDocumentMergesContractConfidenceWeakest(t *testing.T) {
+	handler := facts.SymbolID("func:example.com/project/controller::Get")
+	contract := serviceimpact.Contract{
+		ID:           "http:route:orders",
+		Kind:         serviceimpact.ContractHTTPEndpoint,
+		Identity:     "GET /orders",
+		Relation:     "exposed_http_endpoint",
+		EntrySymbol:  handler,
+		Confidence:   facts.ConfidenceHigh,
+		Route:        facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
+	}
+	// 两个根命中同一 contract：一个 high，一个 low。
+	tree := serviceimpact.TreeResult{Roots: []serviceimpact.RootImpact{
+		{
+			Change:    facts.ChangeFact{ID: "change:high", SymbolID: handler, File: "controller/order.go", Confidence: facts.ConfidenceHigh},
+			Root:      impact.Node{ID: string(handler), Kind: "func", Level: 0, Children: []impact.Node{}},
+			Contracts: []serviceimpact.ContractImpact{{Contract: contract, Confidence: facts.ConfidenceHigh}},
+		},
+		{
+			Change:    facts.ChangeFact{ID: "change:low", SymbolID: handler, File: "controller/order.go", Confidence: facts.ConfidenceLow},
+			Root:      impact.Node{ID: string(handler), Kind: "func", Level: 0, Children: []impact.Node{}},
+			Contracts: []serviceimpact.ContractImpact{{Contract: contract, Confidence: facts.ConfidenceLow}},
+		},
+	}}
+	// 即便 low 根在前（被 high 覆盖风险）也应得到 low；调换顺序也应得到 low。
+	for _, order := range []string{"low-first", "high-first"} {
+		roots := tree.Roots
+		if order == "high-first" {
+			roots = []serviceimpact.RootImpact{tree.Roots[1], tree.Roots[0]}
+		}
+		doc := BuildGrpcImpactDocument(nil, serviceimpact.TreeResult{Roots: roots}, GrpcImpactDocumentOptions{})
+		if len(doc.Summary.HTTP) != 1 {
+			t.Fatalf("%s: expected 1 http contract, got %d", order, len(doc.Summary.HTTP))
+		}
+		if got := doc.Summary.HTTP[0].Confidence; got != facts.ConfidenceLow {
+			t.Errorf("%s: summary http contract confidence = %q, want low (weakest of high+low roots)", order, got)
+		}
+		// entrySourcesSummary 反查：contract.confidence 必须与 summary 一致（low），
+		// 且 source 必须存在（验证反查不是空壳）。
+		if len(doc.EntrySourcesSummary.HTTP) != 1 {
+			t.Fatalf("%s: expected 1 entrySourcesSummary.HTTP group, got %d", order, len(doc.EntrySourcesSummary.HTTP))
+		}
+		entryGroup := doc.EntrySourcesSummary.HTTP[0]
+		if entryGroup.Contract.Confidence != facts.ConfidenceLow {
+			t.Errorf("%s: entrySourcesSummary http contract confidence = %q, want low (consistent with summary)", order, entryGroup.Contract.Confidence)
+		}
+		if len(entryGroup.Sources) == 0 {
+			t.Errorf("%s: entrySourcesSummary http group has no sources", order)
+		}
+	}
+}
+
+// TestBuildGrpcImpactDocumentEntrySourcesCrossFileConfidence 验证跨文件场景：
+// a.go（高置信）与 b.go（低置信）命中同一 contract，summary 与 entrySourcesSummary 的
+// contract.confidence 都应为 low（最弱）。修复前 entrySourcesSummary 因按文件排序
+// 先处理 a.go 而保留 high（first-write-wins），与 summary 不一致。
+func TestBuildGrpcImpactDocumentEntrySourcesCrossFileConfidence(t *testing.T) {
+	handler := facts.SymbolID("func:example.com/project/controller::Get")
+	contract := serviceimpact.Contract{
+		ID:           "http:route:orders",
+		Kind:         serviceimpact.ContractHTTPEndpoint,
+		Identity:     "GET /orders",
+		Relation:     "exposed_http_endpoint",
+		EntrySymbol:  handler,
+		Confidence:   facts.ConfidenceHigh,
+		Route:        facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
+	}
+	// a.go（字典序在前）高置信、b.go 低置信命中同一 contract。
+	tree := serviceimpact.TreeResult{Roots: []serviceimpact.RootImpact{
+		{
+			Change:    facts.ChangeFact{ID: "change:a", SymbolID: handler, File: "controller/a.go", Confidence: facts.ConfidenceHigh},
+			Root:      impact.Node{ID: string(handler), Kind: "func", Level: 0, Children: []impact.Node{}},
+			Contracts: []serviceimpact.ContractImpact{{Contract: contract, Confidence: facts.ConfidenceHigh}},
+		},
+		{
+			Change:    facts.ChangeFact{ID: "change:b", SymbolID: handler, File: "controller/b.go", Confidence: facts.ConfidenceLow},
+			Root:      impact.Node{ID: string(handler), Kind: "func", Level: 0, Children: []impact.Node{}},
+			Contracts: []serviceimpact.ContractImpact{{Contract: contract, Confidence: facts.ConfidenceLow}},
+		},
+	}}
+	doc := BuildGrpcImpactDocument(nil, tree, GrpcImpactDocumentOptions{})
+	if len(doc.Summary.HTTP) != 1 {
+		t.Fatalf("expected 1 http contract, got %d", len(doc.Summary.HTTP))
+	}
+	if got := doc.Summary.HTTP[0].Confidence; got != facts.ConfidenceLow {
+		t.Errorf("summary http confidence = %q, want low", got)
+	}
+	if len(doc.EntrySourcesSummary.HTTP) != 1 {
+		t.Fatalf("expected 1 entrySourcesSummary.HTTP group, got %d", len(doc.EntrySourcesSummary.HTTP))
+	}
+	entryGroup := doc.EntrySourcesSummary.HTTP[0]
+	// 修复前：a.go 先处理，contract.confidence 保留 high；修复后：合并为 low。
+	if entryGroup.Contract.Confidence != facts.ConfidenceLow {
+		t.Errorf("entrySourcesSummary http contract confidence = %q, want low (cross-file weakest, consistent with summary)", entryGroup.Contract.Confidence)
+	}
+	// 应有两个 source（a.go + b.go）。
+	if len(entryGroup.Sources) != 2 {
+		t.Errorf("entrySourcesSummary http sources = %d, want 2 (a.go + b.go)", len(entryGroup.Sources))
 	}
 }

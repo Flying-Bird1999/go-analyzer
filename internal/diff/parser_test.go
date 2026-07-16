@@ -232,6 +232,93 @@ func TestParseUnifiedRejectsEmptyInput(t *testing.T) {
 	}
 }
 
+// TestParseUnifiedBinaryPatch 验证 GIT binary patch 与 Binary files differ 行
+// 不会被当作内容行解析（P1-5 回归保护）。
+//
+// 修复前：base85 字母表含 +/-，base85 行会被当成新增/删除行，污染 ExpectedLines
+// 与 DeletedBlocks，最终在 ValidateApplied 阶段报误导性的 line 0 不匹配。
+// 修复后：binary patch 头关闭 hunk 解析，base85 行被忽略；路径头保留。
+func TestParseUnifiedBinaryPatch(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+	}{
+		{"gitBinaryPatch", "GIT binary patch"},
+		{"binaryFilesDiffer", "Binary files a/bin and b/bin differ"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []byte("diff --git a/bin b/bin\n" +
+				"index 1111111..2222222 100644\n" +
+				tc.header + "\n" +
+				"delta abc+def-ghi\n" +
+				"more+base85-data\n")
+			changes, err := ParseUnified(input)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if len(changes) != 1 {
+				t.Fatalf("file changes = %d", len(changes))
+			}
+			change := changes[0]
+			if change.OldPath != "bin" || change.NewPath != "bin" {
+				t.Fatalf("paths = %#v, want bin/bin (path header must survive binary patch)", change)
+			}
+			// base85 行（以 +/- 起首）不应被当成新增/删除内容。
+			for _, el := range change.ExpectedLines {
+				if el.Line <= 0 {
+					t.Errorf("binary patch produced bogus ExpectedLine at line %d: %q", el.Line, el.Text)
+				}
+			}
+			if len(change.Ranges) != 0 {
+				t.Errorf("binary patch should produce no added ranges, got %#v", change.Ranges)
+			}
+			if len(change.DeletedBlocks) != 0 {
+				t.Errorf("binary patch should produce no deleted blocks, got %#v", change.DeletedBlocks)
+			}
+		})
+	}
+}
+
+// TestParseUnifiedDoubleDashInHunk 验证 hunk 内以 `-- ` 起首的删除行（如 SQL 注释
+// `-- DROP TABLE users`）不会被误判为 `--- ` 路径头（P1-5 回归保护）。
+//
+// 修复前：`-` + 原文 `-- DROP TABLE users` = `--- DROP TABLE users` 命中 `--- ` 分支，
+// OldPath 被覆盖为 "DROP TABLE users"，且 oldLine 不递增导致后续行号偏移。
+// 修复后：`--- `/`+++ ` 仅在 !hunkActive 时识别，hunk 内 `-- ` 行正确当作删除行。
+func TestParseUnifiedDoubleDashInHunk(t *testing.T) {
+	input := []byte("diff --git a/sql.go b/sql.go\n" +
+		"index 1111111..2222222 100644\n" +
+		"--- a/sql.go\n" +
+		"+++ b/sql.go\n" +
+		"@@ -1,4 +1,3 @@\n" +
+		" package sql\n" +
+		" \n" +
+		"-- const query = `-- DROP TABLE users`\n" +
+		" \n" +
+		" const other = 1\n")
+	changes, err := ParseUnified(input)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("file changes = %d", len(changes))
+	}
+	change := changes[0]
+	// 修复前：OldPath 被污染为 "const query = `-- DROP TABLE users`"
+	if change.OldPath != "sql.go" || change.NewPath != "sql.go" {
+		t.Fatalf("paths = %#v, want sql.go/sql.go (hunk content must not override path header)", change)
+	}
+	// 删除行 `- const query = ...`（原文 `- const query = ...`）应进入 DeletedBlocks。
+	if len(change.DeletedBlocks) != 1 {
+		t.Fatalf("deleted blocks = %#v, want 1", change.DeletedBlocks)
+	}
+	block := change.DeletedBlocks[0]
+	if !equalStrings(block.Lines, []string{"- const query = `-- DROP TABLE users`"}) {
+		t.Fatalf("deleted block lines = %#v", block.Lines)
+	}
+}
+
 // equalStrings 判断两个字符串切片是否逐元素相等，供删除块行断言使用。
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

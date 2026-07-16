@@ -29,6 +29,72 @@ func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	}
 }
 
+// TestConfidencePropagatesWeakestAlongPath 验证 P1-4 置信度合并：
+// 一个 low confidence 的 change 根（模拟 file_changed fallback）经 high 边反向传播
+// 到 endpoint，endpoint 终节点的置信度应为 low（取链路最弱），而非被静默升级为 high。
+//
+// 修复前：endpoint/annotation/route 终节点用硬编码 ConfidenceHigh/ConfidenceMedium，
+// 与 change 根置信度无关，弱根经 high 边到达后结论被夸大。
+// 修复后：终节点 confidence = CombineConfidence(父链路累积, 终节点证据)，取最弱。
+func TestConfidencePropagatesWeakestAlongPath(t *testing.T) {
+	store := referenceImpactStore()
+	// low confidence 根：模拟无法精确定位符号的 file_changed fallback。
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:file-low",
+		Kind:       facts.ChangeKindFileChanged,
+		SymbolID:   serviceSymbol,
+		File:       "service/common.go",
+		Confidence: facts.ConfidenceLow,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:file-low")
+	path := firstEndpointPath(t, root.Root)
+	if len(path) < 2 {
+		t.Fatalf("path too short: %#v", path)
+	}
+
+	// 根节点应继承 change 的 low 置信度。
+	if root.Root.Confidence != facts.ConfidenceLow {
+		t.Errorf("root confidence = %q, want low", root.Root.Confidence)
+	}
+	// 沿链路各跳（symbol→symbol 边为 high）应取最弱，故所有中间节点为 low。
+	for i, node := range path {
+		if node.Confidence != facts.ConfidenceLow {
+			t.Errorf("path[%d] (kind=%s) confidence = %q, want low (low root + high edge = low)", i, node.Kind, node.Confidence)
+		}
+	}
+	// endpoint 终节点同样应为 low（修复前会因硬编码 ConfidenceHigh 而为 high）。
+	endpoint := path[len(path)-1]
+	if endpoint.Kind != "endpoint" {
+		t.Fatalf("last node kind = %q, want endpoint", endpoint.Kind)
+	}
+	if endpoint.Confidence != facts.ConfidenceLow {
+		t.Errorf("endpoint confidence = %q, want low (P1-4: low root must downgrade terminal)", endpoint.Confidence)
+	}
+}
+
+// TestConfidenceHighRootKeepsHighEndpoint 验证 high confidence 根的正例：
+// high 根经 high 边到达 endpoint，置信度保持 high（不被错误降级）。
+func TestConfidenceHighRootKeepsHighEndpoint(t *testing.T) {
+	store := referenceImpactStore()
+	store.Changes = append(store.Changes, facts.ChangeFact{
+		ID:         "change:service-high",
+		Kind:       facts.ChangeKindSymbolChanged,
+		SymbolID:   serviceSymbol,
+		File:       "service/common.go",
+		Confidence: facts.ConfidenceHigh,
+	})
+
+	result := AnalyzeTrees(store)
+	root := mustTreeRoot(t, result, "change:service-high")
+	path := firstEndpointPath(t, root.Root)
+	endpoint := path[len(path)-1]
+	if endpoint.Confidence != facts.ConfidenceHigh {
+		t.Errorf("endpoint confidence = %q, want high (high root + high edge)", endpoint.Confidence)
+	}
+}
+
 // TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath 验证同一传播路径上既产生 HTTP endpoint，
 // 也产生已解析 IM 事件，且动态事件保留为 im_event_unresolved 终端但不计入 IM 摘要。
 func TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath(t *testing.T) {

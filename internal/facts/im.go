@@ -53,8 +53,9 @@ type IMEventFact struct {
 	Evidence []IMEventEvidence `json:"evidence"`
 	// Confidence 是该 IM 事件的静态证据强度。
 	Confidence Confidence `json:"confidence"`
-	// Span 是 sender 调用表达式的位置区间。
-	Span SourceSpan `json:"span"`
+	// Span 是 sender 调用表达式的位置区间。指针类型以便 omitempty 在 nil 时省略；
+	// 当前 summary 投影总是赋非零值，nil 仅为防御性语义。
+	Span *SourceSpan `json:"span,omitempty"`
 	// Resolved 指示 event 是否能静态求值为确定字符串；false 表示动态 event（im_event_unresolved）。
 	Resolved bool `json:"resolved"`
 }

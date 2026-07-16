@@ -3,6 +3,7 @@ package grpc
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
@@ -60,5 +61,26 @@ func writeProjectFile(t *testing.T, root, name, source string) {
 	}
 	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestCallAmbiguityErrorFormatting 验证 CallAmbiguityError 类型可正确构造并格式化。
+//
+// 注意：这不是一个能调用 Extract 触发歧义的端到端测试。extractor.go 的 len(types) > 1
+// 分支是防御性代码——当前 functionScope.resolve 在单一标识符上最多返回 1 个 ValueType
+// （interface 多实现被 resolveUniqueInterfaceBinding 拒绝，map 索引分发无 IndexExpr 分支），
+// 故该分支在现有架构下不可达。本测试仅保证错误类型可用、格式稳定，为未来 resolve 能力
+// 扩展（使分支可达）保留 surface 契约。若未来让分支可达，应补一个调用 Extract 的
+// 端到端 fixture 测试。
+func TestCallAmbiguityErrorFormatting(t *testing.T) {
+	err := &CallAmbiguityError{
+		Caller: "func:example.com/bff/controller::Get",
+		Span:   facts.SourceSpan{File: "controller/order.go", StartLine: 10, StartCol: 3},
+	}
+	msg := err.Error()
+	for _, want := range []string{"ambiguous", "controller/order.go", "10"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("CallAmbiguityError() = %q, missing %q", msg, want)
+		}
 	}
 }

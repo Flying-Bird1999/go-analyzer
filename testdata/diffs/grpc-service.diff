@@ -1,0 +1,8 @@
+diff --git a/service/reply.go b/service/reply.go
+--- a/service/reply.go
++++ b/service/reply.go
+@@ -3,3 +3,3 @@
+ func BuildReply() string {
+-	return "pong2"
++	return "pong"
+ }

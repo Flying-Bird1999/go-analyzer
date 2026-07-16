@@ -638,6 +638,7 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 			Span:     spanForNode(e.project, info.file, expr),
 		})
 	}
+	span := callSpan
 	return facts.IMEventFact{
 		ID:           eventFactID(info.id, event, callSpan),
 		Event:        event,
@@ -646,7 +647,7 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 		Dependencies: dependencyList,
 		Evidence:     evidence,
 		Confidence:   facts.ConfidenceHigh,
-		Span:         callSpan,
+		Span:         &span,
 		Resolved:     resolved,
 	}
 }

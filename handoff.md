@@ -65,6 +65,7 @@ diff / gRPC operation
 
 - endpoint 的主要身份来自 controller annotation；route 解析提供注册证据与 `routes` 信息。
 - annotation 路径与 route 路径不一致时，两者都属于证据，但不可让动态 route 推断覆盖 annotation 定义的 endpoint 身份。
+- endpoint 的 HTTP method 统一规范化为大写（annotation 与 route fallback 都经 `strings.ToUpper`），保证 `impact`、`endpoint-assets`、`impact --grpc` 三处对同一 endpoint 的身份比对大小写一致。
 - `endpoint-assets --endpoint` 采用 annotation 格式，例如 `GET /orders/:id`。
 - BFF gRPC 调用需同时具备 generated client、静态 receiver 类型、项目内可执行调用链三类证据；不穿透外部 SDK，也不跨 BFF 仓分析。
 - BFF 的 `impact` 通过一个 JSON 同时容纳 diff 模式和 gRPC 输入模式，不能重新拆成多个彼此孤立的正式结果。
@@ -93,7 +94,7 @@ diff
 | Dubbo | `ExportProviders`、`*ApiExport`、`ServiceConfig`、其后的 `SetProviderService`、`MethodMapper` 或唯一 Go method | `interface@version/method` / `exposed_dubbo_method` | 多 provider 顺序绑定；method 配置只影响单方法，service 配置影响对应 interface 的全部方法 |
 | XXL-Job | 指定 map 类型的注册、静态 job name、可解析 handler | job name / `registered_job` | 动态任务名或无法唯一绑定 handler 不进入正式结果 |
 
-HTTP、Dubbo、Job 还要求 registration liveness：注册函数有项目内引用，或符合 `main`、`Register*`、`Initialize*` 启动约定。未满足时不进入正式 summary；当前实现不为此独立输出 diagnostics。
+四类协议（gRPC、HTTP、Dubbo、Job）都要求 registration liveness：注册函数有项目内引用，或符合 `main`、`Register*`、`Initialize*` 启动约定。未满足时不进入正式 summary；当前实现不为此独立输出 diagnostics。
 
 ## 6. 输出契约
 
@@ -125,6 +126,16 @@ HTTP、Dubbo、Job 还要求 registration liveness：注册函数有项目内引
 - `entrySourcesSummary`：终点反查到 file/module source 的轻量视图。
 
 四个数组即使为空也必须输出，且排序必须稳定。不得恢复 `impactedContracts`、`impactedGrpcOperations`、`contractSourcesSummary`、`grpcOperationSourcesSummary` 等旧 gRPC 镜像字段。它们会使同一结论存在两套竞争聚合方式。
+
+#### 6.2.1 confidence 语义（链路最弱合并）
+
+`summary` 与 `entrySourcesSummary` 中每条契约（`service_contract_summary`）都带必填 `confidence` 字段（high/medium/low），其取值遵循「链路最弱合并」：
+
+- 单条传播路径上的 confidence 取 change 根置信度与各跳引用置信度的最弱值（`facts.CombineConfidence`，low < medium < high）。
+- 同一契约被多个变更根或多个文件命中时，`summary` 与 `entrySourcesSummary` 的 contract.confidence 都取所有命中路径中的最弱值（`mergeContractSummary` 跨根/跨文件合并；`entrySourcesSummary` 另从树路径独立计算 `weakestConfidence(path)`，两者结果一致）。
+- 这避免弱根（如 `file_changed`/low）经 high 边到达契约后结论被静默升级为 high。
+
+BFF `impact` 侧的 endpoint/annotation/route/im_event 终节点 confidence 同样按链路最弱合并（`internal/impact/tree_builder.go` 调用 `facts.CombineConfidence`）。
 
 真实实现位置：`internal/output/grpc_service_impact.go`、`internal/output/contract.go`。
 
