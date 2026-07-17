@@ -18,14 +18,15 @@ import (
 type templateKind string
 
 const (
-	templateUnknown   templateKind = "unknown"   // 无法静态确定的值
-	templateLiteral   templateKind = "literal"   // 字符串字面量或可静态求值出的字符串
-	templateParam     templateKind = "param"     // 引用当前函数的某个参数
-	templateField     templateKind = "field"     // 对某 base 的字段访问
-	templateConcat    templateKind = "concat"    // 字符串拼接
-	templateString    templateKind = "string"    // 枚举 .String() 调用
-	templateCallback  templateKind = "callback"  // 回调型参数（参数本身就是函数，event 取实参）
-	templateComposite templateKind = "composite" // 组合字面量（如 BroadcastParams{...}）
+	templateUnknown     templateKind = "unknown"     // 无法静态确定的值
+	templateLiteral     templateKind = "literal"     // 字符串字面量或可静态求值出的字符串
+	templateParam       templateKind = "param"       // 引用当前函数的某个参数
+	templateField       templateKind = "field"       // 对某 base 的字段访问
+	templateConcat      templateKind = "concat"      // 字符串拼接
+	templateString      templateKind = "string"      // 枚举 .String() 调用
+	templateConditional templateKind = "conditional" // 按字符串条件选择分支
+	templateCallback    templateKind = "callback"    // 回调型参数（参数本身就是函数，event 取实参）
+	templateComposite   templateKind = "composite"   // 组合字面量（如 BroadcastParams{...}）
 )
 
 // valueTemplate 是值模板的统一表示。kind 不同时使用不同字段。
@@ -38,6 +39,10 @@ type valueTemplate struct {
 	base       *valueTemplate            // templateField/templateString 时的 base 模板
 	left       *valueTemplate            // templateConcat 时的左操作数
 	right      *valueTemplate            // templateConcat 时的右操作数
+	condition  *valueTemplate            // templateConditional 时参与比较的值
+	equals     string                    // templateConditional 的比较目标
+	whenEqual  *valueTemplate            // templateConditional 的真分支
+	whenOther  *valueTemplate            // templateConditional 的假分支
 	fields     map[string]*valueTemplate // templateComposite 时的字段映射
 	typeIDs    []facts.SymbolID          // 该值可能涉及的类型符号，作为 payload 依赖
 	symbolDeps []facts.SymbolID          // 该值引用的 const/value 符号，作为 event/payload 依赖
@@ -258,6 +263,15 @@ func (e *summaryEngine) substitute(info *functionInfo, template *valueTemplate, 
 		out := cloneTemplate(template)
 		out.base = base
 		return out
+	case templateConditional:
+		out := cloneTemplate(template)
+		out.condition = e.substitute(info, template.condition, args, event)
+		out.whenEqual = e.substitute(info, template.whenEqual, args, event)
+		out.whenOther = e.substitute(info, template.whenOther, args, event)
+		if value, ok := concreteTemplateValue(out); ok {
+			return &valueTemplate{kind: templateLiteral, literal: value, raw: template.raw}
+		}
+		return out
 	case templateComposite:
 		// 组合字面量：逐字段替换。
 		out := cloneTemplate(template)
@@ -285,6 +299,15 @@ func concreteTemplateValue(template *valueTemplate) (string, bool) {
 		if leftOK && rightOK {
 			return left + right, true
 		}
+	case templateConditional:
+		condition, conditionOK := concreteTemplateValue(template.condition)
+		if !conditionOK {
+			return "", false
+		}
+		if condition == template.equals {
+			return concreteTemplateValue(template.whenEqual)
+		}
+		return concreteTemplateValue(template.whenOther)
 	}
 	return "", false
 }
@@ -307,6 +330,8 @@ func templateKey(template *valueTemplate) string {
 		key = "concat:" + templateKey(template.left) + "+" + templateKey(template.right)
 	case templateString:
 		key = "string:" + templateKey(template.base)
+	case templateConditional:
+		key = "conditional:" + templateKey(template.condition) + "==" + template.equals + "?" + templateKey(template.whenEqual) + ":" + templateKey(template.whenOther)
 	case templateComposite:
 		// 组合字面量：字段名排序后拼接，保证顺序无关。
 		names := make([]string, 0, len(template.fields))
@@ -333,6 +358,9 @@ func cloneTemplate(in *valueTemplate) *valueTemplate {
 	out := *in
 	out.typeIDs = append([]facts.SymbolID(nil), in.typeIDs...)
 	out.symbolDeps = append([]facts.SymbolID(nil), in.symbolDeps...)
+	out.condition = cloneTemplate(in.condition)
+	out.whenEqual = cloneTemplate(in.whenEqual)
+	out.whenOther = cloneTemplate(in.whenOther)
 	return &out
 }
 
@@ -359,6 +387,14 @@ func templatePrimaryParam(template *valueTemplate) int {
 		return template.param
 	case templateField, templateString:
 		return templatePrimaryParam(template.base)
+	case templateConditional:
+		if index := templatePrimaryParam(template.condition); index >= 0 {
+			return index
+		}
+		if index := templatePrimaryParam(template.whenEqual); index >= 0 {
+			return index
+		}
+		return templatePrimaryParam(template.whenOther)
 	case templateConcat:
 		// 拼接：优先取左子树的主参数，左侧没有再取右子树。
 		if index := templatePrimaryParam(template.left); index >= 0 {

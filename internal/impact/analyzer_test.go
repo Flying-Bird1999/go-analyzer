@@ -217,6 +217,48 @@ func TestAnalyzeAnnotationRootKeepsAnnotationEndpoint(t *testing.T) {
 	}
 }
 
+func TestAnalyzeKeepsAliasRouteSeparateFromAnnotatedEndpoint(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	handler := facts.SymbolID("func:example.com/project/controller::GetCustomer")
+	service := facts.SymbolID("func:example.com/project/service::GetCustomer")
+	store.Symbols = append(store.Symbols,
+		facts.SymbolFact{ID: handler, Kind: "func", Span: facts.SourceSpan{File: "controller/customer.go", StartLine: 10, EndLine: 12}},
+		facts.SymbolFact{ID: service, Kind: "func", Span: facts.SourceSpan{File: "service/customer.go", StartLine: 10, EndLine: 12}},
+	)
+	store.References = append(store.References, facts.ReferenceFact{ID: "ref:customer", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: service, Confidence: facts.ConfidenceHigh})
+	store.Annotations = append(store.Annotations, facts.AnnotationFact{ID: "annotation:customer", Method: "GET", Path: "/api/customers/:id", HandlerSymbol: handler, Span: facts.SourceSpan{File: "controller/customer.go", StartLine: 9, EndLine: 9}})
+	store.Routes = append(store.Routes,
+		facts.RouteRegistrationFact{ID: "route:customer:current", Method: "GET", ResolvedPath: "/api/customers/:id", HandlerSymbol: handler, Span: facts.SourceSpan{File: "router/customer.go", StartLine: 20, EndLine: 20}},
+		facts.RouteRegistrationFact{ID: "route:customer:legacy", Method: "GET", ResolvedPath: "/uc/customers/:customerId", HandlerSymbol: handler, Span: facts.SourceSpan{File: "router/customer.go", StartLine: 21, EndLine: 21}},
+	)
+	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:customer-service", Kind: facts.ChangeKindSymbolChanged, SymbolID: service, Confidence: facts.ConfidenceHigh})
+
+	root := mustTreeRoot(t, AnalyzeTrees(store), "change:customer-service")
+	if len(root.Endpoints) != 2 {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+	got := map[string]string{}
+	for _, endpoint := range root.Endpoints {
+		got[endpoint.Path] = endpoint.AnnotationID
+	}
+	if got["/api/customers/:id"] != "annotation:customer" || got["/uc/customers/:customerId"] != "" {
+		t.Fatalf("endpoint identities = %#v", got)
+	}
+}
+
+func TestAnalyzeSingleRouteAnnotationDriftKeepsAnnotationIdentity(t *testing.T) {
+	store := referenceImpactStore()
+	store.Routes[0].ResolvedPath = "/api/check-in"
+	store.Routes[0].LocalPath = "/check-in"
+	store.Annotations[0].Path = "/api/check-in-v2"
+	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:service-drift", Kind: facts.ChangeKindSymbolChanged, SymbolID: serviceSymbol, Confidence: facts.ConfidenceHigh})
+
+	root := mustTreeRoot(t, AnalyzeTrees(store), "change:service-drift")
+	if len(root.Endpoints) != 1 || root.Endpoints[0].Path != "/api/check-in-v2" || root.Endpoints[0].AnnotationID == "" {
+		t.Fatalf("endpoints = %#v", root.Endpoints)
+	}
+}
+
 // TestAnalyzeMarksCycles 验证当反向引用形成环路（service <-> controller）时，
 // 重复出现的节点被正确标记 Cycle 而不无限递归。
 func TestAnalyzeMarksCycles(t *testing.T) {

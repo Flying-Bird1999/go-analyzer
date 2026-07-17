@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
@@ -454,7 +455,8 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 	if len(bodyPayload) == 0 {
 		return functionSummary{}, false
 	}
-	// 第二遍：找到对上述变量的 Event(arg) 调用，取源序首个作为结构化绑定结果。
+	// 第二遍：找到对上述变量的 Event(arg) 调用。若两个分支分别设置 event，且分支由
+	// 可传播的字符串等值条件控制，则保留该条件，待上游实参确定后选择正确分支。
 	var eventExpr ast.Expr
 	var eventCall *ast.CallExpr
 	var payloadExpr ast.Expr
@@ -486,7 +488,106 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 	if eventExpr == nil || payloadExpr == nil {
 		return functionSummary{}, false
 	}
-	return e.summaryFromCall(info, eventCall, eventExpr, payloadExpr, nil), true
+	summary := e.summaryFromCall(info, eventCall, eventExpr, payloadExpr, nil)
+	if conditional := e.conditionalEventTemplate(info, eventCall); conditional != nil {
+		summary.event = conditional
+	}
+	return summary, true
+}
+
+func (e *summaryEngine) conditionalEventTemplate(info *functionInfo, eventCall *ast.CallExpr) *valueTemplate {
+	receiver := eventReceiver(eventCall)
+	if receiver == "" {
+		return nil
+	}
+	var result *valueTemplate
+	ast.Inspect(info.decl.Body, func(node ast.Node) bool {
+		if result != nil {
+			return false
+		}
+		branch, ok := node.(*ast.IfStmt)
+		if !ok || branch.Else == nil {
+			return true
+		}
+		condition, equals, thenIsEqual, ok := stringEqualityCondition(branch.Cond)
+		if !ok {
+			return true
+		}
+		thenCall := eventCallForReceiver(branch.Body, receiver)
+		elseCall := eventCallForReceiver(branch.Else, receiver)
+		if thenCall == nil || elseCall == nil || (thenCall != eventCall && elseCall != eventCall) {
+			return true
+		}
+		thenTemplate := e.templateFromExpr(info, thenCall.Args[0], true, map[string]bool{})
+		elseTemplate := e.templateFromExpr(info, elseCall.Args[0], true, map[string]bool{})
+		if !thenIsEqual {
+			thenTemplate, elseTemplate = elseTemplate, thenTemplate
+		}
+		result = &valueTemplate{
+			kind:      templateConditional,
+			condition: e.templateFromExpr(info, condition, true, map[string]bool{}),
+			equals:    equals,
+			whenEqual: thenTemplate,
+			whenOther: elseTemplate,
+			raw:       renderExpr(branch.Cond),
+		}
+		return false
+	})
+	return result
+}
+
+func stringEqualityCondition(expr ast.Expr) (ast.Expr, string, bool, bool) {
+	binary, ok := expr.(*ast.BinaryExpr)
+	if !ok || (binary.Op != token.EQL && binary.Op != token.NEQ) {
+		return nil, "", false, false
+	}
+	if literal, ok := stringLiteral(binary.Y); ok {
+		return binary.X, literal, binary.Op == token.EQL, true
+	}
+	if literal, ok := stringLiteral(binary.X); ok {
+		return binary.Y, literal, binary.Op == token.EQL, true
+	}
+	return nil, "", false, false
+}
+
+func stringLiteral(expr ast.Expr) (string, bool) {
+	literal, ok := expr.(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(literal.Value)
+	return value, err == nil
+}
+
+func eventCallForReceiver(node ast.Node, receiver string) *ast.CallExpr {
+	var found *ast.CallExpr
+	ast.Inspect(node, func(candidate ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		call, ok := candidate.(*ast.CallExpr)
+		if !ok || eventReceiver(call) != receiver || len(call.Args) != 1 {
+			return true
+		}
+		found = call
+		return false
+	})
+	return found
+}
+
+func eventReceiver(call *ast.CallExpr) string {
+	if call == nil {
+		return ""
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Event" {
+		return ""
+	}
+	receiver, _ := selector.X.(*ast.Ident)
+	if receiver == nil {
+		return ""
+	}
+	return receiver.Name
 }
 
 func addBodyPayload(bodyPayload map[string]ast.Expr, name string, expr ast.Expr) {

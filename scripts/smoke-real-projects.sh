@@ -719,7 +719,7 @@ if missing:
     raise SystemExit(f"returned-group representative endpoints missing: {missing}")
 if ("POST", "/admin/api/bff-web/auth/revokeToken/:clientId") in endpoints:
     raise SystemExit("without-auth revokeToken route leaked into returned auth group impact")
-if summary.get("impactedEndpointCount") != 424 or len(endpoints) != 424:
+if summary.get("impactedEndpointCount") != 422 or len(endpoints) != 422:
     raise SystemExit(f"unexpected returned-group endpoint count: {summary.get('impactedEndpointCount')}, set={len(endpoints)}")
 PY
 }
@@ -825,13 +825,13 @@ expected = {
         ("POST", "/admin/api/bff-web/mc/syncConversation"),
     },
     "real-admin-user-annotation-drift": {
-        ("GET", "/admin/api/bff-web/user/info"),
+        ("GET", "/admin/api/bff-web/user/info-v2"),
     },
     "real-client-common-checkin": {
         ("POST", "/api/bff-web/common/checkIn"),
     },
     "real-client-checkin-annotation-drift": {
-        ("POST", "/api/bff-web/common/checkIn"),
+        ("POST", "/api/bff-web/common/checkInV2"),
     },
     "real-client-live-view": {
         ("GET", "/api/bff-web/live/view/:salesId/redirect"),
@@ -1159,7 +1159,7 @@ write_real_file_diff \
   "// @Get /admin/api/bff-web/user/info" \
   "// @Get /admin/api/bff-web/user/info-v2" \
   "${OUT_DIR}/real-admin-user-annotation-drift.diff"
-run_real_impact_case "real-admin-user-annotation-drift" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-user-annotation-drift.diff" "GET" "/admin/api/bff-web/user/info"
+run_real_impact_case "real-admin-user-annotation-drift" "${SC1_ADMIN_BFF}" "${OUT_DIR}/real-admin-user-annotation-drift.diff" "GET" "/admin/api/bff-web/user/info-v2"
 
 write_real_file_diff \
   "${SC1_BFF}" \
@@ -1175,7 +1175,7 @@ write_real_file_diff \
   "// @Post /api/bff-web/common/checkIn" \
   "// @Post /api/bff-web/common/checkInV2" \
   "${OUT_DIR}/real-client-checkin-annotation-drift.diff"
-run_real_impact_case "real-client-checkin-annotation-drift" "${SC1_BFF}" "${OUT_DIR}/real-client-checkin-annotation-drift.diff" "POST" "/api/bff-web/common/checkIn"
+run_real_impact_case "real-client-checkin-annotation-drift" "${SC1_BFF}" "${OUT_DIR}/real-client-checkin-annotation-drift.diff" "POST" "/api/bff-web/common/checkInV2"
 
 write_real_multi_file_diff \
   "${SC1_BFF}" \

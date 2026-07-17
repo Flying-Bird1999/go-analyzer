@@ -451,6 +451,7 @@ type SendData struct {
 	URL string
 	Body any
 }
+
 func (d *SendData) Event(event string) { d.URL = "broadcast://" + event }
 func Post(path string, body any) {}
 func sendImMessage(event constant.EventType, channel constant.ChannelType, fn func(...interface{}) interface{}) {
@@ -494,6 +495,68 @@ func Receive(msg *serviceim.Message) {
 	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
 	messageID := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"POST/LOCK_INVENTORY_UPDATE"})
+}
+
+func TestExtractResolvesConditionalChannelSeparator(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"constant/im.go": `package constant
+
+type EventType int
+const (
+	LockInventory EventType = iota
+	Conversation
+)
+var eventNames = [...]string{"LOCK_INVENTORY_UPDATE", "conversation"}
+func (e EventType) String() string { return eventNames[e] }
+
+type ChannelType int
+const (
+	Post ChannelType = iota
+	Default
+)
+var channelNames = [...]string{"POST", ""}
+func (c ChannelType) String() string { return channelNames[c] }
+`,
+		"util/im/im.go": `package im
+
+import "example.com/im-flow/constant"
+
+const BroadcastURI = "/broadcast/send"
+type SendData struct { URL string; Body any }
+func (d *SendData) Event(event string) { d.URL = "broadcast://" + event }
+func Post(path string, body any) {}
+func sendImMessage(event constant.EventType, channel constant.ChannelType, payload any) {
+	data := &SendData{Body: payload}
+	if channel.String() == "" {
+		data.Event(channel.String() + event.String())
+	} else {
+		data.Event(channel.String() + "/" + event.String())
+	}
+	Post(BroadcastURI, data)
+}
+func Send(event constant.EventType, channel constant.ChannelType, payload any) {
+	sendImMessage(event, channel, payload)
+}
+`,
+		"service/im/im.go": `package im
+
+import (
+	"example.com/im-flow/constant"
+	utilim "example.com/im-flow/util/im"
+)
+
+type Message struct{ ID string }
+func SendPost(msg *Message) { utilim.Send(constant.LockInventory, constant.Post, msg) }
+func SendDefault(msg *Message) { utilim.Send(constant.Conversation, constant.Default, msg) }
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+	message := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
+	assertEventsForDependency(t, store.IMEvents, astindex.FunctionSymbolID("example.com/im-flow/service/im", "SendPost"), message, []string{"POST/LOCK_INVENTORY_UPDATE"})
+	assertEventsForDependency(t, store.IMEvents, astindex.FunctionSymbolID("example.com/im-flow/service/im", "SendDefault"), message, []string{"conversation"})
 }
 
 // TestSummaryIterationCapIsReportedAndTerminates 验证多跳参数转发链在强制

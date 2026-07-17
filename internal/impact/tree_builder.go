@@ -384,11 +384,82 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 		}
 		return node
 	}
+	// 别名注册判定（按 route 而非按 handler）：同一 handler 注册多条路径时（典型为
+	// 新 bff 路径 + 旧路径别名），只有与注解 method+path 对应的那条 route 才归属注解
+	// 端点身份。当本 route 不与任何注解对应、且 handler 的每条注解都已被其他 route
+	// 认领时，本 route 是独立的第二条 URL（别名注册）：端点取其自身 method/path
+	// （与无注解 fallback 同规格），避免被注解身份吞并造成旧路径接口漏报。
+	// 注解路径漂移不受影响：只要还有注解未被任何 route 认领（漂移注解的注册正是
+	// 当前这类不对应 route），就维持注解身份，不判别名。
+	if !routeMatchesAnyAnnotation(route, annotations) && b.annotationsClaimedByOtherRoutes(route, annotations) {
+		if route.Method != "" && path != "" {
+			endpointRelation := "route_endpoint"
+			if route.RecoveredFromDiff {
+				endpointRelation = "deleted_route_endpoint"
+			}
+			node.Children = append(node.Children, b.endpointNode(
+				route.Method,
+				path,
+				"",
+				route.HandlerSymbol,
+				route.Span,
+				level+1,
+				endpointRelation,
+				facts.CombineConfidence(parentConfidence, facts.ConfidenceMedium),
+			))
+		}
+		return node
+	}
 	for _, annotation := range annotations {
 		node.Children = append(node.Children, b.annotationNode(annotation, route, level+1, "handler_annotation", parentConfidence))
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node
+}
+
+// routeMatchesAnyAnnotation 判断 route 是否与其中某条注解对应。
+func routeMatchesAnyAnnotation(route facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
+	for _, annotation := range annotations {
+		if routeMatchesAnnotation(route, annotation) {
+			return true
+		}
+	}
+	return false
+}
+
+// routeMatchesAnnotation 判断 route 与 annotation 是否指向同一条 endpoint 注册：
+// HTTP method 相同（大小写归一），且注解路径等于 route 的 resolved path 或 local path。
+// 同时接受 local path 是刻意保守：能对应上的 route 维持注解身份（现行为），
+// 只有确定不对应的才走别名分支。
+func routeMatchesAnnotation(route facts.RouteRegistrationFact, annotation facts.AnnotationFact) bool {
+	if annotation.Path == "" || !strings.EqualFold(route.Method, annotation.Method) {
+		return false
+	}
+	if annotation.Path == route.ResolvedPath {
+		return true
+	}
+	return route.LocalPath != "" && annotation.Path == route.LocalPath
+}
+
+// annotationsClaimedByOtherRoutes 判断 handler 的每条注解是否都已被除当前 route 以外的
+// 其他 route 认领（method+path 对应）。全部认领时说明注解身份均有各自的注册承载，
+// 当前不对应的 route 是额外的别名注册；只要有一条注解未被认领（可能是漂移注解，
+// 其注册正是当前 route），就不判别名，保守维持注解身份。
+func (b *treeBuilder) annotationsClaimedByOtherRoutes(route facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
+	siblings := b.routes.RoutesForHandler(route.HandlerSymbol)
+	for _, annotation := range annotations {
+		claimed := false
+		for _, sibling := range siblings {
+			if sibling.ID != route.ID && routeMatchesAnnotation(sibling, annotation) {
+				claimed = true
+				break
+			}
+		}
+		if !claimed {
+			return false
+		}
+	}
+	return true
 }
 
 // annotationRootNode 构造注解领域根节点。如果该 handler 同时注册了路由，
