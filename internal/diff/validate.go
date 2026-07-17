@@ -54,19 +54,30 @@ func ValidateApplied(root string, changes []FileChange) error {
 				)
 			}
 		}
-		// 纯删除 diff（如 git diff -U0，无上下文行也无新增行）没有任何 ExpectedLine，
-		// 此时仅靠"文件存在"无法区分已应用与过期快照。补充校验：被删除块不应仍原样
-		// 出现在其新版本锚点处；若仍完整出现，说明删除尚未应用到当前源码。
-		// 仅在无 ExpectedLine 时启用，避免影响带上下文的常规 diff。
-		if len(change.ExpectedLines) == 0 {
-			for _, block := range change.DeletedBlocks {
-				if deletedBlockStillPresent(lines, block) {
-					return fmt.Errorf(
-						"diff for %q does not match the post-change source: deleted lines still present near line %d",
-						path,
-						block.OldStartLine,
-					)
-				}
+		// 纯删除区域没有正面证据证明其已被应用：ExpectedLine 只覆盖新增行与保留的
+		// 上下文行。当一个删除块紧随其后有上下文行时，该上下文行会成为 ExpectedLine，
+		// 未应用会在那里被 ExpectedLine 校验捕获；但若删除块位于文件末尾（如 git diff -U3
+		// 删除尾部函数，只有前导上下文、无尾随上下文）或使用 -U0（无任何上下文），
+		// 就没有 ExpectedLine 守卫该区域，未应用的删除会被漏判为已应用。
+		//
+		// 因此对“其新版本锚点未被任何 ExpectedLine 覆盖”的删除块补充校验：被删块若仍
+		// 原样出现在旧版本起始行处，说明删除尚未应用。用锚点是否被 ExpectedLine 覆盖来
+		// 门控，既补齐了 EOF/-U0 缺口，又避免对带尾随上下文的常规删除做多余（且对
+		// 重复行可能误判的）逐字比对。
+		expectedAtLine := map[int]bool{}
+		for _, expected := range change.ExpectedLines {
+			expectedAtLine[expected.Line] = true
+		}
+		for _, block := range change.DeletedBlocks {
+			if expectedAtLine[block.NewAnchorLine] {
+				continue
+			}
+			if deletedBlockStillPresent(lines, block) {
+				return fmt.Errorf(
+					"diff for %q does not match the post-change source: deleted lines still present near line %d",
+					path,
+					block.OldStartLine,
+				)
 			}
 		}
 	}

@@ -151,6 +151,63 @@ func TestBuildIndexesTypedConstReceiverType(t *testing.T) {
 	}
 }
 
+// TestBuildInheritsIotaContinuationConstType 验证 iota 续行常量（省略类型与值列表）
+// 继承上一 spec 的类型，从而能解析到该类型上的方法。修复前 B/C 的 spec.Type 与
+// spec.Values 均为 nil，valueTypeFromValueSpec 返回空类型，pkg.B.M()/pkg.C.M() 的
+// receiver 无法解析，调用边系统性漏报。
+func TestBuildInheritsIotaContinuationConstType(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/iota-consts\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := `package iotaconsts
+
+type SenderType int
+
+func (SenderType) Val() int { return 0 }
+
+const (
+	SenderMerchant SenderType = iota
+	SenderUser
+	SenderBot
+)
+
+// 带自有值但无类型的 spec 不应继承 SenderType：Label 是无类型字符串常量。
+const (
+	Label = "x"
+	Label2
+)
+`
+	if err := os.WriteFile(filepath.Join(root, "consts.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := p.Packages[p.ModulePath]
+	if pkg == nil || len(pkg.Files) != 1 {
+		t.Fatalf("fixture files = %#v", pkg)
+	}
+	file := pkg.Files[0]
+	want := facts.SymbolID("method:example.com/iota-consts:SenderType:Val")
+	// 首行显式 typed const 与其后两个续行常量都应解析到 SenderType.Val。
+	for _, name := range []string{"SenderMerchant", "SenderUser", "SenderBot"} {
+		resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{name, "Val"})
+		if !ok || resolved.ID != want {
+			t.Fatalf("%s.Val = %#v (ok=%v), want %s", name, resolved, ok, want)
+		}
+	}
+	// 无类型字符串续行常量不应被误认为拥有 receiver 类型。
+	if vt, ok := idx.ValueReceiverTypes[string(ValueSymbolID("const", p.ModulePath, "Label2"))]; ok && vt.TypeName != "" {
+		t.Fatalf("Label2 unexpectedly typed as %#v", vt)
+	}
+}
+
 // buildValueTypeFixture 构造一个包含 new(T) 与 typed const 的最小 fixture，并返回索引与对应文件供测试使用。
 func buildValueTypeFixture(t *testing.T) (*Index, *project.File) {
 	t.Helper()

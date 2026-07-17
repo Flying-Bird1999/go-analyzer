@@ -362,7 +362,11 @@ func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryG
 				}
 				source.RootSymbols = append(source.RootSymbols, rootSymbolSummary(root))
 				source.Chains = append(source.Chains, chainLabels(path))
-				confidence := weakestConfidence(path)
+				// confidence 取该 root 到 contract 的所有路径中最弱的 weakestConfidence(path)，
+				// 与 serviceimpact.recordContract 对同一 contract 跨所有路径取最弱一致（§6.2.1）。
+				// 只用最短路径求 weakestConfidence 会在同一 root 下存在更弱的更长路径时高估证据
+				// 强度，使 source.confidence 强于 contract.confidence、自相矛盾。chain 仍展示最短路径。
+				confidence := weakestPathConfidenceTo(root, contract.ID)
 				if source.Confidence == "" || confidenceRank(confidence) < confidenceRank(source.Confidence) {
 					source.Confidence = confidence
 				}
@@ -399,6 +403,31 @@ func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryG
 	}
 	groups.sort()
 	return groups
+}
+
+// weakestPathConfidenceTo 返回 root 子树中所有到达 contractID 的路径里最弱的
+// weakestConfidence(path)。与 serviceimpact.recordContract 对同一 contract 跨所有
+// 路径取最弱保持一致，供 entrySourcesSummary 的 per-source confidence 使用，避免仅按
+// 最短路径而在同一 root 存在更弱路径时高估证据强度。无路径到达时返回空字符串。
+func weakestPathConfidenceTo(root ImpactNode, contractID string) facts.Confidence {
+	var best facts.Confidence
+	found := false
+	var walk func(node ImpactNode, pathWeakest facts.Confidence)
+	walk = func(node ImpactNode, pathWeakest facts.Confidence) {
+		weakest := weakerConfidence(pathWeakest, node.Confidence)
+		if node.ID == contractID {
+			if !found || confidenceRank(weakest) < confidenceRank(best) {
+				best = weakest
+			}
+			found = true
+			return
+		}
+		for _, child := range node.Children {
+			walk(child, weakest)
+		}
+	}
+	walk(root, facts.ConfidenceHigh)
+	return best
 }
 
 func shortestContractPath(root ImpactNode, contractID string) ([]ImpactNode, bool) {

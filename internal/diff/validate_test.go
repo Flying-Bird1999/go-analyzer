@@ -44,6 +44,42 @@ func TestValidateAppliedRejectsPreChangeSource(t *testing.T) {
 	}
 }
 
+// TestValidateAppliedRejectsUnappliedTailDeletion 验证带前导上下文的“文件末尾删除”
+// diff（git diff -U3 删除尾部函数：只有前导上下文、无尾随上下文）在未应用时被拒绝。
+// 修复前该场景因存在（前导上下文的）ExpectedLine 而跳过删除块校验，未应用的删除被
+// 误判为已应用，MapChanges 会把变更归因到错误符号。
+func TestValidateAppliedRejectsUnappliedTailDeletion(t *testing.T) {
+	// -U3 风格：3 行前导上下文 + 尾部 func B 的删除块，无尾随上下文。
+	patch := "diff --git a/svc/a.go b/svc/a.go\n" +
+		"--- a/svc/a.go\n" +
+		"+++ b/svc/a.go\n" +
+		"@@ -2,5 +2,2 @@\n" +
+		" func A() {\n" +
+		" \tdoA()\n" +
+		" }\n" +
+		"-func B() {\n" +
+		"-\tdoB()\n" +
+		"-}\n"
+	changes, err := ParseUnified([]byte(patch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preChange := "package svc\nfunc A() {\n\tdoA()\n}\nfunc B() {\n\tdoB()\n}\n"
+	postChange := "package svc\nfunc A() {\n\tdoA()\n}\n"
+
+	root := t.TempDir()
+	writeValidationFile(t, root, "svc/a.go", preChange)
+	if err := ValidateApplied(root, changes); err == nil || !strings.Contains(err.Error(), "does not match the post-change source") {
+		t.Fatalf("unapplied tail deletion: error = %v, want post-change mismatch", err)
+	}
+
+	appliedRoot := t.TempDir()
+	writeValidationFile(t, appliedRoot, "svc/a.go", postChange)
+	if err := ValidateApplied(appliedRoot, changes); err != nil {
+		t.Fatalf("applied tail deletion should pass: %v", err)
+	}
+}
+
 // TestValidateAppliedRejectsPathOutsideProject 验证 "../" 越界路径被安全校验拒绝。
 func TestValidateAppliedRejectsPathOutsideProject(t *testing.T) {
 	err := ValidateApplied(t.TempDir(), []FileChange{{

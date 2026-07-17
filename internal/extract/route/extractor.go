@@ -232,14 +232,23 @@ func returnedGroupVars(fn *ast.FuncDecl) []string {
 	return out
 }
 
-// rootGroups 为路由函数的根组参数构建初始组上下文：每个 RouterGroup 参数成为一个 root 组。
+// rootGroups 为路由函数的根组参数构建初始组上下文：仅类型为 lego 路由宿主
+// （RouterGroup 或 Engine）的参数才成为 root 组。
+//
+// 历史实现把首个参数无条件当作 root 组（用于补偿 isRouterGroupType 只认字面名），
+// 这会把 ctx context.Context、gRPC client 等非路由首参也当成 root 组：一旦函数体内
+// 出现 `x := c.AddXxx(ctx, ...)` 且方法名命中 route group wrapper 命名规则，就会为普通
+// 业务函数伪造 route_group 事实（如 remote/grpc/*::AddProductKeyword，parent_group_var=c），
+// 污染公开 route_groups 契约数组。改为要求 root 组参数必须是路由宿主类型即可消除这类伪造，
+// 同时因真实路由函数首参均为 *lego.RouterGroup / *lego.Engine（isRouterRootParamType 识别），
+// 不影响合法路由/中间件抽取。
 func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupContext {
 	out := map[string]groupContext{}
 	if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
 		return out
 	}
-	for fieldIndex, field := range fn.Type.Params.List {
-		if fieldIndex > 0 && !isRouterGroupType(field.Type) {
+	for _, field := range fn.Type.Params.List {
+		if !isRouterRootParamType(field.Type) {
 			continue
 		}
 		for _, name := range field.Names {
@@ -252,6 +261,34 @@ func rootGroups(routeFunc facts.SymbolID, fn *ast.FuncDecl) map[string]groupCont
 		}
 	}
 	return out
+}
+
+// isRouterRootParamType 判断参数类型是否可作为根路由宿主：类型名以 "Group" 结尾
+// （RouterGroup、Group 等 lego 路由组类型）或为 "Engine"（lego 根引擎，可注册全局
+// middleware/子 group）。穿透指针与泛型包装。
+// 该启发式覆盖真实项目的 *lego.RouterGroup / *lego.Engine 与测试中的 *Group，同时排除
+// context.Context、gRPC client、请求体等非路由首参（它们既不以 Group 结尾也不是 Engine），
+// 从而避免把普通业务首参当成 root 组、进而为 `x := c.AddXxx(...)` 之类调用伪造 route_group。
+func isRouterRootParamType(expr ast.Expr) bool {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		return isRouterRootTypeName(x.Name)
+	case *ast.SelectorExpr:
+		return isRouterRootTypeName(x.Sel.Name)
+	case *ast.StarExpr:
+		return isRouterRootParamType(x.X)
+	case *ast.IndexExpr:
+		return isRouterRootParamType(x.X)
+	case *ast.IndexListExpr:
+		return isRouterRootParamType(x.X)
+	default:
+		return false
+	}
+}
+
+// isRouterRootTypeName 判断裸类型名是否像路由宿主类型。
+func isRouterRootTypeName(name string) bool {
+	return name == "Engine" || strings.HasSuffix(name, "Group")
 }
 
 // isRouterGroupType 判断类型表达式是否为 lego 的 RouterGroup（穿透指针、泛型索引）。
@@ -817,12 +854,29 @@ func groupCall(
 	}
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if ok && selector.Sel.Name == "Group" {
-		parentIdent, ok := selector.X.(*ast.Ident)
-		if !ok {
-			return groupContext{}, "", "", false
-		}
-		parent, ok = groups[parentIdent.Name]
-		if !ok {
+		switch base := selector.X.(type) {
+		case *ast.Ident:
+			parent, ok = groups[base.Name]
+			if !ok {
+				return groupContext{}, "", "", false
+			}
+		case *ast.CallExpr:
+			// 链式 g.Group(a).Group(b)：接收者本身又是一次 Group（或工厂/包装器）调用。
+			// 递归求内层调用的父上下文与累积前缀，折叠成一个合成父上下文再拼接本层路径。
+			// 中间层不单独物化为 group 事实，但最终 resolved 前缀完整（修复 router.go 中
+			// adminWithoutAuthGroup := g.Group(WEB_BFF_PREFIX).Group("") 前缀丢失）。
+			innerParent, innerPrefix, innerPrefixRaw, ok := groupCall(file, funcs, stringConsts, groups, base)
+			if !ok {
+				return groupContext{}, "", "", false
+			}
+			parent = groupContext{
+				id:        innerParent.id,
+				varName:   innerParent.varName,
+				prefix:    innerPrefix,
+				prefixRaw: innerPrefixRaw,
+				rootVar:   innerParent.rootVar,
+			}
+		default:
 			return groupContext{}, "", "", false
 		}
 		local, resolved := routeStringArg(file, stringConsts, call.Args[0])

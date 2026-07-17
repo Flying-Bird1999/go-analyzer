@@ -13,8 +13,8 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -164,14 +164,31 @@ func (idx *Index) indexValueReceiverTypes() {
 				if kind == "" {
 					continue
 				}
+				// carriedType 跟踪本 GenDecl 内“上一处非空表达式列表”的显式类型。
+				// Go 允许省略表达式列表的续行 spec（如 const ( A T = iota; B; C )）继承
+				// 上一 spec 的 type 与 value；此时 spec.Type/spec.Values 均为 nil，逐 spec
+				// 处理会让 B、C 丢失类型 T，导致 pkg.B.M()/pkg.C.M() 的 receiver 无法解析、
+				// 调用边系统性漏报。这里为续行 spec 补齐继承的类型。
+				var carriedType ast.Expr
 				for _, rawSpec := range genDecl.Specs {
 					spec, ok := rawSpec.(*ast.ValueSpec)
 					if !ok {
 						continue
 					}
+					// 仅当 spec 省略了表达式列表（Values 为空）时才继承类型；带有自己
+					// 表达式列表的 spec 会“重置”继承类型（其 Type 可能为 nil，如
+					// const ( A T = iota; B = "x" ) 中 B 是无类型字符串，不应继承 T）。
+					effectiveType := spec.Type
+					if len(spec.Values) == 0 {
+						if spec.Type == nil {
+							effectiveType = carriedType
+						}
+					} else {
+						carriedType = spec.Type
+					}
 					for i, name := range spec.Names {
 						id := ValueSymbolID(kind, pkg.Path, name.Name)
-						if valueType := idx.valueTypeFromValueSpec(file, spec, i); valueType.TypeName != "" {
+						if valueType := idx.valueTypeFromValueSpec(file, effectiveType, spec, i); valueType.TypeName != "" {
 							idx.ValueReceiverTypes[string(id)] = valueType
 						}
 					}
@@ -394,11 +411,13 @@ func valueKind(tok token.Token) string {
 }
 
 // valueTypeFromValueSpec 推断一条 var/const 声明中第 index 个名字的静态类型。
-// 优先级：显式类型标注 -> new(T) -> 项目内 constructor 首返回值（中等置信度）
+// effectiveType 是该 spec 生效的类型标注：可能是 spec 自带的 spec.Type，也可能是
+// iota 续行从上一 spec 继承来的类型（见 indexValueReceiverTypes）。
+// 优先级：显式/继承类型标注 -> new(T) -> 项目内 constructor 首返回值（中等置信度）
 // -> 外部 constructor selector 名（中等置信度）-> 组合字面量/取址表达式。
-func (idx *Index) valueTypeFromValueSpec(file *project.File, spec *ast.ValueSpec, index int) ValueType {
-	if spec.Type != nil {
-		return ValueTypeFromTypeExpr(file, spec.Type)
+func (idx *Index) valueTypeFromValueSpec(file *project.File, effectiveType ast.Expr, spec *ast.ValueSpec, index int) ValueType {
+	if effectiveType != nil {
+		return ValueTypeFromTypeExpr(file, effectiveType)
 	}
 	if len(spec.Values) == 0 {
 		return ValueType{}

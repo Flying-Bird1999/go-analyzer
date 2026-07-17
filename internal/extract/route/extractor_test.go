@@ -664,6 +664,70 @@ func findRoute(t *testing.T, store *facts.Store, path string) facts.RouteRegistr
 	return facts.RouteRegistrationFact{}
 }
 
+// TestExtractChainedGroupResolvesFullPrefix 验证链式 g.Group(a).Group(b) 的接收者
+// 本身是一次 Group 调用时仍能解析出完整前缀。修复前 Group 分支只认 *ast.Ident 接收者，
+// 遇到 CallExpr 接收者直接放弃，导致 adminWithoutAuthGroup := g.Group(PREFIX).Group("")
+// 这类 local 组丢失前缀，其上注册的路由 resolved_path 不完整。
+func TestExtractChainedGroupResolvesFullPrefix(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/chained-group\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) GET(path string, handler any)   {}
+
+func ListOrders() {}
+
+func Init(g *RouterGroup) {
+	adminWithoutAuthGroup := g.Group("/api").Group("")
+	adminWithoutAuthGroup.GET("/orders", ListOrders)
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/api/orders")
+	if route.ResolvedPath != "/api/orders" {
+		t.Fatalf("resolved path = %q, want /api/orders", route.ResolvedPath)
+	}
+}
+
+// TestExtractDoesNotFabricateRouteGroupForNonRouterFirstParam 验证首参为非路由类型
+// （如 context.Context）时，函数体内命中 route group wrapper 命名规则的普通调用
+// （x := c.AddXxx(ctx, ...)）不再被伪造成 route_group 事实。修复前首参无条件被当作
+// root 组，污染公开 route_groups 契约数组。
+func TestExtractDoesNotFabricateRouteGroupForNonRouterFirstParam(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/no-fabricate\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "client.go"), []byte(`package remote
+
+import "context"
+
+type client struct{}
+
+func (client) AddKeyword(ctx context.Context, req any) (any, error) { return nil, nil }
+
+var c client
+
+func AddProductKeyword(ctx context.Context, req any) (any, error) {
+	response, _ := c.AddKeyword(ctx, req)
+	return response, nil
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := extractFixture(t, root)
+	if len(store.RouteGroups) != 0 {
+		t.Fatalf("expected no route_groups for non-router function, got %#v", store.RouteGroups)
+	}
+}
+
 // assertDiagnosticCode 断言 store 中存在指定 code 的诊断。
 func assertDiagnosticCode(t *testing.T, store *facts.Store, code string) {
 	t.Helper()

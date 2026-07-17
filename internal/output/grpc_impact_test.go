@@ -84,13 +84,13 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 func TestBuildGrpcImpactDocumentMergesContractConfidenceWeakest(t *testing.T) {
 	handler := facts.SymbolID("func:example.com/project/controller::Get")
 	contract := serviceimpact.Contract{
-		ID:           "http:route:orders",
-		Kind:         serviceimpact.ContractHTTPEndpoint,
-		Identity:     "GET /orders",
-		Relation:     "exposed_http_endpoint",
-		EntrySymbol:  handler,
-		Confidence:   facts.ConfidenceHigh,
-		Route:        facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
+		ID:          "http:route:orders",
+		Kind:        serviceimpact.ContractHTTPEndpoint,
+		Identity:    "GET /orders",
+		Relation:    "exposed_http_endpoint",
+		EntrySymbol: handler,
+		Confidence:  facts.ConfidenceHigh,
+		Route:       facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
 	}
 	// 两个根命中同一 contract：一个 high，一个 low。
 	tree := serviceimpact.TreeResult{Roots: []serviceimpact.RootImpact{
@@ -140,13 +140,13 @@ func TestBuildGrpcImpactDocumentMergesContractConfidenceWeakest(t *testing.T) {
 func TestBuildGrpcImpactDocumentEntrySourcesCrossFileConfidence(t *testing.T) {
 	handler := facts.SymbolID("func:example.com/project/controller::Get")
 	contract := serviceimpact.Contract{
-		ID:           "http:route:orders",
-		Kind:         serviceimpact.ContractHTTPEndpoint,
-		Identity:     "GET /orders",
-		Relation:     "exposed_http_endpoint",
-		EntrySymbol:  handler,
-		Confidence:   facts.ConfidenceHigh,
-		Route:        facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
+		ID:          "http:route:orders",
+		Kind:        serviceimpact.ContractHTTPEndpoint,
+		Identity:    "GET /orders",
+		Relation:    "exposed_http_endpoint",
+		EntrySymbol: handler,
+		Confidence:  facts.ConfidenceHigh,
+		Route:       facts.RouteRegistrationFact{Method: "GET", ResolvedPath: "/orders"},
 	}
 	// a.go（字典序在前）高置信、b.go 低置信命中同一 contract。
 	tree := serviceimpact.TreeResult{Roots: []serviceimpact.RootImpact{
@@ -179,5 +179,32 @@ func TestBuildGrpcImpactDocumentEntrySourcesCrossFileConfidence(t *testing.T) {
 	// 应有两个 source（a.go + b.go）。
 	if len(entryGroup.Sources) != 2 {
 		t.Errorf("entrySourcesSummary http sources = %d, want 2 (a.go + b.go)", len(entryGroup.Sources))
+	}
+}
+
+// TestWeakestPathConfidenceToTakesWeakestAcrossAllPaths 验证 per-source confidence 取
+// 同一 root 到 contract 的所有路径中最弱者（与 contract.confidence 的跨路径最弱一致），
+// 而非仅按最短路径。修复前 shortestContractPath 只按长度选路，若同长的两条路径一强一弱
+// 而先命中强路径，source.confidence 会被高估为 high，与 contract.confidence 自相矛盾。
+func TestWeakestPathConfidenceToTakesWeakestAcrossAllPaths(t *testing.T) {
+	const contractID = "http:route:orders"
+	// 菱形：root S -> A(high) -> H -> C 与 root S -> B(medium) -> H -> C，两条到 C 的路径同长。
+	root := ImpactNode{
+		ID: "func:S", Kind: "func", Confidence: facts.ConfidenceHigh,
+		Children: []ImpactNode{
+			{ID: "func:A", Kind: "func", Confidence: facts.ConfidenceHigh, Children: []ImpactNode{
+				{ID: contractID, Kind: "http_endpoint", Confidence: facts.ConfidenceHigh},
+			}},
+			{ID: "func:B", Kind: "func", Confidence: facts.ConfidenceMedium, Children: []ImpactNode{
+				{ID: contractID, Kind: "http_endpoint", Confidence: facts.ConfidenceMedium},
+			}},
+		},
+	}
+	if got := weakestPathConfidenceTo(root, contractID); got != facts.ConfidenceMedium {
+		t.Fatalf("weakestPathConfidenceTo = %q, want medium (weakest across both paths)", got)
+	}
+	// 无路径到达时返回空。
+	if got := weakestPathConfidenceTo(root, "http:route:missing"); got != "" {
+		t.Fatalf("weakestPathConfidenceTo(missing) = %q, want empty", got)
 	}
 }

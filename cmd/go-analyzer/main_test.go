@@ -205,6 +205,16 @@ func TestGrpcImpactCommandWritesCanonicalOperation(t *testing.T) {
 	}
 }
 
+func TestSchemaCommandWritesImpactSchema(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"schema", "--type", "impact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"title": "go-analyzer reviewable impact tree"`)) {
+		t.Fatalf("schema output = %s", out)
+	}
+}
+
 func TestSchemaCommandWritesGrpcImpactSchema(t *testing.T) {
 	out, err := runWithCapturedStdoutBytes(t, []string{"schema", "--type", "grpc-impact"})
 	if err != nil {

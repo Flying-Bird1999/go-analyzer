@@ -47,8 +47,14 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 					continue
 				}
 				registration := functionSymbol(file, fn)
+				// 按源码顺序收集全部 SetProviderService 调用并顺序消费：每个 config（也按源码
+				// 顺序）绑定其后第一个尚未被占用的调用。分组布局（config;config;call;call）下，
+				// 逐个 config 取“其后第一个 call”会让多个 config 抢占同一个 call、漏报后续 provider；
+				// 顺序消费保证 config[i] 与 call[i] 一一对应，同时不影响交错布局（config;call;config;call）。
+				providerCalls := collectSetProviderServiceCalls(fn)
+				consumed := make([]bool, len(providerCalls))
 				for _, config := range configs {
-					providerExpr, ok := providerServiceExpressionAfter(fn, config.end)
+					providerExpr, ok := nextProviderService(providerCalls, consumed, config.end)
 					if !ok {
 						continue
 					}
@@ -160,27 +166,40 @@ func methodNames(root string, file *project.File, expr ast.Expr) []methodConfig 
 	return out
 }
 
-// providerServiceExpressionAfter binds a ServiceConfig to the first following
-// SetProviderService call in the same export function. Exports can contain
-// unrelated registrations before a config, so choosing the first call in the
-// function would bind the config to the wrong implementation.
-func providerServiceExpressionAfter(fn *ast.FuncDecl, after token.Pos) (ast.Expr, bool) {
-	var out ast.Expr
+// setProviderCall 记录一次 .SetProviderService(x) 调用的源码位置与其单一实参表达式。
+type setProviderCall struct {
+	pos  token.Pos
+	expr ast.Expr
+}
+
+// collectSetProviderServiceCalls 按源码位置顺序收集函数体内全部 .SetProviderService(x) 调用。
+func collectSetProviderServiceCalls(fn *ast.FuncDecl) []setProviderCall {
+	var out []setProviderCall
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
-		if out != nil {
-			return false
-		}
 		call, ok := node.(*ast.CallExpr)
 		if !ok || len(call.Args) != 1 || !strings.HasSuffix(expression(call.Fun), ".SetProviderService") {
 			return true
 		}
-		if call.Pos() <= after {
-			return true
-		}
-		out = call.Args[0]
-		return false
+		out = append(out, setProviderCall{pos: call.Pos(), expr: call.Args[0]})
+		return true
 	})
-	return out, out != nil
+	sort.Slice(out, func(i, j int) bool { return out[i].pos < out[j].pos })
+	return out
+}
+
+// nextProviderService 返回位于 after 之后、尚未被其他 ServiceConfig 绑定的第一个
+// SetProviderService 实参表达式，并把它标记为已消费。顺序消费避免多个 config 抢占
+// 同一个调用：既正确处理分组布局（config;config;call;call）也保留交错布局。
+// export 函数在 config 之前可能有无关 SetProviderService，故仍用 after 过滤 config 之前的调用。
+func nextProviderService(calls []setProviderCall, consumed []bool, after token.Pos) (ast.Expr, bool) {
+	for i, call := range calls {
+		if consumed[i] || call.pos <= after {
+			continue
+		}
+		consumed[i] = true
+		return call.expr, true
+	}
+	return nil, false
 }
 
 func resolveProviderType(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, expr ast.Expr) (astindex.ValueType, bool) {

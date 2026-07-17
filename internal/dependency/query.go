@@ -254,8 +254,17 @@ func appendBinding(values []facts.GrpcClientBinding, value facts.GrpcClientBindi
 	return append(values, value)
 }
 func sortDependency(value *GrpcDependency) {
+	// 逐字段比较，避免无分隔符拼接导致的边界碰撞（如 {"ab","c",…} 与 {"a","bc",…}
+	// 拼成同一串 "abc" 而顺序不定）造成输出非确定。
 	sort.Slice(value.Clients, func(i, j int) bool {
-		return value.Clients[i].GoPackage+value.Clients[i].ClientType+value.Clients[i].GoMethod < value.Clients[j].GoPackage+value.Clients[j].ClientType+value.Clients[j].GoMethod
+		a, b := value.Clients[i], value.Clients[j]
+		if a.GoPackage != b.GoPackage {
+			return a.GoPackage < b.GoPackage
+		}
+		if a.ClientType != b.ClientType {
+			return a.ClientType < b.ClientType
+		}
+		return a.GoMethod < b.GoMethod
 	})
 	sort.Slice(value.Chains, func(i, j int) bool { return value.Chains[i].Call.ID < value.Chains[j].Call.ID })
 }

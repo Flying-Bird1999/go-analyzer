@@ -35,14 +35,25 @@ func NewReverseGraph(store *facts.Store) *ReverseGraph {
 		}
 		g.ByTarget[ref.ToSymbol] = append(g.ByTarget[ref.ToSymbol], ref)
 	}
-	// 对每个 target 的引用列表排序：先按引用者 symbol，再按位置区间起始行，
-	// 保证查询输出稳定且可复现。
+	// 对每个 target 的引用列表排序：依次按引用者 symbol、起始行、起始列、种类、
+	// 引用 ID 全序比较。加入 StartCol/Kind/ID 终极 tie-break，避免同一引用者在同一行
+	// 有多条引用（如 f(x, x)）时相对次序不稳定导致输出非确定。
 	for target := range g.ByTarget {
-		sort.Slice(g.ByTarget[target], func(i, j int) bool {
-			if g.ByTarget[target][i].FromSymbol != g.ByTarget[target][j].FromSymbol {
-				return g.ByTarget[target][i].FromSymbol < g.ByTarget[target][j].FromSymbol
+		refs := g.ByTarget[target]
+		sort.Slice(refs, func(i, j int) bool {
+			if refs[i].FromSymbol != refs[j].FromSymbol {
+				return refs[i].FromSymbol < refs[j].FromSymbol
 			}
-			return g.ByTarget[target][i].Span.StartLine < g.ByTarget[target][j].Span.StartLine
+			if refs[i].Span.StartLine != refs[j].Span.StartLine {
+				return refs[i].Span.StartLine < refs[j].Span.StartLine
+			}
+			if refs[i].Span.StartCol != refs[j].Span.StartCol {
+				return refs[i].Span.StartCol < refs[j].Span.StartCol
+			}
+			if refs[i].Kind != refs[j].Kind {
+				return refs[i].Kind < refs[j].Kind
+			}
+			return refs[i].ID < refs[j].ID
 		})
 	}
 	return g

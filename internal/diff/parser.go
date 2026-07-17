@@ -193,6 +193,20 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 			}
 			oldLine++
 			newLine++
+		case hunkActive && line == "":
+			// 空上下文行：标准 unified diff 用 " "（单空格前缀 + 空内容）表示一条空白源码
+			// 上下文行，但被去除行尾空白的工具（编辑器/CI/复制粘贴）会把它压成真正的空行 ""。
+			// 若不识别，两个行号计数器都不前进，其后所有 ExpectedLine/LineRange 行号错位，
+			// 进而破坏 ValidateApplied 与符号归因。按空白上下文行处理：双计数器同步前进。
+			flushDeletion(true)
+			if current.Status != StatusDeleted {
+				current.ExpectedLines = append(current.ExpectedLines, ExpectedLine{
+					Line: newLine,
+					Text: "",
+				})
+			}
+			oldLine++
+			newLine++
 		}
 	}
 	if err := scanner.Err(); err != nil {

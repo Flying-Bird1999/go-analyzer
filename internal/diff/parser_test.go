@@ -201,6 +201,42 @@ func TestParseUnifiedRetainsExpectedPostChangeLines(t *testing.T) {
 	}
 }
 
+// TestParseUnifiedHandlesStrippedBlankContextLine 验证被去除行尾空白（" " → "")的
+// 空上下文行仍按上下文行处理，两个行号计数器同步前进，其后行号不错位。
+// 修复前空行 "" 不匹配任何 case，oldLine/newLine 停滞，后续 ExpectedLine 整体偏移 1。
+func TestParseUnifiedHandlesStrippedBlankContextLine(t *testing.T) {
+	input := []byte("diff --git a/service/a.go b/service/a.go\n" +
+		"--- a/service/a.go\n" +
+		"+++ b/service/a.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" package service\n" +
+		"\n" + // 被 strip 的空上下文行（正常应为 " "）
+		"-const Value = \"old\"\n" +
+		"+const Value = \"new\"\n")
+
+	changes, err := ParseUnified(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v", changes)
+	}
+	got := changes[0].ExpectedLines
+	want := []ExpectedLine{
+		{Line: 1, Text: "package service"},
+		{Line: 2, Text: ""},
+		{Line: 3, Text: `const Value = "new"`},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected lines = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected line %d = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
 // TestParseUnifiedUnquotesGitQuotedUTF8Paths 验证 git quoted（八进制转义）的 UTF-8 文件名能被还原。
 func TestParseUnifiedUnquotesGitQuotedUTF8Paths(t *testing.T) {
 	input := []byte("diff --git \"a/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\" \"b/docs/design/SC1-3352/SC1-3352-\\346\\216\\245\\345\\217\\243\\350\\277\\201\\347\\247\\273\\350\\256\\276\\350\\256\\241.md\"\n" +

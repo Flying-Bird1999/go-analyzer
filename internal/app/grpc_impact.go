@@ -201,7 +201,9 @@ func discoverGrpcServerDependencies(p *project.Project, recorder *pipelineRecord
 	for _, path := range grpcextract.ProjectGeneratedServerImportPaths(p) {
 		localImports[path] = true
 	}
-	remoteImports := imports[:0]
+	// 用独立切片收集，不复用 imports 的底层数组（imports[:0] 原地覆写在
+	// ServerRegistrationImportPaths 返回缓存/共享切片时会静默损坏上游数据）。
+	remoteImports := make([]string, 0, len(imports))
 	for _, path := range imports {
 		if !localImports[path] {
 			remoteImports = append(remoteImports, path)
