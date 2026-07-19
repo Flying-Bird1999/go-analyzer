@@ -264,6 +264,22 @@ func TestImpactHelpMentionsEndpointAndIMEvents(t *testing.T) {
 	}
 }
 
+// TestEndpointAssetsHelpMentionsAbsolutePathAndBuildContextFlags 验证 endpoint-assets
+// help 文本与其它命令风格一致，明确复述绝对路径要求与 --goos/--goarch/--tags/--cgo/
+// --format/--timings 等实际支持的 flag——此前该命令的 help 只给了一行用法示例，
+// 未说明 --project 必须绝对路径，也未提及命令实际支持的 build context flag。
+func TestEndpointAssetsHelpMentionsAbsolutePathAndBuildContextFlags(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"help", "endpoint-assets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"绝对路径", "--goos", "--goarch", "--tags", "--cgo", "--timings", "gRPC"} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Fatalf("endpoint-assets help output missing %q: %s", want, out)
+		}
+	}
+}
+
 func runWithCapturedStdoutBytes(t *testing.T, args []string) ([]byte, error) {
 	stdout, _, err := runWithCapturedOutputBytes(t, args)
 	return stdout, err

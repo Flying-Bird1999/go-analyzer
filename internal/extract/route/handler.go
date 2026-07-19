@@ -32,30 +32,33 @@ func unwrapHandlerDepth(expr ast.Expr, depth int) (string, []facts.WrapperFact) 
 		return exprString(expr), nil
 	}
 	// 定位当前调用中被视为 handler 的参数，继续向内拆解。
-	handlerArg, ok := handlerArgument(call)
+	handlerArg, guessed, ok := handlerArgument(call)
 	if !ok {
 		return exprString(expr), nil
 	}
 	handlerRaw, wrappers := unwrapHandlerDepth(handlerArg, depth+1)
-	// 当前层包装器置于栈顶，保证顺序为外到内。
-	return handlerRaw, append([]facts.WrapperFact{{Name: name, Raw: exprString(call)}}, wrappers...)
+	// 当前层包装器置于栈顶，保证顺序为外到内。guessed 标记本层是否经"未知 wrapper
+	// 名 + 结构兜底猜测最后一个 handler 风格实参"得出，而非命中已知白名单。
+	return handlerRaw, append([]facts.WrapperFact{{Name: name, Raw: exprString(call), Guessed: guessed}}, wrappers...)
 }
 
 // handlerArgument 从一个调用表达式中找出代表 handler 的参数：
-// 若调用名是已知 handler 包装器则取最后一个参数，否则从后向前找首个 handler 风格表达式。
-func handlerArgument(call *ast.CallExpr) (ast.Expr, bool) {
+// 若调用名是已知 handler 包装器则取最后一个参数（guessed=false，已验证证据）；
+// 否则从后向前找首个 handler 风格表达式（guessed=true，未经白名单验证的结构兜底
+// 猜测——wrapper 语义若非原样转发会误绑，调用方应据此降低置信度或产出诊断）。
+func handlerArgument(call *ast.CallExpr) (arg ast.Expr, guessed bool, ok bool) {
 	if len(call.Args) == 0 {
-		return nil, false
+		return nil, false, false
 	}
 	if isHandlerWrapper(shortCallName(call)) {
-		return call.Args[len(call.Args)-1], true
+		return call.Args[len(call.Args)-1], false, true
 	}
 	for i := len(call.Args) - 1; i >= 0; i-- {
 		if isHandlerLikeExpr(call.Args[i]) {
-			return call.Args[i], true
+			return call.Args[i], true, true
 		}
 	}
-	return nil, false
+	return nil, false, false
 }
 
 // isHandlerLikeExpr 判断表达式是否"长得像" handler（标识符/选择器/带参调用/括号包裹的上述形式）。

@@ -198,6 +198,34 @@ func TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes(t *testing.T) {
 	}
 }
 
+// TestRouteGraphChildGroupsByIDDedupesAcrossParentFieldAndFlow 验证同一 (parent, child)
+// 父子组关系若同时被 RouteGroupFact.ParentGroupID 与 RouteGroupFlowFact 两处记录，
+// ChildGroupsByID 只保留一条子组 ID，不产生重复条目。
+// 修复前两处各自 append 不去重：RoutesForGroup 的递归靠 seenGroups 兜底不受影响，
+// 但直接读取 ChildGroupsByID 的消费方会看到重复子组 ID，且递归会对同一子组做多余
+// 的重复调用。
+func TestRouteGraphChildGroupsByIDDedupesAcrossParentFieldAndFlow(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.RouteGroups = append(store.RouteGroups,
+		facts.RouteGroupFact{ID: "group:parent", GroupVar: "parent"},
+		// child 组自身的 ParentGroupID 字段已经指向 parent……
+		facts.RouteGroupFact{ID: "group:child", GroupVar: "child", ParentGroupID: "group:parent"},
+	)
+	// ……同一条父子关系又被一条 RouteGroupFlow 重复记录（例如子组在另一函数中
+	// 也被显式传递注册）。
+	store.RouteGroupFlows = append(store.RouteGroupFlows, facts.RouteGroupFlowFact{
+		ID:            "flow:parent-child",
+		ParentGroupID: "group:parent",
+		ChildGroupID:  "group:child",
+	})
+
+	graph := NewRouteGraph(store)
+	children := graph.ChildGroupsByID["group:parent"]
+	if len(children) != 1 || children[0] != "group:child" {
+		t.Fatalf("ChildGroupsByID[parent] = %#v, want exactly one entry [\"group:child\"]", children)
+	}
+}
+
 // TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute 场景：依赖引用 span 落在某条路由 span 内时，只关联到该条路由而非同函数的其他路由。
 func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")

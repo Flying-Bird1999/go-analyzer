@@ -10,6 +10,80 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
+// TestFileByRelativePathFindsAndCachesFile 验证 FileByRelativePath 能按项目相对路径
+// （斜杠分隔）定位到正确的 *project.File，且重复调用返回同一份缓存结果（懒加载只扫描
+// 一次）。link 包为每条 route/middleware 绑定各查一次源文件，若每次都重新扫描全部
+// packages/files 会是 O(routes×files) 的重复工作；这里验证缓存正确性，性能提升见
+// BenchmarkFileByRelativePathManyLookups。
+func TestFileByRelativePathFindsAndCachesFile(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var anyRelPath string
+	for _, pkg := range p.Packages {
+		for _, file := range pkg.Files {
+			if rel, err := filepath.Rel(p.Root, file.Path); err == nil {
+				anyRelPath = filepath.ToSlash(rel)
+			}
+		}
+	}
+	if anyRelPath == "" {
+		t.Fatal("fixture has no files to test against")
+	}
+
+	first := idx.FileByRelativePath(anyRelPath)
+	if first == nil {
+		t.Fatalf("FileByRelativePath(%q) = nil, want a file", anyRelPath)
+	}
+	second := idx.FileByRelativePath(anyRelPath)
+	if second != first {
+		t.Fatalf("FileByRelativePath(%q) returned different results across calls: %p vs %p", anyRelPath, first, second)
+	}
+	if got := idx.FileByRelativePath("does/not/exist.go"); got != nil {
+		t.Fatalf("FileByRelativePath for missing path = %#v, want nil", got)
+	}
+}
+
+// BenchmarkFileByRelativePathManyLookups 度量对同一 Index 重复查询文件路径的总耗时，
+// 模拟 link 包为大量 route/middleware 各查一次源文件的场景。修复前每次调用都重新
+// 遍历全部 packages/files（O(routes×files)）；修复后首次调用建立缓存，后续摊还
+// O(1)，总耗时应与查询次数近似线性、且远快于"次数×文件数"的重复扫描。
+func BenchmarkFileByRelativePathManyLookups(b *testing.B) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
+	p, err := project.Load(root)
+	if err != nil {
+		b.Fatal(err)
+	}
+	idx, err := Build(p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var relPaths []string
+	for _, pkg := range p.Packages {
+		for _, file := range pkg.Files {
+			if rel, err := filepath.Rel(p.Root, file.Path); err == nil {
+				relPaths = append(relPaths, filepath.ToSlash(rel))
+			}
+		}
+	}
+	if len(relPaths) == 0 {
+		b.Fatal("fixture has no files to benchmark against")
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 5000; j++ {
+			idx.FileByRelativePath(relPaths[j%len(relPaths)])
+		}
+	}
+}
+
 // TestBuildIndexesDeclarationSymbols 验证 mini-bff fixture 下 func/method/type/var/const 五类声明都能建出符号 ID 且 span 携带源码文件。
 func TestBuildIndexesDeclarationSymbols(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")

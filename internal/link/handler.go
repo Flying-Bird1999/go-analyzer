@@ -32,7 +32,7 @@ func ResolveHandlerSymbolWithConfidence(idx *astindex.Index, route facts.RouteRe
 		return astindex.ResolvedSymbol{}, false
 	}
 	// route 里只存了相对路径，需要先定位到对应的源文件，才能拿到所属包路径与 import 别名表。
-	file := fileByRelativePath(idx.Project, route.File)
+	file := idx.FileByRelativePath(route.File)
 	if file == nil {
 		return astindex.ResolvedSymbol{}, false
 	}
@@ -78,7 +78,7 @@ func routeFunctionReceiverType(idx *astindex.Index, route facts.RouteRegistratio
 	if !ok || symbol.Receiver == "" {
 		return astindex.ValueType{}, false
 	}
-	file := fileByRelativePath(idx.Project, route.File)
+	file := idx.FileByRelativePath(route.File)
 	if file == nil {
 		return astindex.ValueType{}, false
 	}

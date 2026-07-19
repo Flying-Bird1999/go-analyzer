@@ -25,7 +25,10 @@ func NewCallGraph(store *facts.Store) *CallGraph {
 	}
 	for _, call := range store.GrpcCalls {
 		if call.CallerSymbol != "" {
-			g.grpcByCaller[call.CallerSymbol] = append(g.grpcByCaller[call.CallerSymbol], call)
+			// 与 forward/reverse 一致使用 appendOnce 去重：GrpcCallFact.ID 按调用点构造
+			// 理论上唯一，但若上游因任何原因（如未来新增的抽取路径）产生同 ID 重复
+			// 记录，这里也不应放大成重复的调用图边，保持三张表去重语义一致。
+			g.grpcByCaller[call.CallerSymbol] = appendGrpcCallOnce(g.grpcByCaller[call.CallerSymbol], call)
 		}
 	}
 	for symbol := range g.forward {
@@ -57,4 +60,15 @@ func appendSymbolOnce(items []facts.SymbolID, item facts.SymbolID) []facts.Symbo
 		}
 	}
 	return append(items, item)
+}
+
+// appendGrpcCallOnce 把 call 追加到 calls（仅当其 ID 尚未存在），保持与 forward/reverse
+// 相同的去重语义。
+func appendGrpcCallOnce(calls []facts.GrpcCallFact, call facts.GrpcCallFact) []facts.GrpcCallFact {
+	for _, existing := range calls {
+		if existing.ID == call.ID {
+			return calls
+		}
+	}
+	return append(calls, call)
 }

@@ -9,6 +9,11 @@ const (
 	CodeRouteDynamicPath Code = "route_dynamic_path"
 	// CodeRouteUnresolvedHandler：route 注册里的 handler 表达式无法解析为具体符号。
 	CodeRouteUnresolvedHandler Code = "route_unresolved_handler"
+	// CodeRouteWrapperGuessed：handler wrapper 调用名不在已知白名单中，提取器退化为
+	// "取最后一个长得像 handler 的实参"这一结构兜底猜测。命中该诊断的 wrapper 未经
+	// 验证，若其语义并非原样转发（如记录/审计后返回另一闭包、条件交换实参），
+	// 猜出的 handler 可能与实际注册的不符。
+	CodeRouteWrapperGuessed Code = "route_wrapper_guessed"
 	// CodeDeletedRouteUnresolved：从 diff 删除块恢复的 route 无法解析出 method/path 等关键信息。
 	CodeDeletedRouteUnresolved Code = "deleted_route_unresolved"
 	// CodeDeletedRouteHandlerUnresolved：被删除 route 的 handler 无法解析为符号，回退到 method/path fallback。
@@ -41,6 +46,9 @@ const (
 	CodeGrpcDependencyLoadFailed Code = "grpc_dependency_load_failed"
 	// CodeGrpcCatalogFailed：generated gRPC client catalog 无法可靠构建。
 	CodeGrpcCatalogFailed Code = "grpc_catalog_failed"
+	// CodeGrpcServerCatalogFailed：generated gRPC server catalog 无法可靠构建
+	// （facts 命令的诊断模式：服务入口抽取失败降级为诊断，而非中断整个 facts 输出）。
+	CodeGrpcServerCatalogFailed Code = "grpc_server_catalog_failed"
 	// CodeGrpcCallAmbiguous：项目调用的 receiver 无法唯一收敛到 generated binding。
 	CodeGrpcCallAmbiguous Code = "grpc_call_ambiguous"
 	// CodeGrpcServerBindingUnresolved: a generated registration is known but its concrete provider type is not statically provable.

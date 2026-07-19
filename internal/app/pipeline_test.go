@@ -129,6 +129,43 @@ func TestRunFactsIncludesLinksAndReferences(t *testing.T) {
 	}
 }
 
+// TestRunFactsIncludesServiceEntryFacts 验证 facts 命令对后端服务项目（grpc-service
+// fixture）也能产出 job/dubbo/gRPC-server 三类服务入口事实。
+//
+// 修复前 buildFactStore（facts 命令的事实构建入口）只运行 BFF 域抽取器
+// （annotation/route/link/reference/im，外加可选的 gRPC client catalog），从不调用
+// jobextract.Extract、dubboextract.Extract 或 grpcextract.ExtractServerProviders——
+// 这三者只在 grpc-impact 命令的 buildGrpcServiceFacts 中运行。facts 是 handoff.md
+// 明确定位的"排障入口"，但对 grpc-impact 最关键的服务端证据（谁注册了哪个 gRPC
+// operation/Dubbo method/XXL-Job）在 facts 视图里永远不可见，削弱了它的排障价值。
+func TestRunFactsIncludesServiceEntryFacts(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fixtures", "grpc-service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RunFacts(Options{ProjectPath: root, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc output.Document
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.JobRegistrations) == 0 {
+		t.Fatalf("expected job_registrations to be populated for a backend service project, got 0: %s", got)
+	}
+	if len(doc.DubboProviders) == 0 {
+		t.Fatalf("expected dubbo_providers to be populated for a backend service project, got 0: %s", got)
+	}
+	if len(doc.GrpcProviders) == 0 {
+		t.Fatalf("expected grpc_providers to be populated for a backend service project, got 0: %s", got)
+	}
+	if len(doc.GrpcOperations) == 0 {
+		t.Fatal("expected grpc_operations populated from the server catalog")
+	}
+}
+
 // TestRunFactsIncludesModuleDependencyFacts 验证 gomod-change fixture 抽出依赖与 replace 信息。
 func TestRunFactsIncludesModuleDependencyFacts(t *testing.T) {
 	root := filepath.Join("..", "..", "testdata", "fixtures", "gomod-change")
@@ -912,6 +949,76 @@ func Init(g *RouterGroup) {
 		t.Fatal(err)
 	}
 	assertEndpointSummary(t, doc, "POST", "/public/orders")
+}
+
+// TestRunImpactDeletedRouteGroupDoesNotStealPrefixFromOtherFunction 验证当整条被删除
+// 路由所属的 group（连同 group 创建语句本身）与它一起被删除时，恢复逻辑不会把它误绑
+// 到另一个路由函数里同名局部变量（这里两个函数都叫 sub）声明的 group，进而窃取一个
+// 语义无关的前缀。
+//
+// 场景：InitA 用局部变量 sub 创建前缀 "/a" 的 group 并注册 "/x"；InitB 也用局部变量
+// sub（同名但完全独立的变量，函数作用域不重叠）创建前缀 "/b" 的 group 并注册 "/y"。
+// diff 把 InitB 函数体整个清空——sub 的创建语句和 GET("/y", Y) 一起被删除。
+//
+// 修复前 resolveDeletedRouteGroup 只按 (file, groupVar) 搜索候选 group，不区分
+// RouteFunc：由于变更后源码里已不存在任何名为 sub 的 group（InitB 里的已被删光），
+// 它会退化搜索到 InitA 里同名的 sub（prefix "/a"），产出错误的 endpoint "GET /a/y"
+// ——一个从未真实存在过的路径。正确行为是识别出"同函数内找不到候选"，放弃拼接完整
+// 前缀，保守地退化为局部路径 "GET /y"，而不是伪造一个跨函数窃取来的确定路径。
+func TestRunImpactDeletedRouteGroupDoesNotStealPrefixFromOtherFunction(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/groupbug\n\ngo 1.24\n")
+	writeTestFile(t, root, "controller.go", `package main
+
+func X() {}
+func Y() {}
+`)
+	writeTestFile(t, root, "router.go", `package main
+
+type RouterGroup struct{}
+
+func (g *RouterGroup) Group(path string) *RouterGroup { return g }
+func (g *RouterGroup) GET(path string, handler any)    {}
+
+func InitA(g *RouterGroup) {
+	sub := g.Group("/a")
+	sub.GET("/x", X)
+}
+
+func InitB(g *RouterGroup) {
+}
+`)
+	diffPath := filepath.Join(t.TempDir(), "groupbug.diff")
+	patch := []byte("diff --git a/router.go b/router.go\n" +
+		"--- a/router.go\n" +
+		"+++ b/router.go\n" +
+		"@@ -11,6 +11,4 @@ func InitA(g *RouterGroup) {\n" +
+		" }\n" +
+		" \n" +
+		" func InitB(g *RouterGroup) {\n" +
+		"-\tsub := g.Group(\"/b\")\n" +
+		"-\tsub.GET(\"/y\", Y)\n" +
+		" }\n")
+	if err := os.WriteFile(diffPath, patch, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc output.ImpactDocument
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// 必须不出现从未存在过的路径：错误地窃取 InitA 的 "/a" 前缀拼出 "GET /a/y"。
+	for _, endpoint := range doc.Summary.ImpactedEndpoints {
+		if endpoint.Method == "GET" && endpoint.Path == "/a/y" {
+			t.Fatalf("endpoint GET /a/y must not appear: it steals InitA's prefix for InitB's deleted route; endpoints=%#v", doc.Summary.ImpactedEndpoints)
+		}
+	}
+	// 保守降级：无法恢复完整前缀时，用局部路径 "GET /y" 作为诚实的降级结论。
+	assertEndpointSummary(t, doc, "GET", "/y")
 }
 
 // TestRunImpactRecoversDeletedHandlerAnnotationAndRoute 验证被删除的 handler 注解+路由能恢复，并替换掉文件级 fallback 根。

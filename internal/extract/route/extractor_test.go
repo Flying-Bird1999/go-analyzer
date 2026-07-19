@@ -83,6 +83,75 @@ func TestExtractWrapperStackAndFinalHandler(t *testing.T) {
 	}
 }
 
+// TestExtractGuessedHandlerWrapperEmitsDiagnostic 验证 handler wrapper 调用名不在
+// 已知白名单中时（结构兜底猜测最后一个 handler 风格实参），提取器：
+//  1. 仍能产出一个 route（isUnresolvedHandlerExpression 不会拦截，因为兜底路径
+//     "成功"猜出了一个表达式）；
+//  2. 该 wrapper 的 WrapperFact.Guessed 为 true；
+//  3. 产出 CodeRouteWrapperGuessed 诊断，使消费方能区分"已验证 wrapper"与
+//     "猜测 wrapper"，而不是对两者一视同仁地静默信任猜测结果。
+//
+// AuditLog 在这个 fixture 里恰好是原样转发，但提取器无法证明这一点——真实项目里
+// 一个不在白名单内的 wrapper 完全可能记录后返回另一个闭包、或按条件交换参数，
+// 此时猜测会静默产生错误的 handler 绑定，且此前没有任何信号区分这种情况。
+func TestExtractGuessedHandlerWrapperEmitsDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/guessed-wrapper\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "router.go"), []byte(`package router
+
+type Group struct{}
+
+func (g *Group) GET(path string, handler any) {}
+
+// AuditLog 不在已知 handler wrapper 白名单中：提取器无法验证它是否原样转发。
+func AuditLog(tag string, handler any) any { return handler }
+
+func CheckIn() {}
+
+func Init(g *Group) {
+	g.GET("/audited", AuditLog("checkin", CheckIn))
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := extractFixture(t, root)
+	route := findRoute(t, store, "/audited")
+	if route.HandlerRaw != "CheckIn" {
+		t.Fatalf("handler raw = %q, want CheckIn (fixture's AuditLog happens to forward as-is)", route.HandlerRaw)
+	}
+	if len(route.Wrappers) != 1 || route.Wrappers[0].Name != "AuditLog" {
+		t.Fatalf("wrappers = %#v", route.Wrappers)
+	}
+	if !route.Wrappers[0].Guessed {
+		t.Fatalf("wrapper %#v should be marked Guessed=true (not in the known whitelist)", route.Wrappers[0])
+	}
+	assertDiagnosticCode(t, store, "route_wrapper_guessed")
+}
+
+// TestExtractWhitelistedWrapperIsNotGuessed 验证已知白名单 wrapper（如
+// ControllerWithResp/MiddlewareController）解析出的 WrapperFact 不带 Guessed 标记，
+// 且不产出 route_wrapper_guessed 诊断——白名单命中是已验证证据，不应与结构兜底猜测
+// 混淆。
+func TestExtractWhitelistedWrapperIsNotGuessed(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "testdata", "fixtures", "route-wrapper")
+	store := extractFixture(t, root)
+
+	wrapped := findRoute(t, store, "/wrapped")
+	for _, wrapper := range wrapped.Wrappers {
+		if wrapper.Guessed {
+			t.Fatalf("whitelisted wrapper %#v unexpectedly marked Guessed", wrapper)
+		}
+	}
+	for _, diagnostic := range store.Diagnostics {
+		if diagnostic.Code == "route_wrapper_guessed" {
+			t.Fatalf("unexpected route_wrapper_guessed diagnostic for whitelisted wrappers: %#v", store.Diagnostics)
+		}
+	}
+}
+
 // TestExtractRouteGroupAssignedThroughBuiltInWrapper 验证把组传入项目内包装器函数返回的新组上仍能注册路由。
 func TestExtractRouteGroupAssignedThroughBuiltInWrapper(t *testing.T) {
 	root := t.TempDir()

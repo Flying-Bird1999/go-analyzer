@@ -42,9 +42,28 @@ func Run(idx *astindex.Index, store *facts.Store) error {
 
 // LinkRoute 对单条 route 解析 handler 并生成关联事实，供外部（如增量分析）按需调用。
 // 内部会重新构建一次按 handler 分桶的注解索引，再委托给 linkRoute。返回是否解析成功。
+//
+// 与 Run 的批量路径不同，本函数可能被外部对同一 store 多次独立调用（如删除路由恢复
+// 逐块处理、按 handler 重试未解析路由）。若每次调用都从空 linkedHandlers 出发，多次
+// 调用命中同一 handler 时会重复生成 ID 相同的 handler_to_annotation LinkFact——
+// facts.Store 对 Links 不做去重，重复记录会原样进入 facts JSON 的 links 数组。
+// 因此这里从 store 当前已有的 Links 中重建 linkedHandlers，使跨调用的去重状态与
+// Run 单次批量调用内的去重状态等价。
 func LinkRoute(idx *astindex.Index, store *facts.Store, route *facts.RouteRegistrationFact) bool {
-	linkedHandlers := map[facts.SymbolID]bool{}
+	linkedHandlers := existingHandlerToAnnotationLinks(store)
 	return linkRoute(idx, store, route, annotationsByHandler(store), linkedHandlers)
+}
+
+// existingHandlerToAnnotationLinks 扫描 store 当前已有的 Links，收集已生成过
+// handler_to_annotation 关联的 handler 符号集合。
+func existingHandlerToAnnotationLinks(store *facts.Store) map[facts.SymbolID]bool {
+	seen := map[facts.SymbolID]bool{}
+	for _, link := range store.Links {
+		if link.Kind == facts.LinkKindHandlerToAnnotation {
+			seen[facts.SymbolID(link.FromID)] = true
+		}
+	}
+	return seen
 }
 
 // linkRoute 是 route 关联的核心实现：解析 handler 符号、写回 route，并生成 route->handler 与 handler->annotation 两条关联事实。

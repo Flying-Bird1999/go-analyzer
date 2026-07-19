@@ -34,24 +34,40 @@ const (
 // parent 为空时取 edge，edge 为空时取 parent，两者都为空时返回空串。
 // 这保证弱根（如 file_changed/low）经 high 边到达 endpoint 后，结论仍为 low，
 // 不会被最后一跳的高置信度静默升级。
+//
+// 空串（未设置）与非空但不属于 low/medium/high 三者之一的畸形值语义不同：前者是
+// "该跳没有 confidence 输入"，直接让另一跳的值透传；后者代表数据本身有问题（typo、
+// 未来新增 confidence 枚举值但常量定义未同步等）。畸形值不应被当作"缺失"而静默让位
+// 给另一跳——那样会悄悄掩盖数据 bug，且视另一跳的值而定，结果可能被错误地当作 high。
+// 这里让畸形值的 rank 落在 low 之下（弱于任何合法值），使其始终作为"链路最弱一跳"
+// 原样透传出去：既保留了"取最弱"的既有语义，又保证畸形值可见（不会被吞掉），便于
+// 从最终输出中定位问题数据，而不是凭空造出一个看似合法的 low。
 func CombineConfidence(parent, edge Confidence) Confidence {
-	rank := func(c Confidence) int {
+	// rank 返回置信度的强弱序数；ok 为 false 表示该值为"未设置"（空串），
+	// 此时按原有语义直接透传另一跳。ok 为 true 时，已知合法值 rank 1-3，
+	// 非空畸形值固定 rank 0（弱于 low 的 1），确保畸形值总是被判定为最弱一跳。
+	rank := func(c Confidence) (value int, ok bool) {
 		switch c {
+		case "":
+			return 0, false
 		case ConfidenceLow:
-			return 1
+			return 1, true
 		case ConfidenceMedium:
-			return 2
+			return 2, true
 		case ConfidenceHigh:
-			return 3
+			return 3, true
 		default:
-			return 0
+			// 非空但不属于三档合法值：视为弱于 low 的畸形数据，ok=true 使其参与
+			// 正常的强弱比较（而非被当作缺失让位），rank=0 保证它必然是最弱一跳。
+			return 0, true
 		}
 	}
-	pr, er := rank(parent), rank(edge)
-	if pr == 0 {
+	pr, pOK := rank(parent)
+	er, eOK := rank(edge)
+	if !pOK {
 		return edge
 	}
-	if er == 0 {
+	if !eOK {
 		return parent
 	}
 	if pr <= er {

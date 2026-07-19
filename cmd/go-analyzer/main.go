@@ -326,7 +326,10 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
 `
 	case "endpoint-assets":
 		return `用法:
-  go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id" [--endpoint "POST /orders"] [--format json] [--timings]
+  go-analyzer endpoint-assets --project /absolute/path/to/project --endpoint "GET /orders/:id" [--endpoint "POST /orders"] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
+
+查询 BFF endpoint（annotation 格式 "METHOD /exact/path"）依赖的 gRPC operation；--endpoint 可重复。
+--project 必须是绝对路径。Go build context flag 会影响源码文件加载和 build constraint 过滤，语义与 facts/impact/grpc-impact 一致。
 `
 	case "schema":
 		return `用法:

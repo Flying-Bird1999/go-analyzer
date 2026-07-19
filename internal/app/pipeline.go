@@ -24,9 +24,11 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
+	dubboextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/dubbo"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/gomod"
 	grpcextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/grpc"
 	imextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/im"
+	jobextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/job"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
@@ -259,8 +261,15 @@ type builtFacts struct {
 	store   *facts.Store
 }
 
+// buildFactStore 是 facts 命令的事实构建入口。除 BFF 域事实外，它还额外抽取
+// job/dubbo/gRPC-server 三类服务入口事实（includeServiceEntry: true），使 facts
+// 命令能同时排障 BFF 与后端服务两类项目——facts 是 handoff.md 中明确的"排障入口"，
+// 若不产出这些事实，grpc-impact 最关键的服务端证据在 facts 视图里永远不可见。
+// impact 命令通过 buildFacts 直接调用（见 RunImpactWithMetrics），不设置该选项，
+// 行为与之前完全一致：这是纯粹的 facts 命令能力扩展，不影响 impact 的事实构建范围
+// 或性能特征。
 func buildFactStore(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (*facts.Store, error) {
-	built, err := buildFacts(projectPath, buildContext, recorder, buildFactsOptions{grpcMode: grpcModeDiagnostic})
+	built, err := buildFacts(projectPath, buildContext, recorder, buildFactsOptions{grpcMode: grpcModeDiagnostic, includeServiceEntry: true})
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +284,13 @@ const (
 	grpcModeStrict
 )
 
-type buildFactsOptions struct{ grpcMode grpcMode }
+// buildFactsOptions.includeServiceEntry 控制是否额外抽取 job/dubbo/gRPC-server 三类
+// 服务入口事实。仅 facts 命令（buildFactStore）设置为 true；impact 命令通过 buildFacts
+// 直接调用且不设置该字段，行为保持不变。
+type buildFactsOptions struct {
+	grpcMode            grpcMode
+	includeServiceEntry bool
+}
 
 func buildFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder, options buildFactsOptions) (builtFacts, error) {
 	built, err := buildBaseFacts(projectPath, buildContext, recorder)
@@ -314,10 +329,11 @@ func buildFacts(projectPath string, buildContext project.BuildContextOptions, re
 			if options.grpcMode == grpcModeStrict {
 				return builtFacts{}, dependencyErr
 			}
+			// 诊断模式：记录失败并继续（不 early return），使下方 includeServiceEntry
+			// 抽取（facts 命令专属）在纯服务端项目（没有 gRPC client 依赖、
+			// discoverProjectDependencies 因此失败）上仍然执行。
 			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:grpc_dependency_load", Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
-			return builtFacts{project: p, index: idx, store: store}, nil
-		}
-		if err := recorder.measure("grpc_extract", func() error {
+		} else if err := recorder.measure("grpc_extract", func() error {
 			catalog, catalogErr := grpcextract.BuildCatalog(dependencies)
 			if catalogErr != nil {
 				return catalogErr
@@ -341,7 +357,74 @@ func buildFacts(projectPath string, buildContext project.BuildContextOptions, re
 			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:" + string(code), Code: code, Severity: diagnostics.SeverityWarning, Message: err.Error()})
 		}
 	}
+	if options.includeServiceEntry {
+		extractServiceEntryFacts(p, idx, store, recorder)
+	}
 	return builtFacts{project: p, index: idx, store: store}, nil
+}
+
+// dedupeNewGrpcOperations 从 additions 中过滤掉已存在于 existing 中的 ID，
+// 避免 client catalog 与 server catalog 各自产出同一 canonical operation 时
+// 在 store.GrpcOperations 里重复。
+func dedupeNewGrpcOperations(existing, additions []facts.GrpcOperationFact) []facts.GrpcOperationFact {
+	seen := make(map[string]bool, len(existing))
+	for _, operation := range existing {
+		seen[operation.ID] = true
+	}
+	out := make([]facts.GrpcOperationFact, 0, len(additions))
+	for _, operation := range additions {
+		if seen[operation.ID] {
+			continue
+		}
+		seen[operation.ID] = true
+		out = append(out, operation)
+	}
+	return out
+}
+
+// extractServiceEntryFacts 为 facts 命令额外抽取 job/dubbo/gRPC-server 三类服务入口
+// 事实。facts 是排障入口而非严格分析命令，因此始终按诊断模式运行：任一子步骤失败
+// 都记为诊断并继续，不中断 facts 输出，保持与 grpcMode=diagnostic 时既有 gRPC-client
+// 抽取失败处理方式一致的容错策略。
+func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *facts.Store, recorder *pipelineRecorder) {
+	_ = recorder.measure("job_extract", func() error {
+		return jobextract.Extract(p, idx, store)
+	})
+	_ = recorder.measure("dubbo_provider_extract", func() error {
+		return dubboextract.Extract(p, idx, store)
+	})
+	_ = recorder.measure("grpc_server_extract", func() error {
+		dependencies, dependencyErr := discoverGrpcServerDependencies(p, recorder)
+		if dependencyErr != nil {
+			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
+			return nil
+		}
+		catalog, catalogErr := grpcextract.BuildServerCatalog(p, dependencies)
+		if catalogErr != nil {
+			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcServerCatalogFailed, Severity: diagnostics.SeverityWarning, Message: catalogErr.Error()})
+			return nil
+		}
+		providers, issues, extractErr := grpcextract.ExtractServerProviders(p, idx, catalog)
+		if extractErr != nil {
+			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcServerCatalogFailed, Severity: diagnostics.SeverityWarning, Message: extractErr.Error()})
+			return nil
+		}
+		// facts 命令在 includeServiceEntry 模式下同时运行 gRPC client catalog（诊断模式
+		// gRPC 抽取，见上方 grpcMode != grpcModeOff 分支）与 server catalog：若同一个
+		// generated package 既被本项目作为 client 调用、又被注册为 server（服务网格中
+		// 自调用/双向 RPC 的常见形态），两条 catalog 会各自产出同一 canonical full method
+		// 的 GrpcOperationFact，ID 相同。RenderJSON 只排序不去重，直接 append 会让 facts
+		// JSON 出现重复的 grpc_operations 条目。按 ID 去重后再合并。
+		store.GrpcOperations = append(store.GrpcOperations, dedupeNewGrpcOperations(store.GrpcOperations, catalog.Operations)...)
+		store.GrpcProviders = append(store.GrpcProviders, providers...)
+		for _, issue := range issues {
+			diagnostics.AddFact(store, diagnostics.Diagnostic{
+				Code: diagnostics.CodeGrpcServerBindingUnresolved, Severity: diagnostics.SeverityWarning,
+				Message: fmt.Sprintf("cannot resolve concrete implementation for %s (%s)", issue.RegisterFunction, issue.ServerInterface), Span: issue.Span,
+			})
+		}
+		return nil
+	})
 }
 
 // buildBaseFacts is shared by BFF impact and gRPC service impact. It owns only

@@ -27,3 +27,18 @@ func TestCallGraphOnlyIncludesExecutableReferences(t *testing.T) {
 		t.Fatalf("grpc calls=%#v", got)
 	}
 }
+
+// TestCallGraphDedupesGrpcCallsByID 验证 grpcByCaller 与 forward/reverse 一致地按 ID
+// 去重：同一 GrpcCallFact.ID 若因任何原因在 store.GrpcCalls 中出现多次，同一 caller
+// 下也只记一条，不产生重复调用图边。
+func TestCallGraphDedupesGrpcCallsByID(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	store.GrpcCalls = []facts.GrpcCallFact{
+		{ID: "grpc_call:a", CallerSymbol: "func:a"},
+		{ID: "grpc_call:a", CallerSymbol: "func:a"},
+	}
+	g := NewCallGraph(store)
+	if got := g.GrpcCalls("func:a"); len(got) != 1 {
+		t.Fatalf("grpc calls = %#v, want exactly 1 deduped entry", got)
+	}
+}

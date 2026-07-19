@@ -191,29 +191,78 @@ func routesForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []En
 	})
 	return out
 }
+// forwardChains 从 handler 出发遍历可执行调用图，收集所有到达 gRPC 调用点的路径。
+//
+// 多条不同路径可能汇聚到同一个发起 gRPC 调用的 helper（如 handler 分别经 A、B 两条
+// 分支都调用同一个 C，C 内部发起 RPC）；此时应为每条路径各自产出一条 H->...->C->Op
+// 的调用链证据。为避免对共享下游子树重复展开（菱形调用图下会造成组合爆炸），按符号
+// 记忆化下游链：每个符号的"到达 gRPC 调用点的相对后缀路径"只计算一次并缓存，多个
+// 上游路径复用同一份缓存结果，整体复杂度为 O(V+E) 而非路径数的指数级。
 func forwardChains(calls *graph.CallGraph, handler facts.SymbolID) []Chain {
-	type state struct {
-		symbol facts.SymbolID
-		path   []facts.SymbolID
-	}
-	queue := []state{{handler, []facts.SymbolID{handler}}}
-	visited := map[facts.SymbolID]bool{handler: true}
+	memo := &chainMemo{calls: calls, cache: map[facts.SymbolID][]relChain{}, inProgress: map[facts.SymbolID]bool{}}
 	var out []Chain
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, call := range calls.GrpcCalls(current.symbol) {
-			out = append(out, Chain{Symbols: append([]facts.SymbolID(nil), current.path...), Call: call})
+	for _, rel := range memo.chainsFrom(handler) {
+		symbols := append([]facts.SymbolID{handler}, rel.suffix...)
+		out = append(out, Chain{Symbols: symbols, Call: rel.call})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Call.ID != out[j].Call.ID {
+			return out[i].Call.ID < out[j].Call.ID
 		}
-		for _, next := range calls.Callees(current.symbol) {
-			if !visited[next] {
-				visited[next] = true
-				queue = append(queue, state{next, append(append([]facts.SymbolID(nil), current.path...), next)})
-			}
+		return symbolPathLess(out[i].Symbols, out[j].Symbols)
+	})
+	return out
+}
+
+// relChain 是相对于某个起始符号的下游链：suffix 为起始符号之后的符号序列（不含起始
+// 符号自身），call 为该链末端发起的 gRPC 调用。
+type relChain struct {
+	suffix []facts.SymbolID
+	call   facts.GrpcCallFact
+}
+
+// chainMemo 按符号缓存"从该符号出发能到达的全部 gRPC 调用相对链"，使菱形调用图中
+// 被多条上游路径共享的下游子树只展开一次。
+type chainMemo struct {
+	calls      *graph.CallGraph
+	cache      map[facts.SymbolID][]relChain
+	inProgress map[facts.SymbolID]bool // 检测计算过程中的环，环边不再向下展开
+}
+
+func (m *chainMemo) chainsFrom(symbol facts.SymbolID) []relChain {
+	if cached, ok := m.cache[symbol]; ok {
+		return cached
+	}
+	if m.inProgress[symbol] {
+		// 递归回到一个正在计算中的符号：说明存在环，环边到此为止不再展开，
+		// 避免无限递归；不写入 cache，因为该符号的完整结果仍在其外层调用中计算。
+		return nil
+	}
+	m.inProgress[symbol] = true
+	defer delete(m.inProgress, symbol)
+
+	var out []relChain
+	for _, call := range m.calls.GrpcCalls(symbol) {
+		out = append(out, relChain{call: call})
+	}
+	for _, next := range m.calls.Callees(symbol) {
+		for _, sub := range m.chainsFrom(next) {
+			suffix := append([]facts.SymbolID{next}, sub.suffix...)
+			out = append(out, relChain{suffix: suffix, call: sub.call})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Call.ID < out[j].Call.ID })
+	m.cache[symbol] = out
 	return out
+}
+
+// symbolPathLess 按字典序比较两条符号路径，供同一 Call.ID 下多条路径产生稳定顺序。
+func symbolPathLess(a, b []facts.SymbolID) bool {
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return len(a) < len(b)
 }
 func uniqueEndpoints(values []Endpoint) []Endpoint {
 	seen := map[Endpoint]bool{}

@@ -54,6 +54,31 @@ type Index struct {
 	// packageValueObjects 借助 ast.Object 词法对象身份把包级 var 标识符映射到符号 ID，
 	// 用于在赋值目标上区分包级变量与同名局部变量。
 	packageValueObjects map[*parserObject]facts.SymbolID
+	// fileByRelPath 按项目相对路径（斜杠分隔）缓存 *project.File，供 FileByRelativePath
+	// 摊还 O(1) 查找；懒加载，首次调用时一次性扫描全部 Packages/Files 建立索引。
+	fileByRelPath map[string]*project.File
+}
+
+// FileByRelativePath 在项目中查找相对路径（项目根起、斜杠分隔）对应的文件，
+// 找不到返回 nil。首次调用时一次性扫描全部 packages/files 建立缓存，后续调用摊还
+// O(1)；调用方（如 link 包为每条 route/middleware 绑定各查一次源文件）不必再各自
+// 承担一次 O(packages×files) 全量扫描。
+func (idx *Index) FileByRelativePath(rel string) *project.File {
+	if idx == nil || idx.Project == nil {
+		return nil
+	}
+	if idx.fileByRelPath == nil {
+		idx.fileByRelPath = make(map[string]*project.File)
+		for _, pkg := range idx.Project.Packages {
+			for _, file := range pkg.Files {
+				// file.Path 在内存中为绝对路径，转回项目相对路径后统一为斜杠形式存索引。
+				if got, err := filepath.Rel(idx.Project.Root, file.Path); err == nil {
+					idx.fileByRelPath[filepath.ToSlash(got)] = file
+				}
+			}
+		}
+	}
+	return idx.fileByRelPath[rel]
 }
 
 // ValueType 表示一个轻量静态类型：包路径 + 类型名 + 置信度。

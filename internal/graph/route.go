@@ -63,15 +63,19 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		g.GroupsByID[group.ID] = group
 		groupsByFunc[group.RouteFunc] = append(groupsByFunc[group.RouteFunc], group)
 		if group.ParentGroupID != "" {
-			g.ChildGroupsByID[group.ParentGroupID] = append(g.ChildGroupsByID[group.ParentGroupID], group.ID)
+			g.ChildGroupsByID[group.ParentGroupID] = appendStringOnce(g.ChildGroupsByID[group.ParentGroupID], group.ID)
 		}
 	}
 	// 第 1 步补充：跨函数的 group flow（父组在另一函数中被注册为子组）也并入同一索引。
+	// 用 appendStringOnce 去重：同一 (parent, child) 对可能同时被 ParentGroupID 字段与
+	// RouteGroupFlow 记录，或被多条 flow 记录命中；RoutesForGroup 递归靠 seenGroups
+	// 兜底不会因此重复收集路由，但重复条目会误导直接读 ChildGroupsByID 的消费方，
+	// 也让递归多做无意义的重复调用。
 	for _, flow := range store.RouteGroupFlows {
 		if flow.ParentGroupID == "" || flow.ChildGroupID == "" {
 			continue
 		}
-		g.ChildGroupsByID[flow.ParentGroupID] = append(g.ChildGroupsByID[flow.ParentGroupID], flow.ChildGroupID)
+		g.ChildGroupsByID[flow.ParentGroupID] = appendStringOnce(g.ChildGroupsByID[flow.ParentGroupID], flow.ChildGroupID)
 	}
 	// 第 2 步：索引路由，按有效 group ID 与 handler symbol 聚合。
 	for _, route := range store.Routes {
@@ -267,6 +271,18 @@ func appendRouteOnce(routes []facts.RouteRegistrationFact, candidate facts.Route
 		}
 	}
 	return append(routes, candidate)
+}
+
+// appendStringOnce 把 candidate 追加到 values（仅当尚未存在），用于 ChildGroupsByID
+// 对同一 (parent, child) 关系去重——ParentGroupID 字段与 RouteGroupFlow 可能重复
+// 记录同一条父子组关系。
+func appendStringOnce(values []string, candidate string) []string {
+	for _, value := range values {
+		if value == candidate {
+			return values
+		}
+	}
+	return append(values, candidate)
 }
 
 // spanContains 判断 inner 位置区间是否完全落在 outer 内。要求同文件且起止点满足

@@ -569,8 +569,9 @@ func commonDefinitions() map[string]any {
 			"span":         ref("source_span"),
 		}, "id", "kind", "package_path", "name", "span"),
 		"wrapper": object(map[string]any{
-			"name": stringType(),
-			"raw":  stringType(),
+			"name":    stringType(),
+			"raw":     stringType(),
+			"guessed": boolType(),
 		}, "name", "raw"),
 	}
 }

@@ -8,6 +8,14 @@ type WrapperFact struct {
 	Name string `json:"name"`
 	// Raw 是 wrapper 调用的原始表达式文本，供调试与人工 review。
 	Raw string `json:"raw"`
+	// Guessed 标记该 wrapper 是否经"结构兜底"猜测得出：调用名不在已知 handler
+	// wrapper 白名单中时，提取器会退化为"取最后一个长得像 handler 的实参"这一启发式
+	// （handlerArgument 的非白名单分支）。当 wrapper 语义并非原样转发（例如记录/审计
+	// 后返回另一个闭包、按条件交换实参等）时，猜出的表达式可能并非真正被注册的
+	// handler。Guessed=true 提示这条 wrapper 未经白名单验证，是启发式而非已确认证据；
+	// 缺省为 false（省略时表示已知白名单 wrapper 或非 handler wrapper 场景，如
+	// route group wrapper）。
+	Guessed bool `json:"guessed,omitempty"`
 }
 
 // RouteGroupFact 描述一个路由分组，记录其变量名、前缀、父级 group 与所在 route function。

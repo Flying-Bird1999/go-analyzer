@@ -81,9 +81,53 @@ func Send(event string, msg *Message) {
 		if !hasIMDependency(event, message) {
 			t.Fatalf("dynamic event payload dependency missing: %#v", event.Dependencies)
 		}
+		// Resolved=false 意味着具体 event 名称本身是运行时值、未被静态证明；
+		// Confidence 不应与已解析事件一样标 high，否则消费方（尤其经
+		// facts.CombineConfidence 传播到 impact 树 im_event_unresolved 终节点后）
+		// 无法区分"值已证明"与"仅结构证据、值未知"。
+		if event.Confidence != facts.ConfidenceMedium {
+			t.Fatalf("unresolved event confidence = %q, want %q (should not overstate certainty of an unproven event value): %#v", event.Confidence, facts.ConfidenceMedium, event)
+		}
 		return
 	}
 	t.Fatal("dynamic event fact not found")
+}
+
+// TestExtractResolvedEventKeepsHighConfidence 验证静态可求值的 event（本用例中为字符串
+// 常量）仍标记 Confidence=high——降级只针对 Resolved=false 的场景，不应误伤已证明的
+// 事件。
+func TestExtractResolvedEventKeepsHighConfidence(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"consumer.go": `package sample
+
+import notifyim "gopkg.inshopline.com/sc1/commons/utils/bus/notify/im"
+
+type Message struct{ ID string }
+
+func Send(msg *Message) {
+	notifyim.SendIm(nil, "app", "group", "mc/message", msg)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := astindex.FunctionSymbolID("example.com/im-flow", "Send")
+	for _, event := range store.IMEvents {
+		if event.SenderSymbol != sender {
+			continue
+		}
+		if !event.Resolved || event.Event != "mc/message" {
+			t.Fatalf("resolved event = %#v", event)
+		}
+		if event.Confidence != facts.ConfidenceHigh {
+			t.Fatalf("resolved event confidence = %q, want %q", event.Confidence, facts.ConfidenceHigh)
+		}
+		return
+	}
+	t.Fatal("resolved event fact not found")
 }
 
 // TestExtractStopsWrapperCyclesDeterministically 验证 wrapper 调用图存在环时，

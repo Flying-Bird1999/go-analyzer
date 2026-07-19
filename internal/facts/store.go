@@ -92,6 +92,21 @@ type Store struct {
 	Links []LinkFact `json:"links"`
 	// Diagnostics 是各阶段记录的可恢复不确定性诊断。
 	Diagnostics []DiagnosticFact `json:"diagnostics"`
+	// diagnosticIndex 按去重 key 记录该诊断在 Diagnostics 中的下标，供
+	// internal/diagnostics.AddFact 做 O(1) 摊还去重插入，避免每次追加都重建整个
+	// 诊断集合（O(n²)）。不导出、不序列化，纯粹是 AddFact 的内部加速结构；
+	// 手工构造 Store 字面量（不经 NewStore）时为 nil，AddFact 会按需惰性初始化。
+	diagnosticIndex map[string]int
+}
+
+// DiagnosticIndex 返回 Diagnostics 的去重索引（key -> 下标），供
+// internal/diagnostics.AddFact 复用；key 为空时惰性初始化为空 map 并写回。
+// 仅供 diagnostics 包在同一事实总线内维护增量去重状态使用，不作为通用 API。
+func (s *Store) DiagnosticIndex() map[string]int {
+	if s.diagnosticIndex == nil {
+		s.diagnosticIndex = make(map[string]int, len(s.Diagnostics))
+	}
+	return s.diagnosticIndex
 }
 
 // NewStore 创建一个空的 Store，并设置项目根目录、module path 与可选的构建上下文。

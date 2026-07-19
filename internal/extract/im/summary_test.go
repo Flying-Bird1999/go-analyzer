@@ -419,6 +419,76 @@ func Receive(msg *serviceim.Message) {
 	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
 }
 
+// TestExtractDirectProtocolReassignedVariableUsesLatestPayload 验证同一局部变量名
+// 在函数内先被赋值给无关类型（恰好也有 Body 字段，模拟常见变量名 data/req/msg 复用），
+// 再被重新赋值为真正的 IM SendData，最终只有一次真正的广播 Event 调用时，
+// directProtocolSummary 应把该调用与"重新赋值后"的 payload（msg）配对，
+// 而不是与"第一次赋值"的无关 payload（"irrelevant" 字面量）误配。
+//
+// 修复前 bodyPayload 配对只以变量名为键、且 addBodyPayload 只记首次赋值
+// （第二次对同一变量名的赋值被 addBodyPayload 的 exists 检查静默丢弃），
+// 唯一一次 Event() 调用会被错误配对到第一次赋值（无关类型）的 payload。
+func TestExtractDirectProtocolReassignedVariableUsesLatestPayload(t *testing.T) {
+	p, idx, store := loadIMProject(t, map[string]string{
+		"util/im/im.go": `package im
+
+const BroadcastURI = "/broadcast/send"
+type SendData struct {
+	URL  string
+	Body any
+}
+
+func (d *SendData) Event(event string) { d.URL = "broadcast://" + event }
+
+// Decoy 恰好也有 Body 字段，模拟同名局部变量先被赋值给无关类型（如某个中间态/
+// 校验对象），随后（非 := 重新声明，而是 = 重新赋值）才被换成真正的 IM 类型。
+type Decoy struct{ Body any }
+
+func Post(path string, body any) {}
+func sendImMessage(topic string, msg any) {
+	data := &Decoy{Body: "irrelevant"}
+	_ = data
+	data = &SendData{Body: msg}
+	data.Event(topic)
+	Post(BroadcastURI, data)
+}
+func SendBroadcastMessage(topic string, msg any) {
+	sendImMessage(topic, msg)
+}
+`,
+		"service/im/im.go": `package im
+
+import utilim "example.com/im-flow/util/im"
+
+const MessageEvent = "mc/message"
+type Message struct{ ID string }
+
+func SendMessage(msg *Message) {
+	utilim.SendBroadcastMessage(MessageEvent, msg)
+}
+`,
+		"consumer.go": `package sample
+
+import serviceim "example.com/im-flow/service/im"
+
+func Receive(msg *serviceim.Message) {
+	serviceim.SendMessage(msg)
+}
+`,
+	})
+
+	if err := Extract(p, idx, store); err != nil {
+		t.Fatal(err)
+	}
+
+	senderID := astindex.FunctionSymbolID("example.com/im-flow", "Receive")
+	messageID := astindex.TypeSymbolID("example.com/im-flow/service/im", "Message")
+	// 真正的广播事件必须依赖重新赋值后的 msg/Message，而不是被首次赋值的无关
+	// payload 误配（误配时 event 仍会解析为 "mc/message"，但 Dependencies 里
+	// 不会包含 Message 类型，因为 payload 表达式换成了字符串字面量）。
+	assertEventsForDependency(t, store.IMEvents, senderID, messageID, []string{"mc/message"})
+}
+
 // TestExtractResolvesLegacyEnumAndClosureWrapper 验证 legacy iota + String() 枚举、
 // channel.String() + event.String() 拼接 event，以及闭包 wrapper payload 这三种
 // 组合模式能被正确解析并传播。

@@ -1029,7 +1029,31 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 			RelatedFactIDs: []string{route.ID},
 		})
 	}
+	if hasGuessedWrapper(parsed.HandlerWrappers) {
+		// wrapper 调用名不在已知白名单中，提取器退化为"取最后一个长得像 handler 的
+		// 实参"这一结构兜底猜测；若该 wrapper 实际语义并非原样转发（记录/审计后返回
+		// 另一闭包、按条件交换实参等），猜出的 handler 可能与真实注册的不符。
+		// 与 isUnresolvedHandlerExpression 不同：这里"成功"产出了一个表达式，
+		// 因此不会触发 CodeRouteUnresolvedHandler，必须用独立诊断标记其证据强度。
+		diagnostics.AddFact(store, diagnostics.Diagnostic{
+			Code:           diagnostics.CodeRouteWrapperGuessed,
+			Severity:       diagnostics.SeverityWarning,
+			Message:        "handler wrapper is not in the known whitelist; innermost handler was inferred structurally and may be incorrect if the wrapper does not forward as-is",
+			Span:           route.Span,
+			RelatedFactIDs: []string{route.ID},
+		})
+	}
 	return route, true
+}
+
+// hasGuessedWrapper 判断 wrapper 列表中是否存在任意一个经结构兜底猜测得出的 wrapper。
+func hasGuessedWrapper(wrappers []facts.WrapperFact) bool {
+	for _, wrapper := range wrappers {
+		if wrapper.Guessed {
+			return true
+		}
+	}
+	return false
 }
 
 // isUnresolvedHandlerExpression 判断 handler 表达式是否无法精确解析：

@@ -410,17 +410,30 @@ func (e *summaryEngine) broadcastParamsCall(info *functionInfo, call *ast.CallEx
 	return nil, nil, false
 }
 
+// bodyAssignment 记录一次"变量被赋值为带 Body 字段的复合字面量/Body 字段被赋值"的
+// 位置与对应的 payload 表达式，用于按源码顺序匹配最近一次赋值。
+type bodyAssignment struct {
+	pos     token.Pos
+	payload ast.Expr
+}
+
 // directProtocolSummary 识别函数自身直接发送 IM 的场景：函数体可达 endpoint，
 // 且存在对“持有 Body 字段的同一变量”的 Event(...) 调用（SC2 风格 SendData）。
 // 要求 Event 调用接收者与 Body 字面量绑定到同一变量，避免把函数内无关的 *.Event()
 // 调用或无关的 Body 字段错误配对成 IM event（Body 是极常见字段名）。
+//
+// 配对以变量名为键定位候选，但同一局部变量名可能在函数体内被多次重新赋值给不同
+// 类型（如先赋值给一个同样带 Body 字段/Event 方法的无关类型作干扰，再赋值给真正
+// 的 IM 类型）。若只记首次赋值、且只取第一个匹配变量名的 Event() 调用，会把干扰项
+// 的 Event 调用与其无关 payload 错误配对，同时真正的发送被忽略。这里改为记录每个
+// 变量名的全部赋值（按源码位置），为每个 Event() 调用选择"其之前最近一次同名赋值"
+// 的 payload，使配对结果与源码顺序上的实际变量状态一致。
 func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSummary, bool) {
 	if !e.reach[info.id].endpoint {
 		return functionSummary{}, false
 	}
-	// 第一遍：收集被赋值为带 Body 字段的复合字面量的变量名 -> payload 表达式。
-	// 同名变量只记首次赋值，保证源序确定性。
-	bodyPayload := map[string]ast.Expr{}
+	// 第一遍：按源码位置收集每个变量名的全部 Body-payload 赋值。
+	bodyPayload := map[string][]bodyAssignment{}
 	ast.Inspect(info.decl.Body, func(node ast.Node) bool {
 		assign, ok := node.(*ast.AssignStmt)
 		if !ok {
@@ -437,7 +450,7 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 					continue
 				}
 				if expr, ok := bodyFieldOf(lit); ok {
-					addBodyPayload(bodyPayload, left.Name, expr)
+					addBodyPayload(bodyPayload, left.Name, left.Pos(), expr)
 				}
 			case *ast.SelectorExpr:
 				if left.Sel.Name != "Body" {
@@ -447,7 +460,7 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 				if !ok {
 					continue
 				}
-				addBodyPayload(bodyPayload, recv.Name, assign.Rhs[i])
+				addBodyPayload(bodyPayload, recv.Name, left.Pos(), assign.Rhs[i])
 			}
 		}
 		return true
@@ -455,7 +468,8 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 	if len(bodyPayload) == 0 {
 		return functionSummary{}, false
 	}
-	// 第二遍：找到对上述变量的 Event(arg) 调用。若两个分支分别设置 event，且分支由
+	// 第二遍：遍历全部 Event(arg) 调用，跳过没有"其之前的同名赋值"的调用（无关干扰
+	// 项），命中第一个能配对到 payload 的调用。若两个分支分别设置 event，且分支由
 	// 可传播的字符串等值条件控制，则保留该条件，待上游实参确定后选择正确分支。
 	var eventExpr ast.Expr
 	var eventCall *ast.CallExpr
@@ -476,7 +490,7 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 		if !ok {
 			return true
 		}
-		payload, ok := bodyPayload[recv.Name]
+		payload, ok := latestBodyPayloadBefore(bodyPayload[recv.Name], call.Pos())
 		if !ok {
 			return true
 		}
@@ -493,6 +507,26 @@ func (e *summaryEngine) directProtocolSummary(info *functionInfo) (functionSumma
 		summary.event = conditional
 	}
 	return summary, true
+}
+
+// latestBodyPayloadBefore 在某个变量名的全部赋值中，返回位置早于 callPos 的最近一次
+// 赋值对应的 payload；若没有任何赋值出现在 callPos 之前，返回 false（该 Event 调用
+// 与此变量名无关，不应被配对）。
+func latestBodyPayloadBefore(assignments []bodyAssignment, callPos token.Pos) (ast.Expr, bool) {
+	var best *bodyAssignment
+	for i := range assignments {
+		candidate := &assignments[i]
+		if candidate.pos >= callPos {
+			continue
+		}
+		if best == nil || candidate.pos > best.pos {
+			best = candidate
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return best.payload, true
 }
 
 func (e *summaryEngine) conditionalEventTemplate(info *functionInfo, eventCall *ast.CallExpr) *valueTemplate {
@@ -590,14 +624,14 @@ func eventReceiver(call *ast.CallExpr) string {
 	return receiver.Name
 }
 
-func addBodyPayload(bodyPayload map[string]ast.Expr, name string, expr ast.Expr) {
+// addBodyPayload 记录一次"变量名在 pos 处被赋值为 payload"，按变量名分桶追加，
+// 不做去重/覆盖：同一变量名的历次赋值都保留，供 latestBodyPayloadBefore 按调用点
+// 之前的最近一次赋值匹配。
+func addBodyPayload(bodyPayload map[string][]bodyAssignment, name string, pos token.Pos, expr ast.Expr) {
 	if name == "" || expr == nil {
 		return
 	}
-	if _, exists := bodyPayload[name]; exists {
-		return
-	}
-	bodyPayload[name] = expr
+	bodyPayload[name] = append(bodyPayload[name], bodyAssignment{pos: pos, payload: expr})
 }
 
 // compositeLitOf 解包可能的取址表达式（&T{...}），返回内部的复合字面量；否则返回 nil。
@@ -740,6 +774,17 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 		})
 	}
 	span := callSpan
+	// Confidence 反映"该 IM 事件的静态证据强度"（facts.IMEventFact 字段语义）。
+	// 未解析事件（Resolved=false，event 值来自运行时表达式而非可静态求值的常量/拼接）
+	// 的具体 event 名称本身不确定：调用点、payload 依赖等结构性证据仍然扎实，但把它
+	// 和已解析事件一样标为 high 会让消费方无法区分"值已证明"与"值未知，仅结构证据"，
+	// 且经 facts.CombineConfidence 传播到 impact 树的 im_event 终节点后可能掩盖这一
+	// 弱点（高置信度父路径 + 未解析事件仍会 combine 出 high）。降为 medium，与本项目
+	// 其它"结构确定但具体值未定"场景（如 constructor 推断的调用边）一致。
+	confidence := facts.ConfidenceHigh
+	if !resolved {
+		confidence = facts.ConfidenceMedium
+	}
 	return facts.IMEventFact{
 		ID:           eventFactID(info.id, event, callSpan),
 		Event:        event,
@@ -747,7 +792,7 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 		SenderSymbol: info.id,
 		Dependencies: dependencyList,
 		Evidence:     evidence,
-		Confidence:   facts.ConfidenceHigh,
+		Confidence:   confidence,
 		Span:         &span,
 		Resolved:     resolved,
 	}

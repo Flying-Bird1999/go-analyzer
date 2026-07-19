@@ -22,7 +22,7 @@ func linkMiddlewareSymbols(idx *astindex.Index, store *facts.Store) {
 		// 取地址写回 binding.MiddlewareSymbols，因此使用索引遍历。
 		binding := &store.Middleware[i]
 		// middleware 表达式记录在哪个文件里，需要定位回源文件以获取 import 表与包路径。
-		file := fileByRelativePath(idx.Project, binding.Span.File)
+		file := idx.FileByRelativePath(binding.Span.File)
 		if file == nil {
 			continue
 		}

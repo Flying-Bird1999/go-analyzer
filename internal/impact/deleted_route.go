@@ -69,8 +69,11 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *asti
 		if anchorLine <= 0 {
 			anchorLine = 1
 		}
-		// 从变更后 facts 尝试恢复 group id/prefix/route func。
-		group := resolveDeletedRouteGroup(file, anchorLine, parsed.GroupRaw, store)
+		// 从变更后 facts 尝试恢复 group id/prefix/route func。enclosingFunc 用于把候选
+		// group 限定在同一路由函数内，避免多个路由函数使用同名局部 group 变量
+		// （如都叫 sub/api）时，删除行被误绑到另一个函数里同名变量声明的 group。
+		enclosingFunc := enclosingRouteFunc(idx, file, anchorLine)
+		group := resolveDeletedRouteGroup(file, anchorLine, parsed.GroupRaw, enclosingFunc, store)
 		resolvedPath := ""
 		if parsed.LocalPath != "" {
 			resolvedPath = joinDeletedRoutePath(group.prefix, parsed.LocalPath)
@@ -327,6 +330,39 @@ func deletedAnnotationID(handler facts.SymbolID, method, routePath string, index
 	return "annotation:" + string(handler) + ":" + method + ":" + routePath + ":" + strconv.Itoa(index)
 }
 
+// enclosingRouteFunc 在 idx.Symbols 中查找 span 覆盖 anchorLine 的 func/method 符号，
+// 作为删除行所在的路由函数。用于把 resolveDeletedRouteGroup 的候选 group/route 搜索
+// 限定在同一函数内，避免不同路由函数使用同名局部 group 变量时相互误绑。
+// idx 为 nil、anchorLine 非法或没有符号 span 覆盖该行时返回空字符串，调用方据此退化
+// 为不限定函数的全文件搜索（与引入本函数前的历史行为一致）。
+func enclosingRouteFunc(idx *astindex.Index, file string, anchorLine int) facts.SymbolID {
+	if idx == nil || anchorLine <= 0 {
+		return ""
+	}
+	file = filepath.ToSlash(file)
+	var best facts.SymbolID
+	bestSpan := -1
+	for id, symbol := range idx.Symbols {
+		if symbol.Kind != "func" && symbol.Kind != "method" {
+			continue
+		}
+		if filepath.ToSlash(symbol.Span.File) != file {
+			continue
+		}
+		if symbol.Span.StartLine > anchorLine || symbol.Span.EndLine < anchorLine {
+			continue
+		}
+		// 多个符号的 span 都覆盖该行时（理论上不应发生，函数声明不嵌套），
+		// 选 span 最窄（EndLine-StartLine 最小）的一个，更贴近真实归属。
+		span := symbol.Span.EndLine - symbol.Span.StartLine
+		if bestSpan == -1 || span < bestSpan {
+			best = id
+			bestSpan = span
+		}
+	}
+	return best
+}
+
 // deletedFilePackagePath 推断删除块所属文件的 package path：
 // 优先在 idx 中按文件名匹配；匹配不到则按 module path + 文件目录拼出。
 // 无法确定时返回空字符串，调用方据此放弃 handler 恢复。
@@ -429,12 +465,79 @@ type deletedRouteGroup struct {
 	ok        bool
 }
 
-// resolveDeletedRouteGroup 在变更后 facts 中尝试恢复被删除路由所属的 group：
-//  1. 在同文件同 group 变量中选择"声明行最接近且早于删除行"的 group；
-//  2. 若无满足条件的 group，退化为同文件同变量中最早的 group；
-//  3. 仍找不到时，回退到同 group 变量的路由（推断 prefix）；
+// resolveDeletedRouteGroup 在变更后 facts 中尝试恢复被删除路由所属的 group。
+//
+// Go 的局部变量作用域不跨越函数边界：同名的 group 局部变量（如都叫 sub/api）在
+// 不同路由函数中是完全不同的实例，不存在"函数 A 里的 sub 兜底到函数 B 里的 sub"
+// 这种合法场景。因此当 enclosingFunc 已知时，搜索必须严格限定在该函数内——找不到
+// 同函数候选（例如整个 group 创建语句与路由一起被删除，变更后源码里已不存在该函数
+// 内任何同名 group）就应直接判定为"无法恢复"，落到合成占位 group（prefix 留空、
+// 触发 local path 降级），而不能放宽到跨函数搜索去认领一个语义无关的同名 group、
+// 产出看似成功实则错误的 prefix。
+//
+// 只有当 enclosingFunc 本身无法确定（idx 为 nil、anchorLine 非法等）时，才退化为
+// 不限定函数的全文件搜索——这是"完全没有更精确信息可用"时的历史行为，precision 更低
+// 但不会比"确定函数范围却仍然跨函数误绑"更差。
+//
+//  1. 在候选范围（enclosingFunc 已知则限定该函数，否则全文件）内按同 group 变量选择
+//     "声明行最接近且早于删除行"的 group；
+//  2. 若无满足条件的 group，退化为同一范围内最早的 group；
+//  3. 仍找不到时，回退到同一范围内同 group 变量的路由（推断 prefix）；
 //  4. 都失败时使用合成的占位 group ID，prefix 留空（后续走 local path 降级）。
-func resolveDeletedRouteGroup(file string, anchorLine int, groupVar string, store *facts.Store) deletedRouteGroup {
+func resolveDeletedRouteGroup(file string, anchorLine int, groupVar string, enclosingFunc facts.SymbolID, store *facts.Store) deletedRouteGroup {
+	if enclosingFunc != "" {
+		return resolveDeletedRouteGroupScoped(file, anchorLine, groupVar, enclosingFunc, store)
+	}
+	return resolveDeletedRouteGroupScopedAny(file, anchorLine, groupVar, store)
+}
+
+// resolveDeletedRouteGroupScoped 在严格限定 RouteFunc == enclosingFunc 的范围内搜索
+// 候选 group/route。同函数内找不到任何候选时（例如 group 创建语句与路由一起被删除）
+// 返回合成占位 group（与 resolveDeletedRouteGroupScopedAny 的最终兜底一致），不放宽到
+// 其他函数——跨函数的同名 group 变量语义无关，认领会产生错误的 prefix。
+func resolveDeletedRouteGroupScoped(file string, anchorLine int, groupVar string, enclosingFunc facts.SymbolID, store *facts.Store) deletedRouteGroup {
+	var selected *facts.RouteGroupFact
+	var fallback *facts.RouteGroupFact
+	for i := range store.RouteGroups {
+		group := &store.RouteGroups[i]
+		if group.GroupVar != groupVar || filepath.ToSlash(group.Span.File) != file || group.RouteFunc != enclosingFunc {
+			continue
+		}
+		if fallback == nil || group.Span.StartLine < fallback.Span.StartLine {
+			fallback = group
+		}
+		if group.Span.StartLine > anchorLine {
+			continue
+		}
+		if selected == nil || group.Span.StartLine > selected.Span.StartLine {
+			selected = group
+		}
+	}
+	if selected == nil {
+		selected = fallback
+	}
+	if selected != nil {
+		return deletedRouteGroup{id: selected.ID, prefix: selected.Prefix, routeFunc: selected.RouteFunc, ok: true}
+	}
+	for _, route := range store.Routes {
+		if route.GroupVar != groupVar || filepath.ToSlash(route.File) != file || route.RouteFunc != enclosingFunc {
+			continue
+		}
+		return deletedRouteGroup{
+			id:        route.GroupID,
+			prefix:    deriveRoutePrefix(route.ResolvedPath, route.LocalPath),
+			routeFunc: route.RouteFunc,
+			ok:        route.GroupID != "",
+		}
+	}
+	// 同函数内确实没有任何候选：使用合成占位 group ID（携带函数身份，避免与其他
+	// 函数/变量的占位 ID 意外冲突），prefix 留空，触发后续 local path 降级。
+	return deletedRouteGroup{id: "deleted_route_group:" + file + ":" + string(enclosingFunc) + ":" + groupVar, routeFunc: enclosingFunc}
+}
+
+// resolveDeletedRouteGroupScopedAny 是不限定 RouteFunc 的全文件搜索，与 enclosingFunc
+// 引入前的历史行为完全一致，作为 enclosingFunc 无法确定或同函数内无候选时的兜底。
+func resolveDeletedRouteGroupScopedAny(file string, anchorLine int, groupVar string, store *facts.Store) deletedRouteGroup {
 	var selected *facts.RouteGroupFact
 	var fallback *facts.RouteGroupFact
 	for i := range store.RouteGroups {
