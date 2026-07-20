@@ -234,13 +234,11 @@ func addCallReference(p *project.Project, file *project.File, idx *astindex.Inde
 			FromSymbol: from,
 			ToSymbol:   candidate.ID,
 			ToRaw:      raw,
-			Confidence: candidate.Confidence,
 			Span:       span,
 			Evidence: []facts.EvidenceFact{{
-				Kind:       "call_expr",
-				Raw:        raw,
-				Span:       span,
-				Confidence: candidate.Confidence,
+				Kind: "call_expr",
+				Raw:  raw,
+				Span: span,
 			}},
 		})
 	}

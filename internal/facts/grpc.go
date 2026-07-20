@@ -62,7 +62,6 @@ type GrpcProviderFact struct {
 	RegistrationSymbol      SymbolID       `json:"registration_symbol"`
 	Span                    SourceSpan     `json:"span"`
 	Evidence                []EvidenceFact `json:"evidence,omitempty"`
-	Confidence              Confidence     `json:"confidence"`
 }
 
 // GrpcOperationID 返回 canonical full method 的稳定事实 ID。

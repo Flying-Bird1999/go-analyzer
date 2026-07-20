@@ -710,34 +710,33 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 	}
 	dependencies := map[string]facts.IMEventDependency{}
 	// addDependency 按 relation+symbol 去重写入依赖。
-	addDependency := func(id facts.SymbolID, relation facts.IMEventRelation, confidence facts.Confidence) {
+	addDependency := func(id facts.SymbolID, relation facts.IMEventRelation) {
 		if id == "" {
 			return
 		}
 		key := string(relation) + "|" + string(id)
 		dependencies[key] = facts.IMEventDependency{
-			SymbolID:   id,
-			Relation:   relation,
-			Confidence: confidence,
+			SymbolID: id,
+			Relation: relation,
 		}
 	}
 	// payload 依赖：类型符号 + value 符号（如 converter 函数）。
 	for _, id := range summary.payload.typeIDs {
-		addDependency(id, facts.IMRelationPayload, facts.ConfidenceHigh)
+		addDependency(id, facts.IMRelationPayload)
 	}
 	for _, id := range summary.payload.symbolDeps {
-		addDependency(id, facts.IMRelationPayload, facts.ConfidenceHigh)
+		addDependency(id, facts.IMRelationPayload)
 	}
 	// event 值依赖：event 表达式中引用的 const/value 符号。
 	for _, id := range summary.event.symbolDeps {
-		addDependency(id, facts.IMRelationEventValue, facts.ConfidenceHigh)
+		addDependency(id, facts.IMRelationEventValue)
 	}
 	// 控制依赖：wrapper 链和 if/switch 条件中引用的符号。
 	for _, id := range summary.wrappers {
-		addDependency(id, facts.IMRelationControl, facts.ConfidenceHigh)
+		addDependency(id, facts.IMRelationControl)
 	}
 	for _, id := range summary.controls {
-		addDependency(id, facts.IMRelationControl, facts.ConfidenceHigh)
+		addDependency(id, facts.IMRelationControl)
 	}
 	// 转为有序切片：先按 relation 再按 symbol ID。
 	dependencyList := make([]facts.IMEventDependency, 0, len(dependencies))
@@ -774,17 +773,6 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 		})
 	}
 	span := callSpan
-	// Confidence 反映"该 IM 事件的静态证据强度"（facts.IMEventFact 字段语义）。
-	// 未解析事件（Resolved=false，event 值来自运行时表达式而非可静态求值的常量/拼接）
-	// 的具体 event 名称本身不确定：调用点、payload 依赖等结构性证据仍然扎实，但把它
-	// 和已解析事件一样标为 high 会让消费方无法区分"值已证明"与"值未知，仅结构证据"，
-	// 且经 facts.CombineConfidence 传播到 impact 树的 im_event 终节点后可能掩盖这一
-	// 弱点（高置信度父路径 + 未解析事件仍会 combine 出 high）。降为 medium，与本项目
-	// 其它"结构确定但具体值未定"场景（如 constructor 推断的调用边）一致。
-	confidence := facts.ConfidenceHigh
-	if !resolved {
-		confidence = facts.ConfidenceMedium
-	}
 	return facts.IMEventFact{
 		ID:           eventFactID(info.id, event, callSpan),
 		Event:        event,
@@ -792,7 +780,6 @@ func (e *summaryEngine) factForSummary(info *functionInfo, summary functionSumma
 		SenderSymbol: info.id,
 		Dependencies: dependencyList,
 		Evidence:     evidence,
-		Confidence:   confidence,
 		Span:         &span,
 		Resolved:     resolved,
 	}

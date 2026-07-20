@@ -88,6 +88,4 @@ type ModuleUsageFact struct {
 	SymbolID SymbolID `json:"symbol_id,omitempty"`
 	// File 是 file_fallback 等级下命中的 importing file，非该等级时留空不输出。
 	File string `json:"file,omitempty"`
-	// Confidence 是该 usage 的静态证据强度。
-	Confidence Confidence `json:"confidence"`
 }

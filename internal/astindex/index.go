@@ -81,21 +81,23 @@ func (idx *Index) FileByRelativePath(rel string) *project.File {
 	return idx.fileByRelPath[rel]
 }
 
-// ValueType 表示一个轻量静态类型：包路径 + 类型名 + 置信度。
+// ValueType 表示一个轻量静态类型：包路径 + 类型名 + 是否已确定解析。
 // 它不携带泛型实参或完整类型系统信息，只够拼出 method symbol 的 receiver。
 type ValueType struct {
 	// PackagePath 是类型所在的导入路径；项目内类型为本包路径，外部类型为 import path。
 	PackagePath string
 	// TypeName 是剥离指针/泛型包装后的基础类型名。
 	TypeName string
-	// Confidence 表示该类型的静态证据强度，沿 selector 链向下传递。
-	Confidence facts.Confidence
+	// Resolved 表示该类型是否来自明确的 AST 证据（Ident/SelectorExpr 直接标注），
+	// 而非 constructor 返回值/外部 selector 名等推断得来。只有 Resolved 的类型才能
+	// 作为 map 值类型推断、interface 变量收窄、constructor 返回类型收窄的证据，
+	// 避免把推断结果当成确定事实误用。
+	Resolved bool
 }
 
-// ResolvedSymbol 是 selector 方法解析的返回结果，携带解析到的符号 ID 与累积置信度。
+// ResolvedSymbol 是 selector 方法解析的返回结果，携带解析到的符号 ID。
 type ResolvedSymbol struct {
-	ID         facts.SymbolID
-	Confidence facts.Confidence
+	ID facts.SymbolID
 }
 
 // IsProjectPackage 判断 packagePath 是否落在当前项目 module 下。
@@ -257,8 +259,8 @@ func (idx *Index) indexMapValueTypes() {
 }
 
 // staticMapConcreteValueTypes 判断一个字面量表达式是否为 map[K]I（I 为项目内 interface），
-// 并收集全部 key 的具体值类型。要求所有 key 都高置信度解析为同一个具体类型的候选集合：
-// 任一 key 无法解析、低置信度或仍是接口都会拒绝整个 map，避免动态 map 误绑定。
+// 并收集全部 key 的具体值类型。要求所有 key 都能明确解析（Resolved）为同一个具体类型的候选集合：
+// 任一 key 无法解析、非明确解析或仍是接口都会拒绝整个 map，避免动态 map 误绑定。
 func (idx *Index) staticMapConcreteValueTypes(file *project.File, expr ast.Expr) ([]ValueType, bool) {
 	lit, ok := expr.(*ast.CompositeLit)
 	if !ok {
@@ -279,7 +281,7 @@ func (idx *Index) staticMapConcreteValueTypes(file *project.File, expr ast.Expr)
 			return nil, false
 		}
 		valueType := idx.concreteValueTypeFromExpr(file, kv.Value)
-		if valueType.TypeName == "" || valueType.Confidence != facts.ConfidenceHigh || idx.isInterfaceType(valueType) {
+		if valueType.TypeName == "" || !valueType.Resolved || idx.isInterfaceType(valueType) {
 			return nil, false
 		}
 		byKey[valueTypeKey(valueType)] = valueType
@@ -380,8 +382,8 @@ func (idx *Index) indexCallableReturnType(file *project.File, id facts.SymbolID,
 }
 
 // singleConcreteReturnType 在函数体内查找所有 return 语句，判断首返回值是否
-// 全部高置信度解析为同一个项目内具体类型。一旦出现 return 无值、低置信度、
-// 接口类型或多实现，立即放弃收窄，避免把接口 constructor 误绑死。
+// 全部能明确解析（Resolved）为同一个项目内具体类型。一旦出现 return 无值、无法
+// 明确解析、接口类型或多实现，立即放弃收窄，避免把接口 constructor 误绑死。
 func (idx *Index) singleConcreteReturnType(file *project.File, decl *ast.FuncDecl) (ValueType, bool) {
 	if decl.Body == nil {
 		return ValueType{}, false
@@ -400,7 +402,7 @@ func (idx *Index) singleConcreteReturnType(file *project.File, decl *ast.FuncDec
 				return false
 			}
 			valueType := idx.concreteValueTypeFromExpr(file, x.Results[0])
-			if valueType.TypeName == "" || valueType.Confidence != facts.ConfidenceHigh || idx.isInterfaceType(valueType) {
+			if valueType.TypeName == "" || !valueType.Resolved || idx.isInterfaceType(valueType) {
 				unknown = true
 				return false
 			}
@@ -438,8 +440,8 @@ func valueKind(tok token.Token) string {
 // valueTypeFromValueSpec 推断一条 var/const 声明中第 index 个名字的静态类型。
 // effectiveType 是该 spec 生效的类型标注：可能是 spec 自带的 spec.Type，也可能是
 // iota 续行从上一 spec 继承来的类型（见 indexValueReceiverTypes）。
-// 优先级：显式/继承类型标注 -> new(T) -> 项目内 constructor 首返回值（中等置信度）
-// -> 外部 constructor selector 名（中等置信度）-> 组合字面量/取址表达式。
+// 优先级：显式/继承类型标注 -> new(T) -> 项目内 constructor 首返回值（推断，非 Resolved）
+// -> 外部 constructor selector 名（推断，非 Resolved）-> 组合字面量/取址表达式。
 func (idx *Index) valueTypeFromValueSpec(file *project.File, effectiveType ast.Expr, spec *ast.ValueSpec, index int) ValueType {
 	if effectiveType != nil {
 		return ValueTypeFromTypeExpr(file, effectiveType)
@@ -460,8 +462,8 @@ func (idx *Index) valueTypeFromValueSpec(file *project.File, effectiveType ast.E
 		}
 		if valueType, ok := idx.callableReturnType(file, call.Fun); ok {
 			// 项目内 constructor 注入：返回值类型本身可信，但作为 selector 接收者来源
-			// 标记为中等置信度，使下游传播节点置信度能反映这一推断层级。
-			valueType.Confidence = facts.ConfidenceMedium
+			// 是推断而非明确解析，标记 Resolved=false，避免被后续 gate 当成确定证据。
+			valueType.Resolved = false
 			return valueType
 		}
 		if valueType, ok := idx.externalCallableReceiver(file, call.Fun); ok {
@@ -473,7 +475,7 @@ func (idx *Index) valueTypeFromValueSpec(file *project.File, effectiveType ast.E
 
 // externalCallableReceiver 处理外部包 constructor 的 selector 形式 pkg.Name()。
 // 项目内 constructor 走 callableReturnType 用真实返回值类型；外部 constructor
-// 只用于确认依赖边界，因此按 selector 名推测 receiver 类型，并标记中等置信度。
+// 只用于确认依赖边界，因此按 selector 名推测 receiver 类型，标记 Resolved=false。
 func (idx *Index) externalCallableReceiver(file *project.File, expr ast.Expr) (ValueType, bool) {
 	callable, ok := expr.(*ast.SelectorExpr)
 	if !ok {
@@ -491,7 +493,7 @@ func (idx *Index) externalCallableReceiver(file *project.File, expr ast.Expr) (V
 	return ValueType{
 		PackagePath: importPath,
 		TypeName:    callable.Sel.Name,
-		Confidence:  facts.ConfidenceMedium,
+		Resolved:    false,
 	}, true
 }
 
@@ -571,7 +573,7 @@ func (idx *Index) ResolveBuiltinNewType(file *project.File, call *ast.CallExpr) 
 func ValueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 	switch x := expr.(type) {
 	case *ast.Ident:
-		return ValueType{PackagePath: file.Package.Path, TypeName: x.Name, Confidence: facts.ConfidenceHigh}
+		return ValueType{PackagePath: file.Package.Path, TypeName: x.Name, Resolved: true}
 	case *ast.SelectorExpr:
 		pkg, ok := x.X.(*ast.Ident)
 		if !ok {
@@ -581,7 +583,7 @@ func ValueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 		if importPath == "" {
 			return ValueType{}
 		}
-		return ValueType{PackagePath: importPath, TypeName: x.Sel.Name, Confidence: facts.ConfidenceHigh}
+		return ValueType{PackagePath: importPath, TypeName: x.Sel.Name, Resolved: true}
 	case *ast.StarExpr:
 		// 指针类型 *T：剥掉指针取基础类型。
 		return ValueTypeFromTypeExpr(file, x.X)
@@ -599,24 +601,16 @@ func ValueTypeFromTypeExpr(file *project.File, expr ast.Expr) ValueType {
 	}
 }
 
-// ResolveSelectorMethod 解析 selector 方法链，返回方法符号 ID。
-// 内部委托给带置信度版本并丢弃置信度信息。
-func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (facts.SymbolID, bool) {
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts)
-	return resolved.ID, ok
-}
-
-// ResolveSelectorMethodWithConfidence 解析形如 pkg.Var.Field.Method 的链，
-// 返回最终方法符号 ID 及沿链累积的置信度。链的最后一段是方法名，前面段通过
-// ResolveSelectorReceiverType 解析到方法所属 receiver 类型。
-func (idx *Index) ResolveSelectorMethodWithConfidence(file *project.File, parts []string) (ResolvedSymbol, bool) {
+// ResolveSelectorMethod 解析形如 pkg.Var.Field.Method 的链，返回最终方法符号 ID。
+// 链的最后一段是方法名，前面段通过 ResolveSelectorReceiverType 解析到方法所属 receiver 类型。
+func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (ResolvedSymbol, bool) {
 	valueType, ok := idx.ResolveSelectorReceiverType(file, parts)
 	if !ok {
 		return ResolvedSymbol{}, false
 	}
 	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, parts[len(parts)-1])
 	_, ok = idx.Symbols[methodID]
-	return ResolvedSymbol{ID: methodID, Confidence: valueType.Confidence}, ok
+	return ResolvedSymbol{ID: methodID}, ok
 }
 
 // ResolveSelectorReceiverType 返回 selector 链最终方法所属的 receiver 类型。
@@ -671,8 +665,6 @@ func (idx *Index) ResolveSelectorReceiverType(file *project.File, parts []string
 		if !ok {
 			return ValueType{}, false
 		}
-		// 置信度沿链向下传递：任一环为低/中，整条链相应降级。
-		nextType.Confidence = combineConfidence(valueType.Confidence, nextType.Confidence)
 		valueType = nextType
 	}
 	return valueType, true
@@ -685,7 +677,6 @@ func (idx *Index) ResolveValueTypeMethod(valueType ValueType, selectors []string
 	if valueType.TypeName == "" || len(selectors) == 0 {
 		return ResolvedSymbol{}, false
 	}
-	confidence := valueType.Confidence
 	for _, fieldName := range selectors[:len(selectors)-1] {
 		typeID := TypeSymbolID(valueType.PackagePath, valueType.TypeName)
 		fields := idx.StructFieldTypes[typeID]
@@ -694,11 +685,10 @@ func (idx *Index) ResolveValueTypeMethod(valueType ValueType, selectors []string
 			return ResolvedSymbol{}, false
 		}
 		valueType = nextType
-		confidence = combineConfidence(confidence, valueType.Confidence)
 	}
 	methodID := MethodSymbolID(valueType.PackagePath, valueType.TypeName, selectors[len(selectors)-1])
 	_, ok := idx.Symbols[methodID]
-	return ResolvedSymbol{ID: methodID, Confidence: confidence}, ok
+	return ResolvedSymbol{ID: methodID}, ok
 }
 
 // ResolveMapIndexValueTypes 解析 `m[key].Method(...)` 中 m 的具体值类型集合。
@@ -757,25 +747,6 @@ func SelectorParts(expr ast.Expr) []string {
 	default:
 		return nil
 	}
-}
-
-// combineConfidence 沿 selector 链合并两段置信度。
-// 任一端为 low 整体 low；任一端为 medium 整体 medium；都为 high 才是 high；
-// 空串视为“未设置”，不影响另一端。
-func combineConfidence(left, right facts.Confidence) facts.Confidence {
-	if left == facts.ConfidenceLow || right == facts.ConfidenceLow {
-		return facts.ConfidenceLow
-	}
-	if left == facts.ConfidenceMedium || right == facts.ConfidenceMedium {
-		return facts.ConfidenceMedium
-	}
-	if left == "" {
-		return right
-	}
-	if right == "" {
-		return left
-	}
-	return facts.ConfidenceHigh
 }
 
 // symbolFact 构造一条 SymbolFact，并把源码文件绝对路径转为项目相对路径，

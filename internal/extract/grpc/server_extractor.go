@@ -117,12 +117,10 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 							ServerInterface:    service.ServerInterface,
 							RegistrationSymbol: registrationSymbol,
 							Span:               span,
-							Confidence:         facts.ConfidenceMedium,
 							Evidence: []facts.EvidenceFact{{
-								Kind:       "grpc_server_registration",
-								Raw:        service.GoPackage + "." + service.RegisterFunction,
-								Span:       span,
-								Confidence: facts.ConfidenceHigh,
+								Kind: "grpc_server_registration",
+								Raw:  service.GoPackage + "." + service.RegisterFunction,
+								Span: span,
 							}},
 						}
 						if implementation.TypeName != "" {
@@ -133,7 +131,6 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 							if _, exists := idx.Symbols[handler]; exists {
 								provider.HandlerSymbol = handler
 							}
-							provider.Confidence = facts.ConfidenceHigh
 						}
 						provider.ID = facts.GrpcProviderID(provider.OperationID, span)
 						providers = append(providers, provider)

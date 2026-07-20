@@ -12,11 +12,10 @@ import (
 func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	store := referenceImpactStore()
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:service",
-		Kind:       facts.ChangeKindSymbolChanged,
-		SymbolID:   serviceSymbol,
-		File:       "service/common.go",
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
+		File:     "service/common.go",
 	})
 
 	result := AnalyzeTrees(store)
@@ -26,72 +25,6 @@ func TestAnalyzeBuildsCompleteSymbolToEndpointTree(t *testing.T) {
 	endpoint := path[len(path)-1]
 	if endpoint.Method != "GET" || endpoint.Path != "/api/bff-web/common/checkIn" {
 		t.Fatalf("endpoint = %#v", endpoint)
-	}
-}
-
-// TestConfidencePropagatesWeakestAlongPath 验证 P1-4 置信度合并：
-// 一个 low confidence 的 change 根（模拟 file_changed fallback）经 high 边反向传播
-// 到 endpoint，endpoint 终节点的置信度应为 low（取链路最弱），而非被静默升级为 high。
-//
-// 修复前：endpoint/annotation/route 终节点用硬编码 ConfidenceHigh/ConfidenceMedium，
-// 与 change 根置信度无关，弱根经 high 边到达后结论被夸大。
-// 修复后：终节点 confidence = CombineConfidence(父链路累积, 终节点证据)，取最弱。
-func TestConfidencePropagatesWeakestAlongPath(t *testing.T) {
-	store := referenceImpactStore()
-	// low confidence 根：模拟无法精确定位符号的 file_changed fallback。
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:file-low",
-		Kind:       facts.ChangeKindFileChanged,
-		SymbolID:   serviceSymbol,
-		File:       "service/common.go",
-		Confidence: facts.ConfidenceLow,
-	})
-
-	result := AnalyzeTrees(store)
-	root := mustTreeRoot(t, result, "change:file-low")
-	path := firstEndpointPath(t, root.Root)
-	if len(path) < 2 {
-		t.Fatalf("path too short: %#v", path)
-	}
-
-	// 根节点应继承 change 的 low 置信度。
-	if root.Root.Confidence != facts.ConfidenceLow {
-		t.Errorf("root confidence = %q, want low", root.Root.Confidence)
-	}
-	// 沿链路各跳（symbol→symbol 边为 high）应取最弱，故所有中间节点为 low。
-	for i, node := range path {
-		if node.Confidence != facts.ConfidenceLow {
-			t.Errorf("path[%d] (kind=%s) confidence = %q, want low (low root + high edge = low)", i, node.Kind, node.Confidence)
-		}
-	}
-	// endpoint 终节点同样应为 low（修复前会因硬编码 ConfidenceHigh 而为 high）。
-	endpoint := path[len(path)-1]
-	if endpoint.Kind != "endpoint" {
-		t.Fatalf("last node kind = %q, want endpoint", endpoint.Kind)
-	}
-	if endpoint.Confidence != facts.ConfidenceLow {
-		t.Errorf("endpoint confidence = %q, want low (P1-4: low root must downgrade terminal)", endpoint.Confidence)
-	}
-}
-
-// TestConfidenceHighRootKeepsHighEndpoint 验证 high confidence 根的正例：
-// high 根经 high 边到达 endpoint，置信度保持 high（不被错误降级）。
-func TestConfidenceHighRootKeepsHighEndpoint(t *testing.T) {
-	store := referenceImpactStore()
-	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:service-high",
-		Kind:       facts.ChangeKindSymbolChanged,
-		SymbolID:   serviceSymbol,
-		File:       "service/common.go",
-		Confidence: facts.ConfidenceHigh,
-	})
-
-	result := AnalyzeTrees(store)
-	root := mustTreeRoot(t, result, "change:service-high")
-	path := firstEndpointPath(t, root.Root)
-	endpoint := path[len(path)-1]
-	if endpoint.Confidence != facts.ConfidenceHigh {
-		t.Errorf("endpoint confidence = %q, want high (high root + high edge)", endpoint.Confidence)
 	}
 }
 
@@ -105,32 +38,27 @@ func TestAnalyzeBuildsEndpointAndIMEventExitsFromSamePath(t *testing.T) {
 			Event:        "check_in",
 			SenderSymbol: controllerSymbol,
 			Dependencies: []facts.IMEventDependency{{
-				SymbolID:   serviceSymbol,
-				Relation:   facts.IMRelationPayload,
-				Confidence: facts.ConfidenceHigh,
+				SymbolID: serviceSymbol,
+				Relation: facts.IMRelationPayload,
 			}},
-			Confidence: facts.ConfidenceHigh,
-			Resolved:   true,
+			Resolved: true,
 		},
 		facts.IMEventFact{
 			ID:           "im_event:dynamic",
 			EventRaw:     "event",
 			SenderSymbol: controllerSymbol,
 			Dependencies: []facts.IMEventDependency{{
-				SymbolID:   serviceSymbol,
-				Relation:   facts.IMRelationPayload,
-				Confidence: facts.ConfidenceHigh,
+				SymbolID: serviceSymbol,
+				Relation: facts.IMRelationPayload,
 			}},
-			Confidence: facts.ConfidenceHigh,
-			Resolved:   false,
+			Resolved: false,
 		},
 	)
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:service",
-		Kind:       facts.ChangeKindSymbolChanged,
-		SymbolID:   serviceSymbol,
-		File:       "service/common.go",
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:service",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: serviceSymbol,
+		File:     "service/common.go",
 	})
 
 	result := AnalyzeTrees(store)
@@ -196,12 +124,11 @@ func TestAnalyzeAnnotationRootKeepsAnnotationEndpoint(t *testing.T) {
 		Span:          facts.SourceSpan{File: "router/common/common.go", StartLine: 21, EndLine: 21},
 	})
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:annotation:controller/common/common.go:19",
-		Kind:       facts.ChangeKindAnnotationChanged,
-		TargetID:   annotation.ID,
-		File:       "controller/common/common.go",
-		Source:     "git_diff",
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:annotation:controller/common/common.go:19",
+		Kind:     facts.ChangeKindAnnotationChanged,
+		TargetID: annotation.ID,
+		File:     "controller/common/common.go",
+		Source:   "git_diff",
 	})
 
 	result := AnalyzeTrees(store)
@@ -225,13 +152,13 @@ func TestAnalyzeKeepsAliasRouteSeparateFromAnnotatedEndpoint(t *testing.T) {
 		facts.SymbolFact{ID: handler, Kind: "func", Span: facts.SourceSpan{File: "controller/customer.go", StartLine: 10, EndLine: 12}},
 		facts.SymbolFact{ID: service, Kind: "func", Span: facts.SourceSpan{File: "service/customer.go", StartLine: 10, EndLine: 12}},
 	)
-	store.References = append(store.References, facts.ReferenceFact{ID: "ref:customer", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: service, Confidence: facts.ConfidenceHigh})
+	store.References = append(store.References, facts.ReferenceFact{ID: "ref:customer", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: service})
 	store.Annotations = append(store.Annotations, facts.AnnotationFact{ID: "annotation:customer", Method: "GET", Path: "/api/customers/:id", HandlerSymbol: handler, Span: facts.SourceSpan{File: "controller/customer.go", StartLine: 9, EndLine: 9}})
 	store.Routes = append(store.Routes,
 		facts.RouteRegistrationFact{ID: "route:customer:current", Method: "GET", ResolvedPath: "/api/customers/:id", HandlerSymbol: handler, Span: facts.SourceSpan{File: "router/customer.go", StartLine: 20, EndLine: 20}},
 		facts.RouteRegistrationFact{ID: "route:customer:legacy", Method: "GET", ResolvedPath: "/uc/customers/:customerId", HandlerSymbol: handler, Span: facts.SourceSpan{File: "router/customer.go", StartLine: 21, EndLine: 21}},
 	)
-	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:customer-service", Kind: facts.ChangeKindSymbolChanged, SymbolID: service, Confidence: facts.ConfidenceHigh})
+	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:customer-service", Kind: facts.ChangeKindSymbolChanged, SymbolID: service})
 
 	root := mustTreeRoot(t, AnalyzeTrees(store), "change:customer-service")
 	if len(root.Endpoints) != 2 {
@@ -251,7 +178,7 @@ func TestAnalyzeSingleRouteAnnotationDriftKeepsAnnotationIdentity(t *testing.T) 
 	store.Routes[0].ResolvedPath = "/api/check-in"
 	store.Routes[0].LocalPath = "/check-in"
 	store.Annotations[0].Path = "/api/check-in-v2"
-	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:service-drift", Kind: facts.ChangeKindSymbolChanged, SymbolID: serviceSymbol, Confidence: facts.ConfidenceHigh})
+	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:service-drift", Kind: facts.ChangeKindSymbolChanged, SymbolID: serviceSymbol})
 
 	root := mustTreeRoot(t, AnalyzeTrees(store), "change:service-drift")
 	if len(root.Endpoints) != 1 || root.Endpoints[0].Path != "/api/check-in-v2" || root.Endpoints[0].AnnotationID == "" {
@@ -268,7 +195,6 @@ func TestAnalyzeMarksCycles(t *testing.T) {
 		Kind:       facts.ReferenceKindCall,
 		FromSymbol: serviceSymbol,
 		ToSymbol:   controllerSymbol,
-		Confidence: facts.ConfidenceHigh,
 	})
 	store.Changes = append(store.Changes, facts.ChangeFact{
 		ID:       "change:service",
@@ -348,11 +274,10 @@ func TestAnalyzePropagatesMiddlewareSymbolToEndpoint(t *testing.T) {
 		Span:           facts.SourceSpan{File: "router/router.go", StartLine: 21, EndLine: 21},
 	})
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:middleware-symbol",
-		Kind:       facts.ChangeKindSymbolChanged,
-		SymbolID:   middlewareSymbol,
-		File:       "auth/auth.go",
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:middleware-symbol",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: middlewareSymbol,
+		File:     "auth/auth.go",
 	})
 
 	result := AnalyzeTrees(store)
@@ -380,7 +305,6 @@ func TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute(t *testing.T) {
 		Kind:       facts.ReferenceKindCall,
 		FromSymbol: routeFunc,
 		ToSymbol:   guard,
-		Confidence: facts.ConfidenceHigh,
 		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 10},
 	})
 	store.Routes = append(store.Routes,
@@ -400,10 +324,9 @@ func TestAnalyzePropagatesRouteScopedDependencyToOnlyItsRoute(t *testing.T) {
 		},
 	)
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:guard",
-		Kind:       facts.ChangeKindSymbolChanged,
-		SymbolID:   guard,
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:guard",
+		Kind:     facts.ChangeKindSymbolChanged,
+		SymbolID: guard,
 	})
 
 	result := AnalyzeTrees(store)
@@ -432,7 +355,6 @@ func referenceImpactStore() *facts.Store {
 		Kind:       facts.ReferenceKindCall,
 		FromSymbol: controllerSymbol,
 		ToSymbol:   serviceSymbol,
-		Confidence: facts.ConfidenceHigh,
 	})
 	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
 		ID:            "route:checkIn",

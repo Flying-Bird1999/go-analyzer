@@ -63,7 +63,7 @@ type FileSourceImpact struct {
 }
 
 // ImpactNode 是 impact 传播树的 JSON 节点，由内部 impact.Node 投影而来。
-// 节点保留 relation、raw、confidence、level、cycle 等 review 证据，但不输出 span。
+// 节点保留 relation、raw、level、cycle 等 review 证据，但不输出 span。
 type ImpactNode struct {
 	// ID 是节点对应的稳定 symbol/fact 标识，如 "func:<package>::<name>"。
 	ID string `json:"id"`
@@ -79,8 +79,6 @@ type ImpactNode struct {
 	Relation string `json:"relation,omitempty"`
 	// Raw 保留原始 AST 表达式文本，供人工 review 追溯。
 	Raw string `json:"raw,omitempty"`
-	// Confidence 表示该节点的静态证据强度（high/medium/low），不是概率分数。
-	Confidence facts.Confidence `json:"confidence,omitempty"`
 	// Level 是节点在传播树中的深度，根节点为 0。
 	Level int `json:"level"`
 	// Cycle 标记该节点因当前 DFS 路径已存在相同 symbol 而形成的环边。
@@ -134,8 +132,6 @@ type EndpointImpactSource struct {
 	RootSymbols []EndpointRootSymbolSummary `json:"rootSymbols"`
 	// Chains 是每个 root 到 endpoint 的最短人读链路摘要。
 	Chains [][]string `json:"chains"`
-	// Confidence 是所选链路中的最弱证据强度。
-	Confidence facts.Confidence `json:"confidence"`
 }
 
 // GrpcSourceImpact 描述一个发生变更的上游 gRPC operation 在当前 BFF 的静态消费范围。
@@ -498,7 +494,6 @@ func projectImpactNode(node impact.Node) ImpactNode {
 		Package:    node.Package,
 		Relation:   node.Relation,
 		Raw:        node.Raw,
-		Confidence: node.Confidence,
 		Level:      node.Level,
 		Cycle:      node.Cycle,
 		Method:     node.Method,
@@ -680,27 +675,15 @@ func addEndpointSourceFile(builders map[string]*endpointSourceSummaryBuilder, so
 				VersionAfter:  metadata.versionAfter,
 				RootSymbols:   []EndpointRootSymbolSummary{},
 				Chains:        [][]string{},
-				Confidence:    facts.ConfidenceLow,
 			}
 		}
-		foundChain := false
 		for _, root := range source.Symbols {
 			path, ok := shortestEndpointPath(root, endpoint)
 			if !ok {
 				continue
 			}
-			foundChain = true
 			impactSource.RootSymbols = append(impactSource.RootSymbols, rootSymbolSummary(root))
 			impactSource.Chains = append(impactSource.Chains, chainLabels(path))
-			pathConfidence := weakestConfidence(path)
-			if impactSource.Confidence == "" || len(impactSource.Chains) == 1 {
-				impactSource.Confidence = pathConfidence
-			} else {
-				impactSource.Confidence = weakerConfidence(impactSource.Confidence, pathConfidence)
-			}
-		}
-		if !foundChain && impactSource.Confidence == "" {
-			impactSource.Confidence = facts.ConfidenceLow
 		}
 		builder.sources[sourceKey] = impactSource
 	}
@@ -768,34 +751,6 @@ func impactNodeLabel(node ImpactNode) string {
 		return strings.TrimSpace(node.Kind + " " + node.ID)
 	}
 	return node.Kind
-}
-
-func weakestConfidence(path []ImpactNode) facts.Confidence {
-	out := facts.ConfidenceHigh
-	for _, node := range path {
-		out = weakerConfidence(out, node.Confidence)
-	}
-	return out
-}
-
-func weakerConfidence(left, right facts.Confidence) facts.Confidence {
-	if confidenceRank(right) < confidenceRank(left) {
-		return right
-	}
-	return left
-}
-
-func confidenceRank(confidence facts.Confidence) int {
-	switch confidence {
-	case facts.ConfidenceHigh:
-		return 3
-	case facts.ConfidenceMedium:
-		return 2
-	case facts.ConfidenceLow:
-		return 1
-	default:
-		return 0
-	}
 }
 
 func normalizeEndpointImpactSource(source *EndpointImpactSource) {

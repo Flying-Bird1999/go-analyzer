@@ -181,8 +181,8 @@ func TestMapChangesMapsSingleDubboMethodRegistration(t *testing.T) {
 	}
 }
 
-// TestMapChangesUsesMediumConfidenceForDeletionAnchor 验证删除锚点命中的符号根使用 medium 置信度。
-func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
+// TestMapChangesMapsDeletionAnchorToSymbolRoot 验证删除锚点命中的行仍能正确映射到符号根。
+func TestMapChangesMapsDeletionAnchorToSymbolRoot(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Symbols = append(store.Symbols, facts.SymbolFact{
 		ID:   "type:example.com/project/model::Order",
@@ -198,13 +198,13 @@ func TestMapChangesUsesMediumConfidenceForDeletionAnchor(t *testing.T) {
 			Kind:      RangeKindDeletionAnchor,
 		}},
 	}}, store, "git_diff")
-	if len(got) != 1 || got[0].SymbolID != "type:example.com/project/model::Order" || got[0].Confidence != facts.ConfidenceMedium {
+	if len(got) != 1 || got[0].SymbolID != "type:example.com/project/model::Order" {
 		t.Fatalf("mapped deletion = %#v", got)
 	}
 }
 
-// TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors 验证注解/路由组/路由/中间件的删除锚点均降级为 medium 置信度。
-func TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors(t *testing.T) {
+// TestMapChangesMapsDeletedDomainFactAnchors 验证注解/路由组/路由/中间件的删除锚点均正确映射到对应领域根。
+func TestMapChangesMapsDeletedDomainFactAnchors(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.Annotations = append(store.Annotations, facts.AnnotationFact{
 		ID:            "annotation:orders",
@@ -237,10 +237,7 @@ func TestMapChangesUsesMediumConfidenceForDeletedDomainFactAnchors(t *testing.T)
 		facts.ChangeKindRouteChanged,
 		facts.ChangeKindMiddlewareChanged,
 	} {
-		change := findChangeKind(t, got, kind)
-		if change.Confidence != facts.ConfidenceMedium {
-			t.Fatalf("%s confidence = %s, want medium; changes=%#v", kind, change.Confidence, got)
-		}
+		findChangeKind(t, got, kind)
 	}
 }
 

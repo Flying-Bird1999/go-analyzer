@@ -14,7 +14,6 @@ type JobRegistrationFact struct {
 	RegistrationSymbol SymbolID       `json:"registration_symbol"`
 	Span               SourceSpan     `json:"span"`
 	Evidence           []EvidenceFact `json:"evidence,omitempty"`
-	Confidence         Confidence     `json:"confidence"`
 }
 
 func JobRegistrationID(name string, span SourceSpan) string {

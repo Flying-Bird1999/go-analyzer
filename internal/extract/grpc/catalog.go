@@ -146,10 +146,9 @@ func buildPackageCatalog(pkg project.DependencyPackage) ([]CatalogEntry, error) 
 			binding := facts.GrpcClientBinding{GoPackage: pkg.ImportPath, ClientType: clientType, GoMethod: fn.Name.Name}
 			position := file.fset.Position(fn.Pos())
 			evidence := facts.EvidenceFact{
-				Kind:       "generated_grpc_transport",
-				Raw:        fullMethod,
-				Span:       facts.SourceSpan{File: logicalDependencyPath(pkg.ImportPath, file.path), StartLine: position.Line, StartCol: position.Column, EndLine: position.Line, EndCol: position.Column + len(fn.Name.Name)},
-				Confidence: facts.ConfidenceHigh,
+				Kind: "generated_grpc_transport",
+				Raw:  fullMethod,
+				Span: facts.SourceSpan{File: logicalDependencyPath(pkg.ImportPath, file.path), StartLine: position.Line, StartCol: position.Column, EndLine: position.Line, EndCol: position.Column + len(fn.Name.Name)},
 			}
 			operation.ClientBindings = []facts.GrpcClientBinding{binding}
 			operation.Evidence = []facts.EvidenceFact{evidence}

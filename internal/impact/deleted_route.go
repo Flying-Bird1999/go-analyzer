@@ -112,8 +112,7 @@ func recoverDeletedRoutesInBlock(file string, block diff.DeletedBlock, idx *asti
 				StartLine: anchorLine,
 				EndLine:   anchorLine,
 			}},
-			Source:     source + "_deleted_route",
-			Confidence: facts.ConfidenceHigh,
+			Source: source + "_deleted_route",
 		})
 		// 为动态 path、未恢复 group 前缀、未解析 handler 等情况补诊断。
 		addDeletedRouteDiagnostics(store, route, group.ok)
@@ -249,8 +248,7 @@ func recoverDeletedHandlersInBlock(file string, block diff.DeletedBlock, idx *as
 				StartLine: startLine,
 				EndLine:   endLine,
 			}},
-			Source:     source + "_deleted_handler",
-			Confidence: facts.ConfidenceMedium,
+			Source: source + "_deleted_handler",
 		})
 		// 恢复出具体 handler 后，移除同一删除块范围内的 file 降级根，
 		// 改由精确 symbol 根承接传播。

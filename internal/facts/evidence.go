@@ -3,7 +3,7 @@
 
 package facts
 
-// EvidenceFact 记录一条关键 AST 表达式的证据，包含种类、原始文本、位置区间与置信度。
+// EvidenceFact 记录一条关键 AST 表达式的证据，包含种类、原始文本与位置区间。
 type EvidenceFact struct {
 	// Kind 是证据对应的 AST 表达式种类标识。
 	Kind string `json:"kind"`
@@ -11,6 +11,4 @@ type EvidenceFact struct {
 	Raw string `json:"raw,omitempty"`
 	// Span 是该表达式的位置区间。
 	Span SourceSpan `json:"span"`
-	// Confidence 是该证据的静态证据强度，缺失时不输出。
-	Confidence Confidence `json:"confidence,omitempty"`
 }

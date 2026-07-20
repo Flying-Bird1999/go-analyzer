@@ -84,8 +84,8 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 							ID: facts.DubboProviderID(config.interfaceName, method.name, method.span), Interface: config.interfaceName,
 							Version: config.version, VersionExpression: config.versionExpression, Method: method.name, GoMethod: goMethod,
 							ImplementationType: providerType.TypeName, HandlerSymbol: handler, RegistrationSymbol: registration,
-							Span: method.span, ServiceSpan: config.span, Confidence: providerType.Confidence,
-							Evidence: []facts.EvidenceFact{{Kind: "dubbo_service_config", Raw: config.raw, Span: config.span, Confidence: facts.ConfidenceHigh}},
+							Span: method.span, ServiceSpan: config.span,
+							Evidence: []facts.EvidenceFact{{Kind: "dubbo_service_config", Raw: config.raw, Span: config.span}},
 						})
 					}
 				}

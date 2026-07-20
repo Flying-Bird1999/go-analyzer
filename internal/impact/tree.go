@@ -22,8 +22,6 @@ type Node struct {
 	Raw string `json:"raw,omitempty"`
 	// Span 是节点对应的源码 span，供 review 定位。
 	Span facts.SourceSpan `json:"span,omitempty"`
-	// Confidence 表示本节点/传播边的静态证据强度。
-	Confidence facts.Confidence `json:"confidence,omitempty"`
 	// Level 是节点在树中的深度，根为 0。
 	Level int `json:"level"`
 	// Cycle 标记当前 DFS 路径上重复出现的节点，用于环路检测。

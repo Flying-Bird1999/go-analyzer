@@ -29,13 +29,13 @@ func Init() {
 }
 `)
 
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"})
+	resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"})
 	if !ok {
 		t.Fatal("Default.Fetch was not resolved")
 	}
 	want := facts.SymbolID("method:example.com/interface-binding:realClient:Fetch")
-	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("Default.Fetch = %#v, want %s with high confidence", resolved, want)
+	if resolved.ID != want {
+		t.Fatalf("Default.Fetch = %#v, want %s", resolved, want)
 	}
 }
 
@@ -63,13 +63,13 @@ func Init() {
 }
 `)
 
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"})
+	resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"})
 	if !ok {
 		t.Fatal("Default.Fetch was not resolved through composite literal closure assignment")
 	}
 	want := facts.SymbolID("method:example.com/interface-binding:realClient:Fetch")
-	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("Default.Fetch = %#v, want %s with high confidence", resolved, want)
+	if resolved.ID != want {
+		t.Fatalf("Default.Fetch = %#v, want %s", resolved, want)
 	}
 }
 
@@ -97,7 +97,7 @@ func Init() {
 }
 `)
 
-	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"}); ok {
+	if resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"}); ok {
 		t.Fatalf("Default.Fetch unexpectedly resolved through unknown assignment: %#v", resolved)
 	}
 }
@@ -127,7 +127,7 @@ func Init(useOther bool) {
 }
 `)
 
-	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"}); ok {
+	if resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"}); ok {
 		t.Fatalf("Default.Fetch unexpectedly resolved through multiple implementations: %#v", resolved)
 	}
 }
@@ -162,7 +162,7 @@ func parameterShadow(Default Client) {
 }
 `)
 
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"})
+	resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"})
 	if !ok {
 		t.Fatal("Default.Fetch was not resolved after ignoring shadowing assignments")
 	}
@@ -205,7 +205,7 @@ func newOtherClient() Client {
 `,
 	})
 
-	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"Default", "Fetch"}); ok {
+	if resolved, ok := idx.ResolveSelectorMethod(file, []string{"Default", "Fetch"}); ok {
 		t.Fatalf("Default.Fetch unexpectedly treated shadowed new as builtin: %#v", resolved)
 	}
 }

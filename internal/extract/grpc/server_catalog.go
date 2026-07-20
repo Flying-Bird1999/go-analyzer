@@ -225,10 +225,9 @@ func parseServerServices(source serverSourceFile) ([]ServerServiceEntry, error) 
 				}
 				position := source.fset.Position(name.Pos())
 				desc.evidence = facts.EvidenceFact{
-					Kind:       "generated_grpc_service_descriptor",
-					Raw:        desc.serviceName,
-					Span:       facts.SourceSpan{File: source.evidence, StartLine: position.Line, StartCol: position.Column, EndLine: position.Line, EndCol: position.Column + len(name.Name)},
-					Confidence: facts.ConfidenceHigh,
+					Kind: "generated_grpc_service_descriptor",
+					Raw:  desc.serviceName,
+					Span: facts.SourceSpan{File: source.evidence, StartLine: position.Line, StartCol: position.Column, EndLine: position.Line, EndCol: position.Column + len(name.Name)},
 				}
 				descriptors[desc.interfaceName] = desc
 			}

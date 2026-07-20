@@ -20,7 +20,6 @@ type DubboProviderFact struct {
 	Span               SourceSpan     `json:"span"`
 	ServiceSpan        SourceSpan     `json:"service_span"`
 	Evidence           []EvidenceFact `json:"evidence,omitempty"`
-	Confidence         Confidence     `json:"confidence"`
 }
 
 func DubboProviderID(iface, method string, span SourceSpan) string {

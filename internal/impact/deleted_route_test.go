@@ -10,7 +10,7 @@ import (
 
 // TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint 验证从删除块恢复出路由后，
 // 会追加 route_deleted 变更根、补全 group prefix 与 handler link，并通过 method/path 降级端点
-// （deleted_route_endpoint，medium）出现在影响树中。
+// （deleted_route_endpoint）出现在影响树中。
 func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	store.RouteGroups = append(store.RouteGroups, facts.RouteGroupFact{
@@ -65,7 +65,7 @@ func TestRecoverDeletedRoutesAddsRouteDeletedChangeAndEndpoint(t *testing.T) {
 		t.Fatalf("route children = %#v", root.Root.Children)
 	}
 	endpoint := root.Root.Children[0]
-	if endpoint.Relation != "deleted_route_endpoint" || endpoint.Confidence != facts.ConfidenceMedium {
+	if endpoint.Relation != "deleted_route_endpoint" {
 		t.Fatalf("deleted route endpoint evidence = %#v", endpoint)
 	}
 }
@@ -98,12 +98,11 @@ func TestRecoveredDeletedRouteUsesAnnotationWhenItExtendsRecoveredRoutePath(t *t
 		Span:          facts.SourceSpan{File: "controller/sms/sms.go", StartLine: 17, EndLine: 17},
 	})
 	store.Changes = append(store.Changes, facts.ChangeFact{
-		ID:         "change:route_deleted:router/sms_router.go:23:0",
-		Kind:       facts.ChangeKindRouteDeleted,
-		TargetID:   route.ID,
-		File:       "router/sms_router.go",
-		Source:     "git_diff_deleted_route",
-		Confidence: facts.ConfidenceHigh,
+		ID:       "change:route_deleted:router/sms_router.go:23:0",
+		Kind:     facts.ChangeKindRouteDeleted,
+		TargetID: route.ID,
+		File:     "router/sms_router.go",
+		Source:   "git_diff_deleted_route",
 	})
 
 	result := AnalyzeTrees(store)

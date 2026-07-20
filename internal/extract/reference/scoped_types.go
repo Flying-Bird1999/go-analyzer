@@ -191,7 +191,7 @@ func scopedTypesFromTypeExpr(file *project.File, expr ast.Expr) []astindex.Value
 }
 
 // scopedTypesFromValueExpr 从初始化值表达式推断变量类型：取地址、组合字面量、
-// 构造函数返回类型与 map 索引等。构造函数推断置信度为 medium。
+// 构造函数返回类型与 map 索引等。构造函数推断标记为非 Resolved（不是明确解析）。
 func scopedTypesFromValueExpr(file *project.File, idx *astindex.Index, expr ast.Expr) []astindex.ValueType {
 	switch x := expr.(type) {
 	case *ast.UnaryExpr:
@@ -209,8 +209,8 @@ func scopedTypesFromValueExpr(file *project.File, idx *astindex.Index, expr ast.
 		if !ok {
 			return nil
 		}
-		// 通过返回类型推断属于中等置信度。
-		valueType.Confidence = facts.ConfidenceMedium
+		// 通过返回类型推断得到，不是明确解析。
+		valueType.Resolved = false
 		return []astindex.ValueType{valueType}
 	case *ast.IndexExpr:
 		// map[k] 取值：返回 map 元素的候选类型集合（用于接口分发）。

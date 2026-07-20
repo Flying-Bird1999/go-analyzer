@@ -118,7 +118,7 @@ func TestImpactSchemaExposesRecursiveReviewableNodes(t *testing.T) {
 		t.Fatalf("raw report should not expose top-level nodes: %#v", properties)
 	}
 	nodeProps := defs["impact_node"].(map[string]any)["properties"].(map[string]any)
-	for _, required := range []string{"id", "kind", "file", "relation", "raw", "package", "level", "confidence", "cycle", "children", "method", "path"} {
+	for _, required := range []string{"id", "kind", "file", "relation", "raw", "package", "level", "cycle", "children", "method", "path"} {
 		if _, ok := nodeProps[required]; !ok {
 			t.Fatalf("reviewable node should expose %q: %#v", required, nodeProps)
 		}

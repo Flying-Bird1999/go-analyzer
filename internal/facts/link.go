@@ -24,6 +24,4 @@ type LinkFact struct {
 	FromID string `json:"from_id"`
 	// ToID 是关联终点的 fact ID（handler symbol 或 annotation）。
 	ToID string `json:"to_id"`
-	// Confidence 是该关联的静态证据强度。
-	Confidence Confidence `json:"confidence"`
 }

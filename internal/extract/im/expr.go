@@ -484,7 +484,7 @@ func functionValueType(file *project.File, fn *ast.FuncDecl, name string) (astin
 }
 
 // typeExprValueType 把类型表达式解析为 ValueType。支持本地 ident、跨包 selector、
-// 指针、括号、泛型索引等常见形式，全部按 high confidence 处理。
+// 指针、括号、泛型索引等常见形式。
 func typeExprValueType(file *project.File, expr ast.Expr) (astindex.ValueType, bool) {
 	vt := astindex.ValueTypeFromTypeExpr(file, expr)
 	if vt.TypeName == "" {

@@ -45,8 +45,8 @@ func (r resolver) ResolveValueIDs(expr ast.Expr) []facts.SymbolID {
 			}
 			varID := astindex.ValueSymbolID("var", importPath, parts[1])
 			out := existingIDs(r.idx, varID)
-			if methodID, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
-				out = appendExistingID(out, r.idx, methodID)
+			if resolved, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
+				out = appendExistingID(out, r.idx, resolved.ID)
 			}
 			return out
 		}
@@ -97,8 +97,8 @@ func (r resolver) resolveLocalVarMethod(parts []string) []facts.SymbolID {
 	varID := astindex.ValueSymbolID("var", r.file.Package.Path, parts[0])
 	var out []facts.SymbolID
 	out = appendExistingID(out, r.idx, varID)
-	if methodID, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
-		out = appendExistingID(out, r.idx, methodID)
+	if resolved, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
+		out = appendExistingID(out, r.idx, resolved.ID)
 	}
 	return out
 }
@@ -139,13 +139,11 @@ func addValueReferenceFacts(p *project.Project, file *project.File, store *facts
 			FromSymbol: from,
 			ToSymbol:   target,
 			ToRaw:      raw,
-			Confidence: facts.ConfidenceHigh,
 			Span:       span,
 			Evidence: []facts.EvidenceFact{{
-				Kind:       "value_expr",
-				Raw:        raw,
-				Span:       span,
-				Confidence: facts.ConfidenceHigh,
+				Kind: "value_expr",
+				Raw:  raw,
+				Span: span,
 			}},
 		})
 	}

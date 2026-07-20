@@ -21,7 +21,6 @@ func TestReverseGraphLookupByTarget(t *testing.T) {
 		Kind:       facts.ReferenceKindCall,
 		FromSymbol: "func:example.com/project/controller::CheckIn",
 		ToSymbol:   "func:example.com/project/service::WebApiForwardGray",
-		Confidence: facts.ConfidenceHigh,
 	})
 
 	g := NewReverseGraph(store)

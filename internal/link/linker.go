@@ -76,33 +76,30 @@ func linkRoute(
 	byHandler map[facts.SymbolID][]facts.AnnotationFact,
 	linkedHandlers map[facts.SymbolID]bool,
 ) bool {
-	// 解析 handler 原始表达式为带置信度的符号；解析失败直接放弃此 route，不产生关联。
-	handler, ok := ResolveHandlerSymbolWithConfidence(idx, *route)
+	// 解析 handler 原始表达式为稳定符号；解析失败直接放弃此 route，不产生关联。
+	handlerID, ok := ResolveHandlerSymbol(idx, *route)
 	if !ok {
 		return false
 	}
 	// 把解析到的稳定符号写回 route，使后续 RouteGraph 可直接读取，无需再次解析。
-	route.HandlerSymbol = handler.ID
-	// 生成 route -> handler 关联事实，置信度继承自 handler 解析结果（如多层 field 推断会降到 medium）。
+	route.HandlerSymbol = handlerID
+	// 生成 route -> handler 关联事实。
 	store.Links = append(store.Links, facts.LinkFact{
-		ID:         linkID(facts.LinkKindRouteToHandler, route.ID, string(handler.ID)),
-		Kind:       facts.LinkKindRouteToHandler,
-		FromID:     route.ID,
-		ToID:       string(handler.ID),
-		Confidence: handler.Confidence,
+		ID:     linkID(facts.LinkKindRouteToHandler, route.ID, string(handlerID)),
+		Kind:   facts.LinkKindRouteToHandler,
+		FromID: route.ID,
+		ToID:   string(handlerID),
 	})
 	// handler_to_annotation 是 per-handler 关系：同一 handler 被多 route 注册时只生成一次。
-	if !linkedHandlers[handler.ID] {
-		linkedHandlers[handler.ID] = true
+	if !linkedHandlers[handlerID] {
+		linkedHandlers[handlerID] = true
 		// 同一个 handler 可能有多条注解（多个 endpoint），逐条建立 handler -> annotation 关联。
-		// 这里 handler 已被索引精确解析，注解归属无歧义，因此置信度固定为 high。
-		for _, annotation := range byHandler[handler.ID] {
+		for _, annotation := range byHandler[handlerID] {
 			store.Links = append(store.Links, facts.LinkFact{
-				ID:         linkID(facts.LinkKindHandlerToAnnotation, string(handler.ID), annotation.ID),
-				Kind:       facts.LinkKindHandlerToAnnotation,
-				FromID:     string(handler.ID),
-				ToID:       annotation.ID,
-				Confidence: facts.ConfidenceHigh,
+				ID:     linkID(facts.LinkKindHandlerToAnnotation, string(handlerID), annotation.ID),
+				Kind:   facts.LinkKindHandlerToAnnotation,
+				FromID: string(handlerID),
+				ToID:   annotation.ID,
 			})
 		}
 	}

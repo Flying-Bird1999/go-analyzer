@@ -22,8 +22,6 @@ type IMEventDependency struct {
 	SymbolID SymbolID `json:"symbol_id"`
 	// Relation 是依赖关系种类（payload / event_value / control）。
 	Relation IMEventRelation `json:"relation"`
-	// Confidence 是该依赖的静态证据强度。
-	Confidence Confidence `json:"confidence"`
 	// Span 是该依赖表达式的位置区间，缺失时不输出。
 	Span SourceSpan `json:"span,omitempty"`
 }
@@ -51,8 +49,6 @@ type IMEventFact struct {
 	Dependencies []IMEventDependency `json:"dependencies"`
 	// Evidence 是该事件各依赖关系对应的源码证据列表。
 	Evidence []IMEventEvidence `json:"evidence"`
-	// Confidence 是该 IM 事件的静态证据强度。
-	Confidence Confidence `json:"confidence"`
 	// Span 是 sender 调用表达式的位置区间。指针类型以便 omitempty 在 nil 时省略；
 	// 当前 summary 投影总是赋非零值，nil 仅为防御性语义。
 	Span *SourceSpan `json:"span,omitempty"`

@@ -954,19 +954,14 @@ for group in ("grpc", "dubbo", "http", "job"):
     # 输出规范固定生成空数组，仅检查 key 存在会让「四组都为空」也通过。
     if not entry_group:
         raise SystemExit(f"grpc-service entrySourcesSummary.{group} empty; expected >=1 reverse-lookup entry")
-    # 每条 summary 契约必须带 confidence 字段（P1-4 输出契约）。
-    for c in contracts:
-        if "confidence" not in c:
-            raise SystemExit(f"grpc-service summary.{group} contract missing confidence: {c}")
-    # 双向一致性：summary 与 entrySourcesSummary 的 contract ID 集合必须完全相等，
-    # 再逐项比较 confidence 与 sources 非空。
+    # 双向一致性：summary 与 entrySourcesSummary 的 contract ID 集合必须完全相等。
     # 这避免「只在 reverse ID 存在于 summary 时比较」的单向校验漏掉：
     #   - summary 有 contract 但反查缺失（漏报反查）
     #   - 反查有孤儿 contract 不在 summary（脏数据）
-    summary_conf = {c["id"]: c["confidence"] for c in contracts}
-    reverse_conf = {rev.get("contract", {}).get("id"): rev for rev in entry_group}
-    summary_only = set(summary_conf) - set(reverse_conf)
-    reverse_only = set(reverse_conf) - set(summary_conf)
+    summary_ids = {c["id"] for c in contracts}
+    reverse_by_id = {rev.get("contract", {}).get("id"): rev for rev in entry_group}
+    summary_only = summary_ids - set(reverse_by_id)
+    reverse_only = set(reverse_by_id) - summary_ids
     if summary_only:
         raise SystemExit(
             f"grpc-service {group}: summary contracts missing from entrySourcesSummary: {sorted(summary_only)}"
@@ -975,14 +970,8 @@ for group in ("grpc", "dubbo", "http", "job"):
         raise SystemExit(
             f"grpc-service {group}: entrySourcesSummary contracts not in summary: {sorted(reverse_only)}"
         )
-    # 集合相等后，逐项比较 confidence 与 sources 非空。
-    for rev_id, rev in reverse_conf.items():
-        rev_conf = rev.get("contract", {}).get("confidence")
-        if summary_conf[rev_id] != rev_conf:
-            raise SystemExit(
-                f"grpc-service entrySourcesSummary.{group} contract {rev_id} confidence={rev_conf} "
-                f"!= summary confidence={summary_conf[rev_id]}"
-            )
+    # 集合相等后，逐项检查 sources 非空。
+    for rev_id, rev in reverse_by_id.items():
         if not rev.get("sources"):
             raise SystemExit(f"grpc-service entrySourcesSummary.{group} contract {rev_id} has no sources")
 print(

@@ -22,10 +22,8 @@
   },
   "references": [
     {
-      "confidence": "high",
       "evidence": [
         {
-          "confidence": "high",
           "kind": "call_expr",
           "raw": "service.CheckIn",
           "span": {
@@ -51,10 +49,8 @@
       "to_symbol": "func:example.com/mini-bff/service::CheckIn"
     },
     {
-      "confidence": "high",
       "evidence": [
         {
-          "confidence": "high",
           "kind": "type_expr",
           "raw": "ctl.CommonController",
           "span": {
@@ -80,10 +76,8 @@
       "to_symbol": "type:example.com/mini-bff/controller::CommonController"
     },
     {
-      "confidence": "high",
       "evidence": [
         {
-          "confidence": "high",
           "kind": "type_expr",
           "raw": "CommonController",
           "span": {
@@ -109,10 +103,8 @@
       "to_symbol": "type:example.com/mini-bff/controller::CommonController"
     },
     {
-      "confidence": "high",
       "evidence": [
         {
-          "confidence": "high",
           "kind": "type_expr",
           "raw": "CommonController",
           "span": {
@@ -138,10 +130,8 @@
       "to_symbol": "type:example.com/mini-bff/controller::CommonController"
     },
     {
-      "confidence": "high",
       "evidence": [
         {
-          "confidence": "high",
           "kind": "value_expr",
           "raw": "Version",
           "span": {

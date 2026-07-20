@@ -27,7 +27,6 @@
           "name": "Address",
           "file": "model/model.go",
           "package": "example.com/type-impact/model",
-          "confidence": "high",
           "level": 0,
           "children": [
             {
@@ -38,7 +37,6 @@
               "package": "example.com/type-impact/model",
               "relation": "type_ref",
               "raw": "Address",
-              "confidence": "high",
               "level": 1,
               "children": [
                 {
@@ -49,7 +47,6 @@
                   "package": "example.com/type-impact/controller",
                   "relation": "type_ref",
                   "raw": "model.CreateOrderRequest",
-                  "confidence": "high",
                   "level": 2,
                   "children": [
                     {
@@ -60,7 +57,6 @@
                       "package": "example.com/type-impact/router",
                       "relation": "value_ref",
                       "raw": "controller.API.Create",
-                      "confidence": "high",
                       "level": 3,
                       "children": []
                     },
@@ -71,7 +67,6 @@
                       "file": "router/router.go",
                       "relation": "registered_handler",
                       "raw": "controller.API.Create",
-                      "confidence": "high",
                       "level": 3,
                       "children": [
                         {
@@ -81,7 +76,6 @@
                           "file": "controller/controller.go",
                           "relation": "handler_annotation",
                           "raw": "@Post /orders",
-                          "confidence": "high",
                           "level": 4,
                           "children": [
                             {
@@ -90,7 +84,6 @@
                               "name": "POST /orders",
                               "file": "controller/controller.go",
                               "relation": "annotation_endpoint",
-                              "confidence": "high",
                               "level": 5,
                               "children": [],
                               "method": "POST",
@@ -114,7 +107,6 @@
                   "package": "example.com/type-impact/controller",
                   "relation": "type_ref",
                   "raw": "model.CreateOrderRequest",
-                  "confidence": "high",
                   "level": 2,
                   "children": [
                     {
@@ -125,7 +117,6 @@
                       "package": "example.com/type-impact/controller",
                       "relation": "value_ref",
                       "raw": "DefaultRequest",
-                      "confidence": "high",
                       "level": 3,
                       "children": []
                     }
@@ -177,8 +168,7 @@
               "annotation POST /orders",
               "POST /orders"
             ]
-          ],
-          "confidence": "high"
+          ]
         }
       ]
     }

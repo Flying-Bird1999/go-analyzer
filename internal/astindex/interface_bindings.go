@@ -10,7 +10,7 @@ import (
 )
 
 // InterfaceBinding 记录一个声明类型为 interface 的包级 var 的候选具体类型集合。
-// 只有当所有赋值证据都解析为高置信度、且最终只剩唯一具体类型时，才会被
+// 只有当所有赋值证据都能明确解析（Resolved）、且最终只剩唯一具体类型时，才会被
 // selector 解析采纳；出现多实现或未知 RHS 时 HasUnknownBinding 置位，绑定被拒绝。
 type InterfaceBinding struct {
 	// DeclaredType 是该变量声明的 interface 类型。
@@ -145,7 +145,7 @@ func (idx *Index) packageVariableAssignmentTarget(file *project.File, expr ast.E
 }
 
 // addInterfaceAssignment 把一条 RHS 表达式作为具体类型证据加入 binding。
-// 任何无法高置信度解析、或 RHS 仍是 interface 类型的赋值都会把 binding 标记为
+// 任何无法明确解析、或 RHS 仍是 interface 类型的赋值都会把 binding 标记为
 // HasUnknownBinding，从而拒绝猜测具体方法。
 func (idx *Index) addInterfaceAssignment(file *project.File, id facts.SymbolID, expr ast.Expr) {
 	ident, isIdent := expr.(*ast.Ident)
@@ -162,8 +162,8 @@ func (idx *Index) addInterfaceAssignment(file *project.File, id facts.SymbolID, 
 	if valueType.TypeName == "" {
 		valueType = valueTypeFromExpr(file, expr)
 	}
-	if valueType.TypeName == "" || valueType.Confidence != facts.ConfidenceHigh || idx.isInterfaceType(valueType) {
-		// 未知 RHS、低置信度，或 RHS 仍是接口类型，一律视为不可绑定的证据。
+	if valueType.TypeName == "" || !valueType.Resolved || idx.isInterfaceType(valueType) {
+		// 未知 RHS、无法明确解析，或 RHS 仍是接口类型，一律视为不可绑定的证据。
 		binding.HasUnknownBinding = true
 		return
 	}
@@ -178,7 +178,7 @@ func (idx *Index) resolveUniqueInterfaceBinding(id facts.SymbolID) (ValueType, b
 		return ValueType{}, false
 	}
 	for _, valueType := range binding.ConcreteTypes {
-		if valueType.Confidence == facts.ConfidenceHigh {
+		if valueType.Resolved {
 			return valueType, true
 		}
 	}

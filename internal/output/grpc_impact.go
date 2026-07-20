@@ -69,7 +69,6 @@ func addEndpointGrpcSource(builders map[string]*endpointSourceSummaryBuilder, so
 				GrpcFullMethod: source.Grpc.FullMethod,
 				RootSymbols:    []EndpointRootSymbolSummary{},
 				Chains:         [][]string{},
-				Confidence:     facts.ConfidenceHigh,
 			}
 		}
 		for _, chain := range consumer.Chains {

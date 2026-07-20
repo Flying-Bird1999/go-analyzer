@@ -55,27 +55,24 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForFileSources(t *testing.
 			SymbolID: "func:example.com/app/service::UpdateOrder",
 		},
 		Root: impact.Node{
-			ID:         "func:example.com/app/service::UpdateOrder",
-			Kind:       "func",
-			Name:       "UpdateOrder",
-			File:       "service/order.go",
-			Confidence: facts.ConfidenceHigh,
+			ID:   "func:example.com/app/service::UpdateOrder",
+			Kind: "func",
+			Name: "UpdateOrder",
+			File: "service/order.go",
 			Children: []impact.Node{{
-				ID:         "func:example.com/app/controller::UpdateOrder",
-				Kind:       "func",
-				Name:       "UpdateOrder",
-				File:       "controller/order.go",
-				Relation:   "call",
-				Confidence: facts.ConfidenceHigh,
+				ID:       "func:example.com/app/controller::UpdateOrder",
+				Kind:     "func",
+				Name:     "UpdateOrder",
+				File:     "controller/order.go",
+				Relation: "call",
 				Children: []impact.Node{{
-					ID:         "endpoint:POST:/orders",
-					Kind:       "endpoint",
-					Name:       "POST /orders",
-					File:       "router/order.go",
-					Relation:   "route_endpoint",
-					Confidence: facts.ConfidenceHigh,
-					Method:     "POST",
-					Path:       "/orders",
+					ID:       "endpoint:POST:/orders",
+					Kind:     "endpoint",
+					Name:     "POST /orders",
+					File:     "router/order.go",
+					Relation: "route_endpoint",
+					Method:   "POST",
+					Path:     "/orders",
 				}},
 			}},
 		},
@@ -104,9 +101,6 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForFileSources(t *testing.
 	wantChain := []string{"func UpdateOrder", "func UpdateOrder", "POST /orders"}
 	if len(source.Chains) != 1 || !reflect.DeepEqual(source.Chains[0], wantChain) {
 		t.Fatalf("chains = %#v, want %#v", source.Chains, wantChain)
-	}
-	if source.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("confidence = %q", source.Confidence)
 	}
 }
 
@@ -220,24 +214,22 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 	moduleRoot.Change.Source = "go_mod_diff"
 	moduleRoot.Change.SourceFactID = "module_usage:decimal"
 	moduleRoot.Root.Children = []impact.Node{{
-		ID:         "func:example.com/project/model::ConvertPrice",
-		Kind:       "func",
-		Name:       "ConvertPrice",
-		File:       "model/price.go",
-		Relation:   "call",
-		Raw:        "transform.ParsePrice(value)",
-		Confidence: facts.ConfidenceHigh,
-		Level:      1,
+		ID:       "func:example.com/project/model::ConvertPrice",
+		Kind:     "func",
+		Name:     "ConvertPrice",
+		File:     "model/price.go",
+		Relation: "call",
+		Raw:      "transform.ParsePrice(value)",
+		Level:    1,
 		Children: []impact.Node{{
-			ID:         "endpoint:GET:/products",
-			Kind:       "endpoint",
-			Name:       "GET /products",
-			Method:     "GET",
-			Path:       "/products",
-			Relation:   "resolved_endpoint",
-			Confidence: facts.ConfidenceHigh,
-			Level:      2,
-			Children:   []impact.Node{},
+			ID:       "endpoint:GET:/products",
+			Kind:     "endpoint",
+			Name:     "GET /products",
+			Method:   "GET",
+			Path:     "/products",
+			Relation: "resolved_endpoint",
+			Level:    2,
+			Children: []impact.Node{},
 		}},
 	}}
 	fallbackRoot := testRootImpact(
@@ -268,7 +260,6 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 			Basis:      facts.ModuleUsagePrecise,
 			SymbolID:   "func:example.com/project/util::ParsePrice",
 			File:       "util/price.go",
-			Confidence: facts.ConfidenceHigh,
 		}, {
 			ID:         "module_usage:decimal-fallback",
 			ModulePath: "github.com/shopspring/decimal",
@@ -276,7 +267,6 @@ func TestBuildImpactDocumentSeparatesFileAndModuleSources(t *testing.T) {
 			Basis:      facts.ModuleUsageFileFallback,
 			SymbolID:   "func:example.com/project/util::FormatPrice",
 			File:       "util/format.go",
-			Confidence: facts.ConfidenceMedium,
 		}},
 	})
 
@@ -337,7 +327,6 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForModuleSources(t *testin
 		File:       "service/payment.go",
 		SymbolID:   "func:example.com/app/service::Pay",
 		Basis:      facts.ModuleUsagePrecise,
-		Confidence: facts.ConfidenceMedium,
 	}
 	root := impact.RootImpact{
 		Change: facts.ChangeFact{
@@ -345,22 +334,19 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForModuleSources(t *testin
 			SymbolID:     moduleUsage.SymbolID,
 			Source:       "go_mod_diff",
 			SourceFactID: moduleUsage.ID,
-			Confidence:   facts.ConfidenceMedium,
 		},
 		Root: impact.Node{
-			ID:         string(moduleUsage.SymbolID),
-			Kind:       "func",
-			Name:       "Pay",
-			File:       "service/payment.go",
-			Confidence: facts.ConfidenceMedium,
+			ID:   string(moduleUsage.SymbolID),
+			Kind: "func",
+			Name: "Pay",
+			File: "service/payment.go",
 			Children: []impact.Node{{
-				ID:         "endpoint:POST:/pay",
-				Kind:       "endpoint",
-				Name:       "POST /pay",
-				Relation:   "route_endpoint",
-				Confidence: facts.ConfidenceMedium,
-				Method:     "POST",
-				Path:       "/pay",
+				ID:       "endpoint:POST:/pay",
+				Kind:     "endpoint",
+				Name:     "POST /pay",
+				Relation: "route_endpoint",
+				Method:   "POST",
+				Path:     "/pay",
 			}},
 		},
 		Endpoints: []impact.EndpointImpact{{Method: "POST", Path: "/pay"}},
@@ -380,9 +366,6 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForModuleSources(t *testin
 	}
 	if got.ChangeType != facts.ModuleChangeUpgraded || got.VersionBefore != "v1.0.0" || got.VersionAfter != "v1.1.0" {
 		t.Fatalf("module metadata = %#v", got)
-	}
-	if got.Confidence != facts.ConfidenceMedium {
-		t.Fatalf("confidence = %q", got.Confidence)
 	}
 }
 
@@ -449,22 +432,20 @@ func TestBuildImpactDocumentPreservesModuleReplacements(t *testing.T) {
 // 场景：多个 root 共享的递归子树内嵌在各自所属来源的 symbols 下，无需顶层 nodes 字段。
 func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	shared := impact.Node{
-		ID:         "func:example.com/project/service::Shared",
-		Kind:       "func",
-		Name:       "Shared",
-		File:       "service/shared.go",
-		Relation:   "call",
-		Confidence: facts.ConfidenceMedium,
+		ID:       "func:example.com/project/service::Shared",
+		Kind:     "func",
+		Name:     "Shared",
+		File:     "service/shared.go",
+		Relation: "call",
 		Children: []impact.Node{{
-			ID:         "endpoint:GET:/shared",
-			Kind:       "endpoint",
-			Name:       "GET /shared",
-			Method:     "GET",
-			Path:       "/shared",
-			Relation:   "resolved_endpoint",
-			Confidence: facts.ConfidenceHigh,
-			Level:      2,
-			Children:   []impact.Node{},
+			ID:       "endpoint:GET:/shared",
+			Kind:     "endpoint",
+			Name:     "GET /shared",
+			Method:   "GET",
+			Path:     "/shared",
+			Relation: "resolved_endpoint",
+			Level:    2,
+			Children: []impact.Node{},
 		}},
 	}
 	rootA := rawTestRoot("change:a", "func:example.com/project/controller::A", "controller/a.go", "A", shared)
@@ -494,7 +475,7 @@ func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 			t.Fatalf("root node %s = %#v", rootID, node)
 		}
 		sharedNode := node.Children[0]
-		if sharedNode.Relation != "call" || sharedNode.Confidence != facts.ConfidenceMedium {
+		if sharedNode.Relation != "call" {
 			t.Fatalf("shared node evidence = %#v", sharedNode)
 		}
 		if len(sharedNode.Children) != 1 ||
@@ -514,7 +495,7 @@ func TestBuildImpactDocumentEmbedsRecursiveTreesInOwningSource(t *testing.T) {
 	}
 }
 
-// 场景：对外 JSON 保留 raw/relation/level/confidence 等 review 证据，但省略 span/meta/nodes。
+// 场景：对外 JSON 保留 raw/relation/level 等 review 证据，但省略 span/meta/nodes。
 func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 	root := rawTestRoot(
 		"change:a",
@@ -522,17 +503,16 @@ func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 		"controller/a.go",
 		"A",
 		impact.Node{
-			ID:         "func:example.com/project/service::Shared",
-			Kind:       "func",
-			Name:       "Shared",
-			File:       "service/shared.go",
-			Package:    "example.com/project/service",
-			Relation:   "call",
-			Raw:        "service.Shared()",
-			Span:       facts.SourceSpan{File: "service/shared.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 18},
-			Confidence: facts.ConfidenceHigh,
-			Level:      1,
-			Children:   []impact.Node{},
+			ID:       "func:example.com/project/service::Shared",
+			Kind:     "func",
+			Name:     "Shared",
+			File:     "service/shared.go",
+			Package:  "example.com/project/service",
+			Relation: "call",
+			Raw:      "service.Shared()",
+			Span:     facts.SourceSpan{File: "service/shared.go", StartLine: 10, StartCol: 2, EndLine: 10, EndCol: 18},
+			Level:    1,
+			Children: []impact.Node{},
 		},
 	)
 	doc := BuildImpactDocument(
@@ -563,7 +543,6 @@ func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 		`"raw": "service.Shared()"`,
 		`"relation": "call"`,
 		`"level": 1`,
-		`"confidence": "high"`,
 	} {
 		if !bytes.Contains(payload, []byte(required)) {
 			t.Fatalf("review evidence %s missing: %s", required, payload)
@@ -571,55 +550,20 @@ func TestRenderRawImpactTreeKeepsReviewEvidenceButOmitsSpan(t *testing.T) {
 	}
 }
 
-// 场景：递归子节点的 confidence 独立保留，不被父节点 confidence 覆盖。
-func TestRawImpactTreePreservesConfidenceOnRecursiveNodes(t *testing.T) {
-	root := rawTestRoot(
-		"change:a",
-		"func:example.com/project/controller::A",
-		"controller/a.go",
-		"A",
-		impact.Node{
-			ID:         "func:example.com/project/service::Fallback",
-			Kind:       "func",
-			Name:       "Fallback",
-			File:       "service/fallback.go",
-			Relation:   "call",
-			Confidence: facts.ConfidenceMedium,
-			Children:   []impact.Node{},
-		},
-	)
-	root.Change.Confidence = facts.ConfidenceLow
-	doc := BuildImpactDocument(
-		[]diff.FileChange{{NewPath: "controller/a.go"}},
-		impact.TreeResult{Roots: []impact.RootImpact{root}},
-		ImpactDocumentOptions{},
-	)
-
-	rootNode := doc.FileSources[0].Symbols["func:example.com/project/controller::A"]
-	if rootNode.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("root confidence = %#v", rootNode)
-	}
-	if rootNode.Children[0].Confidence != facts.ConfidenceMedium {
-		t.Fatalf("child confidence = %#v", rootNode.Children[0])
-	}
-}
-
 // rawTestRoot 构造一个带单个子节点与端点的测试 RootImpact，使用真实 impact.Node。
 func rawTestRoot(changeID, rootID, file, name string, child impact.Node) impact.RootImpact {
 	return impact.RootImpact{
 		Change: facts.ChangeFact{
-			ID:         changeID,
-			File:       file,
-			SymbolID:   facts.SymbolID(rootID),
-			Confidence: facts.ConfidenceHigh,
+			ID:       changeID,
+			File:     file,
+			SymbolID: facts.SymbolID(rootID),
 		},
 		Root: impact.Node{
-			ID:         rootID,
-			Kind:       "func",
-			Name:       name,
-			File:       file,
-			Confidence: facts.ConfidenceHigh,
-			Children:   []impact.Node{child},
+			ID:       rootID,
+			Kind:     "func",
+			Name:     name,
+			File:     file,
+			Children: []impact.Node{child},
 		},
 		Endpoints: []impact.EndpointImpact{{
 			ID:     "endpoint:GET:/shared",

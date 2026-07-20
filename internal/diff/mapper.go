@@ -12,8 +12,7 @@ import (
 // MapChanges 把每个 FileChange 的行范围逐一映射为 ChangeFact。
 //
 // 映射按领域事实优先级选择最精确的语义根：注解 -> route group -> route ->
-// 中间件 -> 最小包含符号 -> 文件 fallback。新增行使用 high confidence，
-// 删除锚点行使用 medium confidence。删除锚点若最终落到 file fallback，
+// 中间件 -> 最小包含符号 -> 文件 fallback。删除锚点若最终落到 file fallback，
 // 会额外记录 deleted_symbol_unresolved 诊断，表明无法在单快照下精确恢复被删除符号。
 // source 标记 ChangeFact 的来源（如 git_diff），写入每个 ChangeFact.Source。
 func MapChanges(changes []FileChange, store *facts.Store, source string) []facts.ChangeFact {
@@ -28,12 +27,7 @@ func MapChanges(changes []FileChange, store *facts.Store, source string) []facts
 		}
 		for _, r := range fileChange.Ranges {
 			changeRange := facts.ChangeRange{StartLine: r.StartLine, EndLine: r.EndLine}
-			// 默认新增/上下文行为 high；删除锚点（落在 surviving 内容上）为 medium。
-			confidence := facts.ConfidenceHigh
-			if r.Kind == RangeKindDeletionAnchor {
-				confidence = facts.ConfidenceMedium
-			}
-			mapped := mapRange(file, changeRange, index, source, len(out), confidence)
+			mapped := mapRange(file, changeRange, index, source, len(out))
 			out = append(out, mapped...)
 			if r.Kind == RangeKindDeletionAnchor {
 				// 删除锚点若只能落到 file fallback，说明该声明在变更后已不存在，
@@ -118,11 +112,11 @@ func newChangeIndex(store *facts.Store) changeIndex {
 // mapRange 把一个行范围拆成逐行映射，再把相邻且命中间一目标的行合并回一个范围。
 // 这样跨多行但落在同一符号内的变更只会产生一条 ChangeFact，避免碎片化。
 // baseIndex 是当前文件之前已产出的 ChangeFact 数量，用于给每条 fact 分配唯一序号。
-func mapRange(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int, confidence facts.Confidence) []facts.ChangeFact {
+func mapRange(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int) []facts.ChangeFact {
 	var out []facts.ChangeFact
 	for line := r.StartLine; line <= r.EndLine; line++ {
 		point := facts.ChangeRange{StartLine: line, EndLine: line}
-		mapped := mapPoint(file, point, index, source, baseIndex+len(out), confidence)
+		mapped := mapPoint(file, point, index, source, baseIndex+len(out))
 		// 若当前行命中目标与上一条完全相同、且行号恰好紧接，则延长上一条范围而不是新建。
 		if len(out) > 0 && sameChangeTarget(out[len(out)-1], mapped) && out[len(out)-1].Ranges[0].EndLine+1 == line {
 			out[len(out)-1].Ranges[0].EndLine = line
@@ -136,47 +130,47 @@ func mapRange(file string, r facts.ChangeRange, index changeIndex, source string
 // mapPoint 对单个行号按领域优先级查找最精确的语义根。
 // 优先级为：annotation -> route group -> route -> middleware -> 最小包含 symbol -> file。
 // 当多个 symbol 同时包含该行时，选择行跨度最小的（最具体的声明），跨度相同则按 ID 取字典序最小者保证稳定。
-func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int, confidence facts.Confidence) facts.ChangeFact {
+func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string, baseIndex int) facts.ChangeFact {
 	// 1. 注解：diff 命中注释行优先归为 annotation_changed，保证不会把注释变更错记到函数体。
 	for _, annotation := range index.annotations[file] {
 		if spanContains(annotation.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindAnnotationChanged, annotation.ID, annotation.HandlerSymbol, file, r, source)
 		}
 	}
 	// 2. route group：group 创建/前缀行优先于外层 route 注册函数 symbol。
 	for _, group := range index.groups[file] {
 		if spanContains(group.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindRouteGroupChanged, group.ID, group.RouteFunc, file, r, source)
 		}
 	}
 	// 3. route 注册行优先于其所在函数 symbol。
 	for _, route := range index.routes[file] {
 		if spanContains(route.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindRouteChanged, route.ID, route.HandlerSymbol, file, r, source)
 		}
 	}
 	// 4. 中间件绑定行优先于外层 symbol。
 	for _, binding := range index.middleware[file] {
 		if spanContains(binding.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindMiddlewareChanged, binding.ID, "", file, r, source)
 		}
 	}
 	// 5. XXL-Job 注册行优先于外层注册函数 symbol。
 	for _, job := range index.jobs[file] {
 		if spanContains(job.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindJobRegistrationChanged, job.ID, job.HandlerSymbol, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindJobRegistrationChanged, job.ID, job.HandlerSymbol, file, r, source)
 		}
 	}
 	// 6. Dubbo method 注册配置优先于外层 export 函数。
 	for _, provider := range index.dubbo[file] {
 		if spanContains(provider.Span, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindDubboProviderChanged, provider.ID, provider.HandlerSymbol, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindDubboProviderChanged, provider.ID, provider.HandlerSymbol, file, r, source)
 		}
 	}
 	// 7. Dubbo service 级配置影响该 interface 下全部 method。
 	for _, provider := range index.dubbo[file] {
 		if spanContains(provider.ServiceSpan, file, r) {
-			return changeFact(baseIndex, facts.ChangeKindDubboServiceChanged, provider.ID, provider.RegistrationSymbol, file, r, source, confidence)
+			return changeFact(baseIndex, facts.ChangeKindDubboServiceChanged, provider.ID, provider.RegistrationSymbol, file, r, source)
 		}
 	}
 	// 8. symbol：选最小包含声明。外层 type 包含内层 var 时优先选内层更具体的 var。
@@ -191,21 +185,20 @@ func mapPoint(file string, r facts.ChangeRange, index changeIndex, source string
 		}
 	}
 	if selected != nil {
-		return changeFact(baseIndex, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source, confidence)
+		return changeFact(baseIndex, facts.ChangeKindSymbolChanged, string(selected.ID), selected.ID, file, r, source)
 	}
-	// 9. 兜底：无法映射到任何语义事实时落到 file root，confidence 为 low。
-	return changeFact(baseIndex, facts.ChangeKindFileChanged, file, "", file, r, source, facts.ConfidenceLow)
+	// 9. 兜底：无法映射到任何语义事实时落到 file root。
+	return changeFact(baseIndex, facts.ChangeKindFileChanged, file, "", file, r, source)
 }
 
-// sameChangeTarget 判断两条 ChangeFact 是否命中同一目标（kind/target/symbol/file/source/confidence 全等），
+// sameChangeTarget 判断两条 ChangeFact 是否命中同一目标（kind/target/symbol/file/source 全等），
 // 用于 mapRange 把相邻同目标行合并成一条范围。
 func sameChangeTarget(left, right facts.ChangeFact) bool {
 	return left.Kind == right.Kind &&
 		left.TargetID == right.TargetID &&
 		left.SymbolID == right.SymbolID &&
 		left.File == right.File &&
-		left.Source == right.Source &&
-		left.Confidence == right.Confidence
+		left.Source == right.Source
 }
 
 // spanSize 返回声明 span 的行跨度（EndLine - StartLine），用于在嵌套声明中选最具体的一个。
@@ -223,15 +216,14 @@ func spanContains(span facts.SourceSpan, file string, r facts.ChangeRange) bool 
 }
 
 // changeFact 构造一条 ChangeFact，ID 由 kind、file、起止行和全局序号拼接而成，保证唯一且确定。
-func changeFact(index int, kind facts.ChangeKind, targetID string, symbolID facts.SymbolID, file string, r facts.ChangeRange, source string, confidence facts.Confidence) facts.ChangeFact {
+func changeFact(index int, kind facts.ChangeKind, targetID string, symbolID facts.SymbolID, file string, r facts.ChangeRange, source string) facts.ChangeFact {
 	return facts.ChangeFact{
-		ID:         fmt.Sprintf("change:%s:%s:%d:%d:%d", kind, file, r.StartLine, r.EndLine, index),
-		Kind:       kind,
-		TargetID:   targetID,
-		SymbolID:   symbolID,
-		File:       file,
-		Ranges:     []facts.ChangeRange{r},
-		Source:     source,
-		Confidence: confidence,
+		ID:       fmt.Sprintf("change:%s:%s:%d:%d:%d", kind, file, r.StartLine, r.EndLine, index),
+		Kind:     kind,
+		TargetID: targetID,
+		SymbolID: symbolID,
+		File:     file,
+		Ranges:   []facts.ChangeRange{r},
+		Source:   source,
 	}
 }

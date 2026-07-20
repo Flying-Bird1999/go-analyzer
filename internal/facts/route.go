@@ -73,7 +73,7 @@ type RouteRegistrationFact struct {
 	File string `json:"file"`
 	// Span 是 route 注册表达式的位置区间。
 	Span SourceSpan `json:"span"`
-	// Evidence 记录关键 AST 表达式的证据（kind/raw/span/confidence），供 facts 调试与解释能力复用，缺失时不输出。
+	// Evidence 记录关键 AST 表达式的证据（kind/raw/span），供 facts 调试与解释能力复用，缺失时不输出。
 	Evidence []EvidenceFact `json:"evidence,omitempty"`
 }
 

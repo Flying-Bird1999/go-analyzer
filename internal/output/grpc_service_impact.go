@@ -52,10 +52,6 @@ type ServiceContractSummary struct {
 	DubboVersionExpr   string                           `json:"dubboVersionExpression,omitempty"`
 	DubboMethod        string                           `json:"dubboMethod,omitempty"`
 	Registration       ContractRegistrationSummary      `json:"registration"`
-	// Confidence 是该契约命中的链路置信度（change 根 + 传播路径最弱值）。
-	// 与 entrySourcesSummary 的 weakestConfidence(path) 对齐，保证 summary 与
-	// 反查视图对同一契约给出一致的证据强度。
-	Confidence facts.Confidence `json:"confidence"`
 }
 
 type ContractRegistrationSummary struct {
@@ -98,7 +94,6 @@ type ServiceEntryImpactSource struct {
 	VersionAfter  string                      `json:"versionAfter,omitempty"`
 	RootSymbols   []EndpointRootSymbolSummary `json:"rootSymbols"`
 	Chains        [][]string                  `json:"chains"`
-	Confidence    facts.Confidence            `json:"confidence"`
 }
 
 type GrpcImpactDocumentOptions struct {
@@ -148,11 +143,8 @@ func BuildGrpcImpactDocument(fileChanges []diff.FileChange, result serviceimpact
 		}
 		builder.source.Symbols[key] = node
 		for _, item := range root.Contracts {
-			contract := serviceContractSummary(item.Contract, item.Confidence)
-			// 多个变更根可能以不同 confidence 命中同一 contract（如一个 low file-changed 根
-			// 与一个 high symbol 根都到达同一 handler）。按链路最弱策略合并：取已记录与本次中
-			// 更弱的 confidence，避免后写根覆盖前者的弱证据。这使 summary 与 entrySourcesSummary
-			// （后者从树路径独立计算 weakestConfidence）对同一 contract 给出一致结论。
+			contract := serviceContractSummary(item.Contract)
+			// 同一 contract 可能被多个变更根命中：按 ID 去重，保留先记录的一份即可。
 			builder.contracts[contract.ID] = mergeContractSummary(builder.contracts[contract.ID], contract)
 			globalContracts[contract.ID] = mergeContractSummary(globalContracts[contract.ID], contract)
 		}
@@ -177,13 +169,10 @@ func RenderGrpcImpactJSON(doc GrpcImpactDocument) ([]byte, error) {
 }
 
 // serviceContractSummary 把 serviceimpact.Contract 投影为对外 summary 结构。
-// confidence 是该契约命中的链路置信度（来自 ContractImpact.Confidence），写入 summary
-// 使其与 entrySourcesSummary 的 weakestConfidence(path) 一致。
-func serviceContractSummary(contract serviceimpact.Contract, confidence facts.Confidence) ServiceContractSummary {
+func serviceContractSummary(contract serviceimpact.Contract) ServiceContractSummary {
 	registration := ContractRegistrationSummary{File: contract.Registration.File, Line: contract.Registration.StartLine, Column: contract.Registration.StartCol}
 	out := ServiceContractSummary{
 		ID: contract.ID, Kind: contract.Kind, Identity: contract.Identity, IdentityResolution: contract.IdentityResolution, Registration: registration,
-		Confidence: confidence,
 	}
 	switch contract.Kind {
 	case serviceimpact.ContractGrpcOperation:
@@ -205,20 +194,11 @@ func serviceContractSummary(contract serviceimpact.Contract, confidence facts.Co
 }
 
 // mergeContractSummary 把同一 contract.ID 的两次命中合并为一条 summary。
-// existing 为零值（首次写入）时直接采用 incoming；否则取两者中更弱的 confidence，
-// 其余字段以 existing 为准（contract 的 identity/registration 不随命中点变化）。
-// 这保证多个变更根以不同 confidence 命中同一 contract 时，summary 取链路最弱值，
-// 与 entrySourcesSummary 从树路径独立计算的 weakestConfidence 保持一致。
-// 空串 confidence 视为「未设置」，不参与覆盖（避免空值压过已确定的最弱值）。
+// existing 为零值（首次写入）时直接采用 incoming；否则保留 existing——同一 contract
+// 的其余字段（identity/registration 等）不随命中点变化，无需再比较。
 func mergeContractSummary(existing ServiceContractSummary, incoming ServiceContractSummary) ServiceContractSummary {
 	if existing.ID == "" {
 		return incoming
-	}
-	if incoming.Confidence == "" {
-		return existing
-	}
-	if existing.Confidence == "" || confidenceRank(incoming.Confidence) < confidenceRank(existing.Confidence) {
-		existing.Confidence = incoming.Confidence
 	}
 	return existing
 }
@@ -350,8 +330,6 @@ func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryG
 				current = &builder{}
 				builders[contract.ID] = current
 			}
-			// 跨文件合并 contract confidence：与 summary 一致取最弱，避免文件排序
-			// （a.go high 在 b.go low 之前）导致反查 contract.confidence 保留 high。
 			current.contract = mergeContractSummary(current.contract, contract)
 			source := metadata
 			for _, key := range sortedImpactNodeKeys(file.Symbols) {
@@ -362,14 +340,6 @@ func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryG
 				}
 				source.RootSymbols = append(source.RootSymbols, rootSymbolSummary(root))
 				source.Chains = append(source.Chains, chainLabels(path))
-				// confidence 取该 root 到 contract 的所有路径中最弱的 weakestConfidence(path)，
-				// 与 serviceimpact.recordContract 对同一 contract 跨所有路径取最弱一致（§6.2.1）。
-				// 只用最短路径求 weakestConfidence 会在同一 root 下存在更弱的更长路径时高估证据
-				// 强度，使 source.confidence 强于 contract.confidence、自相矛盾。chain 仍展示最短路径。
-				confidence := weakestPathConfidenceTo(root, contract.ID)
-				if source.Confidence == "" || confidenceRank(confidence) < confidenceRank(source.Confidence) {
-					source.Confidence = confidence
-				}
 			}
 			if source.RootSymbols == nil {
 				source.RootSymbols = []EndpointRootSymbolSummary{}
@@ -403,31 +373,6 @@ func buildEntrySourcesSummary(doc GrpcImpactDocument) ServiceEntrySourceSummaryG
 	}
 	groups.sort()
 	return groups
-}
-
-// weakestPathConfidenceTo 返回 root 子树中所有到达 contractID 的路径里最弱的
-// weakestConfidence(path)。与 serviceimpact.recordContract 对同一 contract 跨所有
-// 路径取最弱保持一致，供 entrySourcesSummary 的 per-source confidence 使用，避免仅按
-// 最短路径而在同一 root 存在更弱路径时高估证据强度。无路径到达时返回空字符串。
-func weakestPathConfidenceTo(root ImpactNode, contractID string) facts.Confidence {
-	var best facts.Confidence
-	found := false
-	var walk func(node ImpactNode, pathWeakest facts.Confidence)
-	walk = func(node ImpactNode, pathWeakest facts.Confidence) {
-		weakest := weakerConfidence(pathWeakest, node.Confidence)
-		if node.ID == contractID {
-			if !found || confidenceRank(weakest) < confidenceRank(best) {
-				best = weakest
-			}
-			found = true
-			return
-		}
-		for _, child := range node.Children {
-			walk(child, weakest)
-		}
-	}
-	walk(root, facts.ConfidenceHigh)
-	return best
 }
 
 func shortestContractPath(root ImpactNode, contractID string) ([]ImpactNode, bool) {

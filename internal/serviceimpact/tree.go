@@ -35,7 +35,6 @@ type Contract struct {
 	Relation           string
 	EntrySymbol        facts.SymbolID
 	Registration       facts.SourceSpan
-	Confidence         facts.Confidence
 	GrpcOperation      facts.GrpcOperationFact
 	Route              facts.RouteRegistrationFact
 	Dubbo              facts.DubboProviderFact
@@ -44,12 +43,6 @@ type Contract struct {
 
 type ContractImpact struct {
 	Contract Contract
-	// Confidence 是该契约命中点的链路置信度：取 change 根置信度与传播路径上
-	// 各跳置信度的最弱值（facts.CombineConfidence）。区别于 Contract.Confidence
-	// （provider/route/job 自身的注册证据置信度），它反映「这次 change 是否真能
-	// 可达该契约」的证据强度，避免弱根（如 file_changed/low）经 high 边到达契约
-	// 后被静默升级为 high 结论。
-	Confidence facts.Confidence
 }
 
 type RootImpact struct {
@@ -113,7 +106,7 @@ func (a *analyzer) indexDubboContracts(store *facts.Store) {
 		}
 		contract := Contract{
 			ID: "dubbo:" + provider.ID, Kind: ContractDubboMethod, Identity: identity, IdentityResolution: resolution,
-			Relation: "exposed_dubbo_method", Registration: provider.Span, Confidence: provider.Confidence, Dubbo: provider,
+			Relation: "exposed_dubbo_method", Registration: provider.Span, Dubbo: provider,
 			EntrySymbol: provider.HandlerSymbol,
 		}
 		a.contractsBySymbol[provider.HandlerSymbol] = appendContractOnce(a.contractsBySymbol[provider.HandlerSymbol], contract)
@@ -139,7 +132,7 @@ func (a *analyzer) indexGrpcContracts(store *facts.Store) {
 		}
 		contract := Contract{
 			ID: operation.ID, Kind: ContractGrpcOperation, Identity: operation.FullMethod, IdentityResolution: IdentityStatic,
-			Relation: "exposed_grpc_operation", Registration: provider.Span, Confidence: provider.Confidence, GrpcOperation: operation,
+			Relation: "exposed_grpc_operation", Registration: provider.Span, GrpcOperation: operation,
 		}
 		for _, symbol := range []facts.SymbolID{provider.HandlerSymbol, provider.ImplementationSymbol, provider.RegistrationSymbol} {
 			if symbol == "" {
@@ -164,7 +157,7 @@ func (a *analyzer) indexHTTPContracts(store *facts.Store) {
 		}
 		contract := Contract{
 			ID: "http:" + route.ID, Kind: ContractHTTPEndpoint, Identity: identity, IdentityResolution: resolution,
-			Relation: "exposed_http_endpoint", Registration: route.Span, Confidence: facts.ConfidenceHigh, Route: route,
+			Relation: "exposed_http_endpoint", Registration: route.Span, Route: route,
 		}
 		contract.EntrySymbol = route.HandlerSymbol
 		a.contractsBySymbol[route.HandlerSymbol] = appendContractOnce(a.contractsBySymbol[route.HandlerSymbol], contract)
@@ -179,7 +172,7 @@ func (a *analyzer) indexJobContracts(store *facts.Store) {
 		}
 		contract := Contract{
 			ID: "job:" + job.Name, Kind: ContractJob, Identity: job.Name, IdentityResolution: IdentityStatic,
-			Relation: "registered_job", Registration: job.Span, Confidence: job.Confidence, Job: job,
+			Relation: "registered_job", Registration: job.Span, Job: job,
 		}
 		contract.EntrySymbol = job.HandlerSymbol
 		a.contractsBySymbol[job.HandlerSymbol] = appendContractOnce(a.contractsBySymbol[job.HandlerSymbol], contract)
@@ -201,20 +194,19 @@ func (a *analyzer) registrationIsLive(symbol facts.SymbolID) bool {
 func (a *analyzer) buildRoot(change facts.ChangeFact) (impact.Node, []ContractImpact) {
 	direct := a.contractsForChange(change)
 	if change.SymbolID == "" {
-		root := impact.Node{ID: change.File, Kind: "file", Name: change.File, File: change.File, Confidence: change.Confidence, Children: []impact.Node{}}
+		root := impact.Node{ID: change.File, Kind: "file", Name: change.File, File: change.File, Children: []impact.Node{}}
 		contracts := map[string]ContractImpact{}
 		for _, contract := range direct {
-			recordContract(contracts, contract, change.Confidence)
-			root.Children = append(root.Children, contractNode(contract, facts.CombineConfidence(change.Confidence, contract.Confidence), 1))
+			recordContract(contracts, contract)
+			root.Children = append(root.Children, contractNode(contract, 1))
 		}
 		return root, sortedContractImpacts(contracts)
 	}
 	root := a.symbolNode(change.SymbolID, 0)
-	root.Confidence = change.Confidence
 	contracts := map[string]ContractImpact{}
 	for _, contract := range direct {
-		recordContract(contracts, contract, change.Confidence)
-		root.Children = append(root.Children, contractNode(contract, facts.CombineConfidence(change.Confidence, contract.Confidence), 1))
+		recordContract(contracts, contract)
+		root.Children = append(root.Children, contractNode(contract, 1))
 	}
 	if change.Kind == facts.ChangeKindDubboProviderChanged || change.Kind == facts.ChangeKindDubboServiceChanged {
 		root.Children = mergeChildren(root.Children)
@@ -224,34 +216,15 @@ func (a *analyzer) buildRoot(change facts.ChangeFact) (impact.Node, []ContractIm
 	return root, sortedContractImpacts(contracts)
 }
 
-// recordContract 把一条契约命中记入 contracts map，置信度取链路最弱：
-// 已记录的与本次 combine 取弱者，保证多次命中同一契约时保留最弱证据。
-func recordContract(contracts map[string]ContractImpact, contract Contract, pathConfidence facts.Confidence) {
-	combined := facts.CombineConfidence(pathConfidence, contract.Confidence)
-	existing, ok := contracts[contract.ID]
-	if !ok {
-		contracts[contract.ID] = ContractImpact{Contract: contract, Confidence: combined}
+// recordContract 把一条契约命中记入 contracts map，按契约 ID 去重：
+// 同一契约被多条路径命中时只保留先发现的一份，其余字段本就应等价。
+func recordContract(contracts map[string]ContractImpact, contract Contract) {
+	if _, ok := contracts[contract.ID]; ok {
 		return
 	}
-	// 多条路径命中同一契约：保留置信度更弱的那次，反映最保守的证据强度。
-	if rankConfidence(combined) < rankConfidence(existing.Confidence) {
-		contracts[contract.ID] = ContractImpact{Contract: contract, Confidence: combined}
-	}
+	contracts[contract.ID] = ContractImpact{Contract: contract}
 }
 
-// rankConfidence 把 confidence 映射为可比较的整数，数值越小越弱。
-func rankConfidence(c facts.Confidence) int {
-	switch c {
-	case facts.ConfidenceLow:
-		return 1
-	case facts.ConfidenceMedium:
-		return 2
-	case facts.ConfidenceHigh:
-		return 3
-	default:
-		return 4
-	}
-}
 func (a *analyzer) contractsForChange(change facts.ChangeFact) []Contract {
 	contracts := append([]Contract(nil), a.contractsByFactID[change.TargetID]...)
 	if change.Kind == facts.ChangeKindDubboServiceChanged {
@@ -286,12 +259,9 @@ func sortedContractImpacts(contracts map[string]ContractImpact) []ContractImpact
 
 func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool, contracts map[string]ContractImpact) {
 	symbolID := facts.SymbolID(node.ID)
-	// node.Confidence 已是沿传播链路累积的置信度（buildRoot 设根值，每跳 combine）；
-	// contract 终节点与 summary 都用它与 contract 自身证据的最弱值，避免弱根经 high 边
-	// 到达 contract 后结论被夸大为 high。
 	for _, contract := range a.contractsBySymbol[symbolID] {
-		recordContract(contracts, contract, node.Confidence)
-		node.Children = append(node.Children, contractNode(contract, facts.CombineConfidence(node.Confidence, contract.Confidence), node.Level+1))
+		recordContract(contracts, contract)
+		node.Children = append(node.Children, contractNode(contract, node.Level+1))
 	}
 	for _, ref := range a.reverse.ReferencesTo(symbolID) {
 		child := a.symbolNode(ref.FromSymbol, node.Level+1)
@@ -301,7 +271,6 @@ func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool,
 		child.Relation = referenceRelation(ref.Kind)
 		child.Raw = ref.ToRaw
 		child.Span = ref.Span
-		child.Confidence = facts.CombineConfidence(node.Confidence, ref.Confidence)
 		if path[ref.FromSymbol] {
 			child.Cycle = true
 		} else {
@@ -314,12 +283,11 @@ func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool,
 	node.Children = mergeChildren(node.Children)
 }
 
-// contractNode 构造一个契约终节点。confidence 是沿传播链路合并后的置信度
-// （非 contract.Confidence 自身），使终节点与 summary 一致地反映证据强度。
-func contractNode(contract Contract, confidence facts.Confidence, level int) impact.Node {
+// contractNode 构造一个契约终节点。
+func contractNode(contract Contract, level int) impact.Node {
 	node := impact.Node{
 		ID: contract.ID, Kind: string(contract.Kind), Name: contract.Identity, File: contract.Registration.File,
-		Relation: contract.Relation, Span: contract.Registration, Confidence: confidence, Level: level, Children: []impact.Node{},
+		Relation: contract.Relation, Span: contract.Registration, Level: level, Children: []impact.Node{},
 	}
 	switch contract.Kind {
 	case ContractGrpcOperation:
@@ -343,7 +311,7 @@ func contractNode(contract Contract, confidence facts.Confidence, level int) imp
 
 func (a *analyzer) symbolNode(id facts.SymbolID, level int) impact.Node {
 	if symbol, ok := a.symbols[id]; ok {
-		return impact.Node{ID: string(id), Kind: symbol.Kind, Name: symbol.Name, File: symbol.Span.File, Package: symbol.PackagePath, Span: symbol.Span, Confidence: facts.ConfidenceHigh, Level: level, Children: []impact.Node{}}
+		return impact.Node{ID: string(id), Kind: symbol.Kind, Name: symbol.Name, File: symbol.Span.File, Package: symbol.PackagePath, Span: symbol.Span, Level: level, Children: []impact.Node{}}
 	}
 	return impact.Node{ID: string(id), Kind: symbolKind(id), Name: symbolName(id), Level: level, Children: []impact.Node{}}
 }

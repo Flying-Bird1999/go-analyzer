@@ -65,14 +65,12 @@ func testIMEvent(event string, sender facts.SymbolID, dependencies ...facts.Symb
 		ID:           "im_event:" + event,
 		Event:        event,
 		SenderSymbol: sender,
-		Confidence:   facts.ConfidenceHigh,
 		Resolved:     true,
 	}
 	for _, dependency := range dependencies {
 		out.Dependencies = append(out.Dependencies, facts.IMEventDependency{
-			SymbolID:   dependency,
-			Relation:   facts.IMRelationPayload,
-			Confidence: facts.ConfidenceHigh,
+			SymbolID: dependency,
+			Relation: facts.IMRelationPayload,
 		})
 	}
 	return out

@@ -171,7 +171,7 @@ func Use() {
 	}
 }
 
-// 场景：接口变量有唯一具体实现时，其方法调用应高置信度解析到具体方法。
+// 场景：接口变量有唯一具体实现时，其方法调用应解析到具体方法。
 func TestExtractStrictInterfaceCallReference(t *testing.T) {
 	root := writeStrictInterfaceFixture(t, `func Init() {
 	Client = new(client)
@@ -179,14 +179,11 @@ func TestExtractStrictInterfaceCallReference(t *testing.T) {
 `)
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"func:example.com/strict-interface/controller::Handle",
 		"method:example.com/strict-interface/remote:client:Fetch",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
-	}
 }
 
 // 场景：接口变量被多次赋值且包含无法静态确定的实现时，不应产生具体 call 边，只报未知绑定诊断。
@@ -720,8 +717,8 @@ func Handle() {
 	assertReference(t, store, from, "method:example.com/nested-type-shadow:outerClient:Run", facts.ReferenceKindCall)
 }
 
-// 场景：包级 var 由构造函数初始化时，对其方法的调用以中等置信度解析到构造函数返回类型的方法。
-func TestExtractConstructorInferredMethodCallUsesMediumConfidence(t *testing.T) {
+// 场景：包级 var 由构造函数初始化时，对其方法的调用应解析到构造函数返回类型的方法。
+func TestExtractConstructorInferredMethodCallResolvesReturnType(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/constructor-confidence\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -748,14 +745,11 @@ func Handle() {
 	}
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"func:example.com/constructor-confidence::Handle",
 		"method:example.com/constructor-confidence:Client:Query",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceMedium {
-		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
-	}
 }
 
 // 场景：构造函数返回类型与名字暗示不同时，应以声明的返回类型为准解析方法，避免名字启发式误导。
@@ -847,7 +841,7 @@ func Handle() {
 	}
 }
 
-// 场景：同一接收者类型内部的方法互调应高置信度解析为目标方法。
+// 场景：同一接收者类型内部的方法互调应解析为目标方法。
 func TestExtractReceiverMethodCallReference(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/receiver-call\n\ngo 1.24\n"), 0o644); err != nil {
@@ -867,18 +861,15 @@ func (c *controllerHandler) convert() {}
 	}
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"method:example.com/receiver-call:controllerHandler:executeFlow",
 		"method:example.com/receiver-call:controllerHandler:convert",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
-	}
 }
 
-// 场景：局部变量由构造函数初始化时，其方法调用以中等置信度解析到返回类型方法。
-func TestExtractConstructorLocalMethodCallUsesMediumConfidence(t *testing.T) {
+// 场景：局部变量由构造函数初始化时，其方法调用应解析到返回类型方法。
+func TestExtractConstructorLocalMethodCallResolvesReturnType(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-constructor\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -902,18 +893,15 @@ func (c *controllerHandler) executeFlow() {}
 	}
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"func:example.com/local-constructor::controller",
 		"method:example.com/local-constructor:controllerHandler:executeFlow",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceMedium {
-		t.Fatalf("confidence = %q, want medium: %#v", ref.Confidence, ref)
-	}
 }
 
-// 场景：局部变量由内置 new(T) 构造时，其方法调用以高置信度解析到 T 的方法。
-func TestExtractNewBuiltinLocalMethodCallUsesHighConfidence(t *testing.T) {
+// 场景：局部变量由内置 new(T) 构造时，其方法调用应解析到 T 的方法。
+func TestExtractNewBuiltinLocalMethodCallResolvesConcreteType(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/local-new\n\ngo 1.24\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -933,17 +921,14 @@ func (c *controllerHandler) executeFlow() {}
 	}
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"func:example.com/local-new::controller",
 		"method:example.com/local-new:controllerHandler:executeFlow",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
-	}
 }
 
-// 场景：自定义基础类型的常量调用其方法，应以声明的具名类型解析方法且高置信度。
+// 场景：自定义基础类型的常量调用其方法，应以声明的具名类型解析方法。
 func TestExtractTypedConstMethodCall(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/typed-const\n\ngo 1.24\n"), 0o644); err != nil {
@@ -965,14 +950,11 @@ func Handle() string {
 	}
 
 	store := extractFixtureRoot(t, root)
-	ref := findReference(t, store,
+	findReference(t, store,
 		"func:example.com/typed-const::Handle",
 		"method:example.com/typed-const:Code:String",
 		facts.ReferenceKindCall,
 	)
-	if ref.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("confidence = %q, want high: %#v", ref.Confidence, ref)
-	}
 }
 
 // 场景：map[string]接口 的元素调用方法，应静态枚举所有具名实现并产生对应方法调用边。

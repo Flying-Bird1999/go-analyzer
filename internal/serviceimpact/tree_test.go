@@ -1,6 +1,6 @@
 // tree_test.go 覆盖 serviceimpact 的关键正/反路径闸门（handoff §7.2 item 8）：
 // 未注册实现不得成为终点（registrationIsLive）、DubboServiceChanged 的 interface 全方法扇出、
-// 动态 path 的 symbolic 身份保真、引用环终止，以及多路径命中同一 contract 取最弱置信度。
+// 动态 path 的 symbolic 身份保真、引用环终止，以及多路径命中同一 contract 去重。
 package serviceimpact
 
 import (
@@ -18,10 +18,10 @@ func newTestStore(symbols ...facts.SymbolFact) *facts.Store {
 	return store
 }
 
-func rootContractIDs(root RootImpact) map[string]facts.Confidence {
-	out := map[string]facts.Confidence{}
+func rootContractIDs(root RootImpact) map[string]bool {
+	out := map[string]bool{}
 	for _, c := range root.Contracts {
-		out[c.Contract.ID] = c.Confidence
+		out[c.Contract.ID] = true
 	}
 	return out
 }
@@ -34,10 +34,10 @@ func TestRegistrationLivenessGate(t *testing.T) {
 	deadReg := facts.SymbolID("func:example.com/p::wireProviders") // 无引用、非启动命名
 	provider := facts.DubboProviderFact{
 		ID: "dubbo_provider:x.API/do:impl.go:1:1", Interface: "x.API", Version: "1.0.0", Method: "do", GoMethod: "Do",
-		HandlerSymbol: handler, RegistrationSymbol: deadReg, Confidence: facts.ConfidenceHigh,
+		HandlerSymbol: handler, RegistrationSymbol: deadReg,
 		Span: facts.SourceSpan{File: "impl.go", StartLine: 1},
 	}
-	change := facts.ChangeFact{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "impl.go", Confidence: facts.ConfidenceHigh}
+	change := facts.ChangeFact{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "impl.go"}
 
 	// 反例：死注册 -> 契约不出现。
 	store := newTestStore(facts.SymbolFact{ID: handler, Kind: "method", Name: "Do", Span: facts.SourceSpan{File: "impl.go"}})
@@ -56,7 +56,7 @@ func TestRegistrationLivenessGate(t *testing.T) {
 	store2.DubboProviders = []facts.DubboProviderFact{provider}
 	store2.Changes = []facts.ChangeFact{change}
 	store2.References = []facts.ReferenceFact{{
-		ID: "r1", Kind: facts.ReferenceKindCall, FromSymbol: "func:example.com/p::main", ToSymbol: deadReg, Confidence: facts.ConfidenceHigh,
+		ID: "r1", Kind: facts.ReferenceKindCall, FromSymbol: "func:example.com/p::main", ToSymbol: deadReg,
 	}}
 	res2 := AnalyzeTrees(store2)
 	if got := rootContractIDs(res2.Roots[0]); len(got) != 1 {
@@ -72,9 +72,9 @@ func TestRegistrationLivenessNamingConvention(t *testing.T) {
 	store := newTestStore(facts.SymbolFact{ID: handler, Kind: "method", Name: "Do", Span: facts.SourceSpan{File: "impl.go"}})
 	store.DubboProviders = []facts.DubboProviderFact{{
 		ID: "dubbo_provider:x.API/do:impl.go:1:1", Interface: "x.API", Version: "1.0.0", Method: "do", GoMethod: "Do",
-		HandlerSymbol: handler, RegistrationSymbol: reg, Confidence: facts.ConfidenceHigh, Span: facts.SourceSpan{File: "impl.go", StartLine: 1},
+		HandlerSymbol: handler, RegistrationSymbol: reg, Span: facts.SourceSpan{File: "impl.go", StartLine: 1},
 	}}
-	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "impl.go", Confidence: facts.ConfidenceHigh}}
+	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "impl.go"}}
 	if got := rootContractIDs(AnalyzeTrees(store).Roots[0]); len(got) != 1 {
 		t.Fatalf("Register*-named registration should be live by convention, got %v", got)
 	}
@@ -89,7 +89,7 @@ func TestDubboServiceChangedFansOutAllMethods(t *testing.T) {
 	base := func(id, method string, handler facts.SymbolID, line int) facts.DubboProviderFact {
 		return facts.DubboProviderFact{
 			ID: id, Interface: "x.API", Version: "1.0.0", Method: method, GoMethod: method,
-			HandlerSymbol: handler, RegistrationSymbol: reg, Confidence: facts.ConfidenceHigh,
+			HandlerSymbol: handler, RegistrationSymbol: reg,
 			Span: facts.SourceSpan{File: "impl.go", StartLine: line},
 		}
 	}
@@ -102,7 +102,7 @@ func TestDubboServiceChangedFansOutAllMethods(t *testing.T) {
 	)
 	store.DubboProviders = []facts.DubboProviderFact{pa, pb}
 	// service 级变更只命中 provider A 的 fact，但应扇出 interface 的全部方法。
-	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindDubboServiceChanged, TargetID: pa.ID, SymbolID: reg, File: "wire.go", Confidence: facts.ConfidenceHigh}}
+	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindDubboServiceChanged, TargetID: pa.ID, SymbolID: reg, File: "wire.go"}}
 	got := rootContractIDs(AnalyzeTrees(store).Roots[0])
 	if _, ok := got["dubbo:"+pa.ID]; !ok {
 		t.Errorf("missing method a contract: %v", got)
@@ -122,7 +122,7 @@ func TestHTTPContractPreservesSymbolicIdentity(t *testing.T) {
 		ID: "route:r1", Method: "GET", LocalPath: "/:id", PathRaw: "prefix + \"/:id\"", ResolvedPath: "",
 		HandlerSymbol: handler, RouteFunc: routeFunc, Span: facts.SourceSpan{File: "router.go", StartLine: 3},
 	}}
-	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "ctrl.go", Confidence: facts.ConfidenceHigh}}
+	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "ctrl.go"}}
 	root := AnalyzeTrees(store).Roots[0]
 	if len(root.Contracts) != 1 {
 		t.Fatalf("contracts = %d, want 1", len(root.Contracts))
@@ -153,11 +153,11 @@ func TestReverseCycleTerminates(t *testing.T) {
 	}}
 	// handler <- A <- B <- A（环）。
 	store.References = []facts.ReferenceFact{
-		{ID: "r1", Kind: facts.ReferenceKindCall, FromSymbol: a, ToSymbol: handler, Confidence: facts.ConfidenceHigh},
-		{ID: "r2", Kind: facts.ReferenceKindCall, FromSymbol: b, ToSymbol: a, Confidence: facts.ConfidenceHigh},
-		{ID: "r3", Kind: facts.ReferenceKindCall, FromSymbol: a, ToSymbol: b, Confidence: facts.ConfidenceHigh},
+		{ID: "r1", Kind: facts.ReferenceKindCall, FromSymbol: a, ToSymbol: handler},
+		{ID: "r2", Kind: facts.ReferenceKindCall, FromSymbol: b, ToSymbol: a},
+		{ID: "r3", Kind: facts.ReferenceKindCall, FromSymbol: a, ToSymbol: b},
 	}
-	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "ctrl.go", Confidence: facts.ConfidenceHigh}}
+	store.Changes = []facts.ChangeFact{{ID: "c1", Kind: facts.ChangeKindSymbolChanged, SymbolID: handler, File: "ctrl.go"}}
 	// 不应死循环；且契约仍应被发现。
 	root := AnalyzeTrees(store).Roots[0]
 	if len(root.Contracts) != 1 {

@@ -201,13 +201,13 @@ func TestBuildUsesCompleteDeclarationSpans(t *testing.T) {
 func TestBuildIndexesNewBuiltinReceiverType(t *testing.T) {
 	idx, file := buildValueTypeFixture(t)
 
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"DefaultCache", "Read"})
+	resolved, ok := idx.ResolveSelectorMethod(file, []string{"DefaultCache", "Read"})
 	if !ok {
 		t.Fatal("DefaultCache.Read was not resolved")
 	}
 	want := facts.SymbolID("method:example.com/value-types:Cache:Read")
-	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("DefaultCache.Read = %#v, want %s with high confidence", resolved, want)
+	if resolved.ID != want {
+		t.Fatalf("DefaultCache.Read = %#v, want %s", resolved, want)
 	}
 }
 
@@ -215,13 +215,13 @@ func TestBuildIndexesNewBuiltinReceiverType(t *testing.T) {
 func TestBuildIndexesTypedConstReceiverType(t *testing.T) {
 	idx, file := buildValueTypeFixture(t)
 
-	resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{"DefaultCode", "String"})
+	resolved, ok := idx.ResolveSelectorMethod(file, []string{"DefaultCode", "String"})
 	if !ok {
 		t.Fatal("DefaultCode.String was not resolved")
 	}
 	want := facts.SymbolID("method:example.com/value-types:Code:String")
-	if resolved.ID != want || resolved.Confidence != facts.ConfidenceHigh {
-		t.Fatalf("DefaultCode.String = %#v, want %s with high confidence", resolved, want)
+	if resolved.ID != want {
+		t.Fatalf("DefaultCode.String = %#v, want %s", resolved, want)
 	}
 }
 
@@ -271,7 +271,7 @@ const (
 	want := facts.SymbolID("method:example.com/iota-consts:SenderType:Val")
 	// 首行显式 typed const 与其后两个续行常量都应解析到 SenderType.Val。
 	for _, name := range []string{"SenderMerchant", "SenderUser", "SenderBot"} {
-		resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, []string{name, "Val"})
+		resolved, ok := idx.ResolveSelectorMethod(file, []string{name, "Val"})
 		if !ok || resolved.ID != want {
 			t.Fatalf("%s.Val = %#v (ok=%v), want %s", name, resolved, ok, want)
 		}

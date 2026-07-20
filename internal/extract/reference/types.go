@@ -128,13 +128,11 @@ func addTypeReferences(p *project.Project, file *project.File, idx *astindex.Ind
 			FromSymbol: from,
 			ToSymbol:   resolved.ID,
 			ToRaw:      typeExprString(file, resolved.Expr),
-			Confidence: facts.ConfidenceHigh,
 			Span:       span,
 			Evidence: []facts.EvidenceFact{{
-				Kind:       "type_expr",
-				Raw:        typeExprString(file, resolved.Expr),
-				Span:       span,
-				Confidence: facts.ConfidenceHigh,
+				Kind: "type_expr",
+				Raw:  typeExprString(file, resolved.Expr),
+				Span: span,
 			}},
 		})
 	}

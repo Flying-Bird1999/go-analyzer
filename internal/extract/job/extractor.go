@@ -49,15 +49,15 @@ func Extract(p *project.Project, idx *astindex.Index, store *facts.Store) error 
 						if !ok || strings.TrimSpace(name) == "" {
 							continue
 						}
-						handler, confidence, ok := resolveHandler(file, idx, fn, assign.Rhs[i])
+						handler, ok := resolveHandler(file, idx, fn, assign.Rhs[i])
 						if !ok {
 							continue
 						}
 						span := sourceSpan(p.Root, file, assign)
 						store.JobRegistrations = append(store.JobRegistrations, facts.JobRegistrationFact{
 							ID: facts.JobRegistrationID(name, span), Name: name, HandlerSymbol: handler,
-							RegistrationSymbol: registration, Span: span, Confidence: confidence,
-							Evidence: []facts.EvidenceFact{{Kind: "job_registration", Raw: expression(assign), Span: span, Confidence: confidence}},
+							RegistrationSymbol: registration, Span: span,
+							Evidence: []facts.EvidenceFact{{Kind: "job_registration", Raw: expression(assign), Span: span}},
 						})
 					}
 					return false
@@ -97,30 +97,30 @@ func isJobPackage(path string) bool {
 	return strings.Contains(path, "jobx") || strings.Contains(path, "xxljob")
 }
 
-func resolveHandler(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, expr ast.Expr) (facts.SymbolID, facts.Confidence, bool) {
+func resolveHandler(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, expr ast.Expr) (facts.SymbolID, bool) {
 	if ident, ok := expr.(*ast.Ident); ok {
 		id := astindex.FunctionSymbolID(file.Package.Path, ident.Name)
 		_, exists := idx.Symbols[id]
-		return id, facts.ConfidenceHigh, exists
+		return id, exists
 	}
 	parts := astindex.SelectorParts(expr)
 	if len(parts) == 0 {
-		return "", "", false
+		return "", false
 	}
 	if importPath := file.Imports[parts[0]]; importPath != "" && len(parts) == 2 {
 		id := astindex.FunctionSymbolID(importPath, parts[1])
 		if _, ok := idx.Symbols[id]; ok {
-			return id, facts.ConfidenceHigh, true
+			return id, true
 		}
 	}
-	if resolved, ok := idx.ResolveSelectorMethodWithConfidence(file, parts); ok {
-		return resolved.ID, resolved.Confidence, true
+	if resolved, ok := idx.ResolveSelectorMethod(file, parts); ok {
+		return resolved.ID, true
 	}
 	if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 && parts[0] == fn.Recv.List[0].Names[0].Name {
 		receiver := astindex.ValueTypeFromTypeExpr(file, fn.Recv.List[0].Type)
 		remaining := append([]string(nil), parts[1:]...)
 		if resolved, ok := idx.ResolveValueTypeMethod(receiver, append(remaining, "Execute")); ok {
-			return resolved.ID, resolved.Confidence, true
+			return resolved.ID, true
 		}
 	}
 	// 先 copy parts 再 append，避免 append 改写 parts 底层数组（与上面 receiver 分支的
@@ -128,10 +128,10 @@ func resolveHandler(file *project.File, idx *astindex.Index, fn *ast.FuncDecl, e
 	partsWithExecute := append(append([]string(nil), parts...), "Execute")
 	if valueType, ok := idx.ResolveSelectorReceiverType(file, partsWithExecute); ok {
 		if resolved, ok := idx.ResolveValueTypeMethod(valueType, []string{"Execute"}); ok {
-			return resolved.ID, resolved.Confidence, true
+			return resolved.ID, true
 		}
 	}
-	return "", "", false
+	return "", false
 }
 
 func functionSymbol(file *project.File, fn *ast.FuncDecl) facts.SymbolID {

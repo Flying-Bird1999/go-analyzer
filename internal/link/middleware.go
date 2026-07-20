@@ -86,7 +86,8 @@ func resolveCallable(idx *astindex.Index, file *project.File, expr ast.Expr) (fa
 			}
 		}
 		// 其余情况（本包变量方法、跨包变量方法、多层 field 链）交给 astindex 解析。
-		return idx.ResolveSelectorMethod(file, parts)
+		resolved, ok := idx.ResolveSelectorMethod(file, parts)
+		return resolved.ID, ok
 	}
 	return "", false
 }

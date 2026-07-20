@@ -17,9 +17,9 @@ import (
 // MapModuleUsage 把每条 ModuleChangeFact 映射到本仓的使用点。
 //
 // 映射精度（basis）分三档：
-//   - precise：函数/方法体直接使用 import alias，可定位到具体 symbol，high confidence；
-//   - module_reference_file_fallback：只能确认 import 所在文件，降级到该文件内的声明，
-//     medium confidence（文件无声明时进一步降级为 low confidence 的纯文件 usage）；
+//   - precise：函数/方法体直接使用 import alias，可定位到具体 symbol；
+//   - module_reference_file_fallback：只能确认 import 所在文件，降级到该文件内的声明
+//     （文件无声明时进一步降级为纯文件级 usage）；
 //   - module_unreferenced：本仓没有 import 该 module，不产生 endpoint root。
 //
 // 降级情形会写入对应 diagnostic，便于 facts 调试时检查 usage 精度。
@@ -33,7 +33,6 @@ func MapModuleUsage(p *project.Project, idx *astindex.Index, store *facts.Store,
 				ID:         moduleUsageID(change.Path, "", "", facts.ModuleUsageUnreferenced),
 				ModulePath: change.Path,
 				Basis:      facts.ModuleUsageUnreferenced,
-				Confidence: facts.ConfidenceHigh,
 			})
 			if store != nil {
 				diagnostics.AddFact(store, diagnostics.Diagnostic{
@@ -120,15 +119,13 @@ func preciseUsages(p *project.Project, idx *astindex.Index, modulePath string, m
 			Basis:      facts.ModuleUsagePrecise,
 			SymbolID:   symbolID,
 			File:       relFile(p, match.File.Path),
-			Confidence: facts.ConfidenceHigh,
 		})
 	}
 	return out
 }
 
 // fallbackUsages 在无法精确定位 symbol 时，把 import 所在文件内的所有声明
-// 都作为 usage 候选（medium confidence）；若文件内没有任何声明，则退化为
-// 仅以文件为粒度的 usage（low confidence）。
+// 都作为 usage 候选；若文件内没有任何声明，则退化为仅以文件为粒度的 usage。
 func fallbackUsages(p *project.Project, idx *astindex.Index, modulePath string, match importMatch) []facts.ModuleUsageFact {
 	var out []facts.ModuleUsageFact
 	file := relFile(p, match.File.Path)
@@ -144,7 +141,6 @@ func fallbackUsages(p *project.Project, idx *astindex.Index, modulePath string, 
 			Basis:      facts.ModuleUsageFileFallback,
 			SymbolID:   symbol.ID,
 			File:       file,
-			Confidence: facts.ConfidenceMedium,
 		})
 	}
 	if len(out) == 0 {
@@ -156,7 +152,6 @@ func fallbackUsages(p *project.Project, idx *astindex.Index, modulePath string, 
 			Alias:      match.Alias,
 			Basis:      facts.ModuleUsageFileFallback,
 			File:       file,
-			Confidence: facts.ConfidenceLow,
 		})
 	}
 	return out

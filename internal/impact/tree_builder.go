@@ -143,32 +143,29 @@ func newTreeBuilder(context *treeContext, change facts.ChangeFact) *treeBuilder 
 func (b *treeBuilder) buildRoot() Node {
 	// 1) 路由领域根：直接命中某条路由注册。
 	if route, ok := b.routes.RoutesByID[b.change.TargetID]; ok {
-		return b.routeNode(route, 0, "", b.change.Confidence)
+		return b.routeNode(route, 0, "")
 	}
 	// 2) 路由组领域根：展开组内及其子组的全部路由。
 	if group, ok := b.routes.GroupsByID[b.change.TargetID]; ok {
 		root := Node{
-			ID:         group.ID,
-			Kind:       "route_group",
-			Name:       group.GroupVar,
-			File:       group.Span.File,
-			Relation:   "",
-			Span:       group.Span,
-			Confidence: b.change.Confidence,
-			Level:      0,
-			Children:   []Node{},
+			ID:       group.ID,
+			Kind:     "route_group",
+			Name:     group.GroupVar,
+			File:     group.Span.File,
+			Relation: "",
+			Span:     group.Span,
+			Level:    0,
+			Children: []Node{},
 		}
 		for _, route := range b.routes.RoutesForGroup(group.ID) {
-			root.Children = append(root.Children, b.routeNode(route, 1, "route_group_contains", b.change.Confidence))
+			root.Children = append(root.Children, b.routeNode(route, 1, "route_group_contains"))
 		}
 		root.Children = mergeAndSortChildren(root.Children)
 		return root
 	}
 	// 3) 中间件领域根：展开挂载该中间件且顺序靠后的路由。
 	if middleware, ok := b.routes.MiddlewareByID[b.change.TargetID]; ok {
-		root := b.middlewareNode(middleware, 0, "", b.change.Confidence)
-		root.Confidence = b.change.Confidence
-		return root
+		return b.middlewareNode(middleware, 0, "")
 	}
 	// 4) 注解领域根：通过注解直接定位 endpoint。
 	if annotation, ok := b.annotations[b.change.TargetID]; ok {
@@ -177,21 +174,19 @@ func (b *treeBuilder) buildRoot() Node {
 	// 5) Job 注册领域根：直接命中某条 job 注册语句。
 	if job, ok := b.jobs[b.change.TargetID]; ok {
 		return Node{
-			ID:         job.ID,
-			Kind:       "job",
-			Name:       job.Name,
-			File:       job.Span.File,
-			Relation:   "registered_job",
-			Span:       job.Span,
-			Confidence: b.change.Confidence,
-			Level:      0,
-			Children:   []Node{},
+			ID:       job.ID,
+			Kind:     "job",
+			Name:     job.Name,
+			File:     job.Span.File,
+			Relation: "registered_job",
+			Span:     job.Span,
+			Level:    0,
+			Children: []Node{},
 		}
 	}
 	// 6) 符号根：沿反向引用图递归展开。
 	if b.change.SymbolID != "" {
 		root := b.symbolNode(b.change.SymbolID, 0)
-		root.Confidence = b.change.Confidence
 		// path 记录当前 DFS 已访问的符号，用于环路检测。
 		path := map[facts.SymbolID]bool{b.change.SymbolID: true}
 		b.expandSymbol(&root, path)
@@ -199,13 +194,12 @@ func (b *treeBuilder) buildRoot() Node {
 	}
 	// 7) 文件降级根：无法映射到任何语义事实时保留为文件级根，无子节点。
 	return Node{
-		ID:         b.change.File,
-		Kind:       "file",
-		Name:       b.change.File,
-		File:       b.change.File,
-		Confidence: b.change.Confidence,
-		Level:      0,
-		Children:   []Node{},
+		ID:       b.change.File,
+		Kind:     "file",
+		Name:     b.change.File,
+		File:     b.change.File,
+		Level:    0,
+		Children: []Node{},
 	}
 }
 
@@ -233,7 +227,6 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 		child.Raw = ref.ToRaw
 		child.Span = ref.Span
 		child.File = b.symbolFile(ref.FromSymbol, child.File)
-		child.Confidence = facts.CombineConfidence(node.Confidence, ref.Confidence)
 		if path[ref.FromSymbol] {
 			// 命中环路：标记后不再递归展开，避免无限循环。
 			child.Cycle = true
@@ -247,16 +240,16 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 		node.Children = append(node.Children, child)
 	}
 	for _, route := range routes {
-		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "registered_handler", node.Confidence))
+		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "registered_handler"))
 	}
 	for _, route := range dependencyRoutes {
-		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "route_dependency", node.Confidence))
+		node.Children = append(node.Children, b.routeNode(route, node.Level+1, "route_dependency"))
 	}
 	for _, middleware := range middlewareBindings {
-		node.Children = append(node.Children, b.middlewareNode(middleware, node.Level+1, "middleware_symbol", node.Confidence))
+		node.Children = append(node.Children, b.middlewareNode(middleware, node.Level+1, "middleware_symbol"))
 	}
 	for _, match := range b.im.EventsForPath(symbolID, path, b.change) {
-		node.Children = append(node.Children, b.imEventNode(match, node.Level+1, node.Confidence))
+		node.Children = append(node.Children, b.imEventNode(match, node.Level+1))
 		// 只有已解析且事件名非空的 IM 事实才计入 IM 摘要；
 		// 动态/未解析事件保留为 im_event_unresolved 终端，但不进入摘要。
 		if match.Fact.Resolved && match.Fact.Event != "" {
@@ -270,9 +263,7 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 //
 // 已解析的事件使用 im_event，按事件名标识；未解析或事件名为空的事件降级为
 // im_event_unresolved，使用 IM 事实自身 ID 与原始事件表达式，保留在树中但不计入摘要。
-// imEventNode 把一个 IMGraph 匹配结果转换成树中的 IM 事件终端节点。
-// parentConfidence 是传播路径上累积的置信度；im_event 终节点与它 combine。
-func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int, parentConfidence facts.Confidence) Node {
+func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int) Node {
 	kind := "im_event"
 	id := "im_event:" + match.Fact.Event
 	name := match.Fact.Event
@@ -287,16 +278,15 @@ func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int, parentCon
 		span = *match.Fact.Span
 	}
 	return Node{
-		ID:         id,
-		Kind:       kind,
-		Name:       name,
-		File:       span.File,
-		Relation:   string(match.Relation),
-		Raw:        match.Fact.EventRaw,
-		Span:       span,
-		Confidence: facts.CombineConfidence(parentConfidence, match.Fact.Confidence),
-		Level:      level,
-		Children:   []Node{},
+		ID:       id,
+		Kind:     kind,
+		Name:     name,
+		File:     span.File,
+		Relation: string(match.Relation),
+		Raw:      match.Fact.EventRaw,
+		Span:     span,
+		Level:    level,
+		Children: []Node{},
 	}
 }
 
@@ -341,27 +331,24 @@ func (b *treeBuilder) symbolFile(id facts.SymbolID, fallback string) string {
 // routeNode 构造路由节点，并按优先级补齐 endpoint 子节点。
 //
 // endpoint 来源优先级：handler 注解优先；缺失注解时降级为路由的 method/path fallback
-// （被删除路由使用 deleted_route_endpoint 关系，置信度为 medium）。
-// parentConfidence 是传播路径上累积的置信度；route/endpoint 终节点与它 combine，
-// 避免弱根经 high 边到达后结论被夸大。这与 ARCHITECTURE 第 9 节描述的端点语义一致。
-func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, relation string, parentConfidence facts.Confidence) Node {
+// （被删除路由使用 deleted_route_endpoint 关系）。这与 ARCHITECTURE 第 9 节描述的端点语义一致。
+func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, relation string) Node {
 	path := route.ResolvedPath
 	if path == "" {
 		path = route.LocalPath
 	}
 	node := Node{
-		ID:         route.ID,
-		Kind:       "route",
-		Name:       strings.TrimSpace(route.Method + " " + path),
-		File:       route.Span.File,
-		Relation:   relation,
-		Raw:        route.HandlerRaw,
-		Span:       route.Span,
-		Confidence: facts.CombineConfidence(parentConfidence, facts.ConfidenceHigh),
-		Level:      level,
-		Method:     route.Method,
-		Path:       path,
-		Children:   []Node{},
+		ID:       route.ID,
+		Kind:     "route",
+		Name:     strings.TrimSpace(route.Method + " " + path),
+		File:     route.Span.File,
+		Relation: relation,
+		Raw:      route.HandlerRaw,
+		Span:     route.Span,
+		Level:    level,
+		Method:   route.Method,
+		Path:     path,
+		Children: []Node{},
 	}
 	annotations := b.routes.AnnotationsForHandler(route.HandlerSymbol)
 	if len(annotations) == 0 {
@@ -379,7 +366,6 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 				route.Span,
 				level+1,
 				endpointRelation,
-				facts.CombineConfidence(parentConfidence, facts.ConfidenceMedium),
 			))
 		}
 		return node
@@ -405,13 +391,12 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 				route.Span,
 				level+1,
 				endpointRelation,
-				facts.CombineConfidence(parentConfidence, facts.ConfidenceMedium),
 			))
 		}
 		return node
 	}
 	for _, annotation := range annotations {
-		node.Children = append(node.Children, b.annotationNode(annotation, route, level+1, "handler_annotation", parentConfidence))
+		node.Children = append(node.Children, b.annotationNode(annotation, route, level+1, "handler_annotation"))
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node
@@ -465,27 +450,25 @@ func (b *treeBuilder) annotationsClaimedByOtherRoutes(route facts.RouteRegistrat
 // annotationRootNode 构造注解领域根节点。如果该 handler 同时注册了路由，
 // 则把注册路由挂到根下，便于 review 时追踪注解与注册的对应关系；
 // 否则直接退化为单注解节点。
-// 注解领域根是 diff 直接命中注解，证据确凿，confidence 取 change.Confidence。
 func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
 	routes := b.routes.RoutesForHandler(annotation.HandlerSymbol)
 	if len(routes) == 0 {
-		return b.annotationNode(annotation, facts.RouteRegistrationFact{}, 0, "", b.change.Confidence)
+		return b.annotationNode(annotation, facts.RouteRegistrationFact{}, 0, "")
 	}
 	root := Node{
-		ID:         annotation.ID,
-		Kind:       "annotation",
-		Name:       strings.TrimSpace(annotation.Method + " " + annotation.Path),
-		File:       annotation.Span.File,
-		Raw:        annotation.Raw,
-		Span:       annotation.Span,
-		Confidence: b.change.Confidence,
-		Level:      0,
-		Method:     annotation.Method,
-		Path:       annotation.Path,
-		Children:   []Node{},
+		ID:       annotation.ID,
+		Kind:     "annotation",
+		Name:     strings.TrimSpace(annotation.Method + " " + annotation.Path),
+		File:     annotation.Span.File,
+		Raw:      annotation.Raw,
+		Span:     annotation.Span,
+		Level:    0,
+		Method:   annotation.Method,
+		Path:     annotation.Path,
+		Children: []Node{},
 	}
 	for _, route := range routes {
-		root.Children = append(root.Children, b.routeNode(route, 1, "registered_route", b.change.Confidence))
+		root.Children = append(root.Children, b.routeNode(route, 1, "registered_route"))
 	}
 	root.Children = mergeAndSortChildren(root.Children)
 	return root
@@ -495,23 +478,21 @@ func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
 //
 // 受影响路由通过 RouteGraph.RoutesAffectedByMiddleware 计算：同一 group 内、
 // 且 statement_index 严格大于该中间件的路由才会被纳入。
-// parentConfidence 是传播路径上累积的置信度；middleware 终节点与它 combine。
-func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, level int, relation string, parentConfidence facts.Confidence) Node {
+func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, level int, relation string) Node {
 	node := Node{
-		ID:         middleware.ID,
-		Kind:       "middleware",
-		Name:       middleware.MiddlewareRaw,
-		File:       middleware.Span.File,
-		Relation:   relation,
-		Raw:        middleware.MiddlewareRaw,
-		Span:       middleware.Span,
-		Confidence: facts.CombineConfidence(parentConfidence, facts.ConfidenceHigh),
-		Level:      level,
-		Children:   []Node{},
+		ID:       middleware.ID,
+		Kind:     "middleware",
+		Name:     middleware.MiddlewareRaw,
+		File:     middleware.Span.File,
+		Relation: relation,
+		Raw:      middleware.MiddlewareRaw,
+		Span:     middleware.Span,
+		Level:    level,
+		Children: []Node{},
 	}
 	routes := b.routes.RoutesAffectedByMiddleware(middleware.ID)
 	for _, route := range routes {
-		node.Children = append(node.Children, b.routeNode(route, level+1, "middleware_applies_to", node.Confidence))
+		node.Children = append(node.Children, b.routeNode(route, level+1, "middleware_applies_to"))
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node
@@ -520,19 +501,15 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 // annotationNode 构造注解节点并补齐 endpoint。注解是正式 endpoint identity；只有注解缺少
 // method 或 path 时，才使用已解析 route 补齐对应字段。route 节点仍保留完整解析路径，供
 // review 与辅助校验，不得覆盖完整 annotation。
-// parentConfidence 是传播路径上累积的置信度；annotation/endpoint 终节点与它 combine，
-// 避免弱根经 high 边到达后结论被夸大。
-func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string, parentConfidence facts.Confidence) Node {
+func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
 	method := strings.ToUpper(annotation.Method)
 	path := annotation.Path
 	endpointRelation := "annotation_endpoint"
 	endpointSpan := annotation.Span
-	endpointEvidence := facts.ConfidenceHigh
 	if method == "" {
 		method = strings.ToUpper(route.Method)
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
-		endpointEvidence = facts.ConfidenceMedium
 	}
 	if path == "" {
 		path = route.ResolvedPath
@@ -541,25 +518,22 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		}
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
-		endpointEvidence = facts.ConfidenceMedium
 	}
 	if endpointRelation == "route_endpoint" && route.RecoveredFromDiff {
 		endpointRelation = "deleted_route_endpoint"
 	}
-	combined := facts.CombineConfidence(parentConfidence, facts.ConfidenceHigh)
 	node := Node{
-		ID:         annotation.ID,
-		Kind:       "annotation",
-		Name:       strings.TrimSpace(method + " " + path),
-		File:       annotation.Span.File,
-		Relation:   relation,
-		Raw:        annotation.Raw,
-		Span:       annotation.Span,
-		Confidence: combined,
-		Level:      level,
-		Method:     method,
-		Path:       path,
-		Children:   []Node{},
+		ID:       annotation.ID,
+		Kind:     "annotation",
+		Name:     strings.TrimSpace(method + " " + path),
+		File:     annotation.Span.File,
+		Relation: relation,
+		Raw:      annotation.Raw,
+		Span:     annotation.Span,
+		Level:    level,
+		Method:   method,
+		Path:     path,
+		Children: []Node{},
 	}
 	if method != "" && path != "" {
 		node.Children = append(node.Children, b.endpointNode(
@@ -570,7 +544,6 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 			endpointSpan,
 			level+1,
 			endpointRelation,
-			facts.CombineConfidence(parentConfidence, endpointEvidence),
 		))
 	}
 	return node
@@ -579,14 +552,13 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 // endpointNode 构造一个 endpoint 终端节点，并把命中的端点记入本棵树的端点摘要。
 //
 // 端点按 "method\x00path" 去重；同一棵树中多次命中同一端点不会重复出现在摘要里。
-// relation 与 confidence 由调用方按端点来源（注解/路由/被删除路由）传入。
+// relation 由调用方按端点来源（注解/路由/被删除路由）传入。
 func (b *treeBuilder) endpointNode(
 	method, path, annotationID string,
 	handler facts.SymbolID,
 	span facts.SourceSpan,
 	level int,
 	relation string,
-	confidence facts.Confidence,
 ) Node {
 	id := fmt.Sprintf("endpoint:%s:%s", method, path)
 	key := method + "\x00" + path
@@ -599,17 +571,16 @@ func (b *treeBuilder) endpointNode(
 		Routes:        b.resolvedRoutesForHandler(handler),
 	}
 	return Node{
-		ID:         id,
-		Kind:       "endpoint",
-		Name:       method + " " + path,
-		File:       span.File,
-		Relation:   relation,
-		Span:       span,
-		Confidence: confidence,
-		Level:      level,
-		Method:     method,
-		Path:       path,
-		Children:   []Node{},
+		ID:       id,
+		Kind:     "endpoint",
+		Name:     method + " " + path,
+		File:     span.File,
+		Relation: relation,
+		Span:     span,
+		Level:    level,
+		Method:   method,
+		Path:     path,
+		Children: []Node{},
 	}
 }
 

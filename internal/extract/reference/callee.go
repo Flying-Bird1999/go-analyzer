@@ -18,14 +18,14 @@ func (r resolver) ResolveCall(call *ast.CallExpr) ([]astindex.ResolvedSymbol, st
 		// 1) 同包函数；2) 索引能识别的包级 value；3) 同包 var（函数值变量等）。
 		id := astindex.FunctionSymbolID(r.file.Package.Path, fun.Name)
 		if _, ok := r.idx.Symbols[id]; ok {
-			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+			return []astindex.ResolvedSymbol{{ID: id}}, fun.Name, true
 		}
 		if id, ok := r.idx.PackageValueSymbol(fun.Obj); ok {
-			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+			return []astindex.ResolvedSymbol{{ID: id}}, fun.Name, true
 		}
 		id = astindex.ValueSymbolID("var", r.file.Package.Path, fun.Name)
 		if _, ok := r.idx.Symbols[id]; ok {
-			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, fun.Name, true
+			return []astindex.ResolvedSymbol{{ID: id}}, fun.Name, true
 		}
 		return nil, fun.Name, false
 	case *ast.SelectorExpr:
@@ -48,7 +48,7 @@ func (r resolver) resolveSelectorCandidates(selector *ast.SelectorExpr) ([]astin
 			if !ok {
 				return nil, raw, false
 			}
-			return []astindex.ResolvedSymbol{{ID: id, Confidence: facts.ConfidenceHigh}}, raw, true
+			return []astindex.ResolvedSymbol{{ID: id}}, raw, true
 		}
 	}
 	if len(parts) >= 2 {
@@ -64,8 +64,8 @@ func (r resolver) resolveSelectorCandidates(selector *ast.SelectorExpr) ([]astin
 			return nil, raw, false
 		}
 	}
-	// 回退路径：交由索引按包级 selector 解析（含接收者方法），并带上置信度。
-	if resolved, ok := r.idx.ResolveSelectorMethodWithConfidence(r.file, parts); ok {
+	// 回退路径：交由索引按包级 selector 解析（含接收者方法）。
+	if resolved, ok := r.idx.ResolveSelectorMethod(r.file, parts); ok {
 		return []astindex.ResolvedSymbol{resolved}, raw, true
 	}
 	return nil, raw, false

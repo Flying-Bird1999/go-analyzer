@@ -1006,10 +1006,9 @@ func routeCall(p *project.Project, file *project.File, routeFunc facts.SymbolID,
 		Span:           spanFor(p, file, call.Pos(), call.End()),
 	}
 	route.Evidence = []facts.EvidenceFact{{
-		Kind:       "route_call",
-		Raw:        exprString(call),
-		Span:       route.Span,
-		Confidence: facts.ConfidenceHigh,
+		Kind: "route_call",
+		Raw:  exprString(call),
+		Span: route.Span,
 	}}
 	if pathRaw != "" {
 		diagnostics.AddFact(store, diagnostics.Diagnostic{

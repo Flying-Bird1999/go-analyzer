@@ -527,7 +527,6 @@ func moduleUsageChanges(usages []facts.ModuleUsageFact, store *facts.Store, sour
 			File:         usage.File,
 			Source:       source,
 			SourceFactID: usage.ID,
-			Confidence:   usage.Confidence,
 		}
 		if usage.SymbolID != "" {
 			change.Kind = facts.ChangeKindSymbolChanged

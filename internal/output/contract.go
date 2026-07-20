@@ -230,8 +230,7 @@ func commonDefinitions() map[string]any {
 			"grpcFullMethod": stringType(),
 			"rootSymbols":    arrayOf(ref("endpoint_root_symbol_summary")),
 			"chains":         arrayOf(arrayOf(stringType())),
-			"confidence":     confidenceType(),
-		}, "sourceType", "rootSymbols", "chains", "confidence"),
+		}, "sourceType", "rootSymbols", "chains"),
 		"dependency_call_site": object(map[string]any{
 			"file":   stringType(),
 			"line":   numberType(),
@@ -300,25 +299,22 @@ func commonDefinitions() map[string]any {
 			"sender_symbol": stringType(),
 			"dependencies":  arrayOf(ref("im_event_dependency")),
 			"evidence":      arrayOf(ref("im_event_evidence")),
-			"confidence":    confidenceType(),
 			"span":          ref("source_span"),
 			"resolved":      boolType(),
-		}, "id", "sender_symbol", "dependencies", "evidence", "confidence", "resolved"),
+		}, "id", "sender_symbol", "dependencies", "evidence", "resolved"),
 		"im_event_dependency": object(map[string]any{
-			"symbol_id":  stringType(),
-			"relation":   stringType(),
-			"confidence": confidenceType(),
-			"span":       ref("source_span"),
-		}, "symbol_id", "relation", "confidence"),
+			"symbol_id": stringType(),
+			"relation":  stringType(),
+			"span":      ref("source_span"),
+		}, "symbol_id", "relation"),
 		"im_event_evidence": object(map[string]any{
 			"relation": stringType(),
 			"span":     ref("source_span"),
 		}, "relation", "span"),
 		"evidence": object(map[string]any{
-			"kind":       stringType(),
-			"raw":        stringType(),
-			"span":       ref("source_span"),
-			"confidence": confidenceType(),
+			"kind": stringType(),
+			"raw":  stringType(),
+			"span": ref("source_span"),
 		}, "kind", "span"),
 		"grpc_client_binding": object(map[string]any{
 			"go_package":  stringType(),
@@ -356,8 +352,7 @@ func commonDefinitions() map[string]any {
 			"registration_symbol":       stringType(),
 			"span":                      ref("source_span"),
 			"evidence":                  arrayOf(ref("evidence")),
-			"confidence":                confidenceType(),
-		}, "id", "operation_id", "generated_go_package", "register_function", "server_interface", "registration_symbol", "span", "confidence"),
+		}, "id", "operation_id", "generated_go_package", "register_function", "server_interface", "registration_symbol", "span"),
 		"dubbo_provider": object(map[string]any{
 			"id":                  stringType(),
 			"interface":           stringType(),
@@ -371,8 +366,7 @@ func commonDefinitions() map[string]any {
 			"span":                ref("source_span"),
 			"service_span":        ref("source_span"),
 			"evidence":            arrayOf(ref("evidence")),
-			"confidence":          confidenceType(),
-		}, "id", "interface", "method", "go_method", "implementation_type", "handler_symbol", "registration_symbol", "span", "service_span", "confidence"),
+		}, "id", "interface", "method", "go_method", "implementation_type", "handler_symbol", "registration_symbol", "span", "service_span"),
 		"job_registration": object(map[string]any{
 			"id":                  stringType(),
 			"name":                stringType(),
@@ -380,22 +374,20 @@ func commonDefinitions() map[string]any {
 			"registration_symbol": stringType(),
 			"span":                ref("source_span"),
 			"evidence":            arrayOf(ref("evidence")),
-			"confidence":          confidenceType(),
-		}, "id", "name", "handler_symbol", "registration_symbol", "span", "confidence"),
+		}, "id", "name", "handler_symbol", "registration_symbol", "span"),
 		// impact_node 是 impact 传播树的递归节点定义；children 自引用 impact_node，实现完整传播链路。
 		"impact_node": object(map[string]any{
-			"id":         stringType(),
-			"kind":       stringType(),
-			"name":       stringType(),
-			"file":       stringType(),
-			"package":    stringType(),
-			"relation":   stringType(),
-			"raw":        stringType(),
-			"confidence": confidenceType(),
-			"level":      numberType(),
-			"cycle":      boolType(),
-			"children":   arrayOf(ref("impact_node")),
-			"method":     stringType(),
+			"id":       stringType(),
+			"kind":     stringType(),
+			"name":     stringType(),
+			"file":     stringType(),
+			"package":  stringType(),
+			"relation": stringType(),
+			"raw":      stringType(),
+			"level":    numberType(),
+			"cycle":    boolType(),
+			"children": arrayOf(ref("impact_node")),
+			"method":   stringType(),
 			"path":       stringType(),
 			"fullMethod": stringType(),
 		}, "id", "kind", "level", "children"),
@@ -430,8 +422,7 @@ func commonDefinitions() map[string]any {
 			"versionAfter":  stringType(),
 			"rootSymbols":   arrayOf(ref("endpoint_root_symbol_summary")),
 			"chains":        arrayOf(arrayOf(stringType())),
-			"confidence":    confidenceType(),
-		}, "sourceType", "rootSymbols", "chains", "confidence"),
+		}, "sourceType", "rootSymbols", "chains"),
 		"contract_registration_summary": object(map[string]any{
 			"file":   stringType(),
 			"line":   numberType(),
@@ -453,8 +444,7 @@ func commonDefinitions() map[string]any {
 			"dubboVersionExpression": stringType(),
 			"dubboMethod":            stringType(),
 			"registration":           ref("contract_registration_summary"),
-			"confidence":             confidenceType(),
-		}, "id", "kind", "identity", "identityResolution", "registration", "confidence"),
+		}, "id", "kind", "identity", "identityResolution", "registration"),
 		"contract_source_summary": object(map[string]any{
 			"contract": ref("service_contract_summary"),
 			"sources":  arrayOf(ref("service_entry_impact_source")),
@@ -480,12 +470,11 @@ func commonDefinitions() map[string]any {
 			"sourceFiles":       arrayOf(ref("file_source_impact")),
 		}, "modulePath", "changeType", "basis"),
 		"link": object(map[string]any{
-			"id":         stringType(),
-			"kind":       stringType(),
-			"from_id":    stringType(),
-			"to_id":      stringType(),
-			"confidence": confidenceType(),
-		}, "id", "kind", "from_id", "to_id", "confidence"),
+			"id":      stringType(),
+			"kind":    stringType(),
+			"from_id": stringType(),
+			"to_id":   stringType(),
+		}, "id", "kind", "from_id", "to_id"),
 		"middleware": object(map[string]any{
 			"id":                 stringType(),
 			"group_id":           stringType(),
@@ -521,10 +510,9 @@ func commonDefinitions() map[string]any {
 			"from_symbol": stringType(),
 			"to_symbol":   stringType(),
 			"to_raw":      stringType(),
-			"confidence":  confidenceType(),
 			"span":        ref("source_span"),
 			"evidence":    arrayOf(ref("evidence")),
-		}, "id", "kind", "from_symbol", "confidence", "span"),
+		}, "id", "kind", "from_symbol", "span"),
 		"route": object(map[string]any{
 			"id":              stringType(),
 			"method":          stringType(),
@@ -579,11 +567,6 @@ func commonDefinitions() map[string]any {
 // stringType 返回 JSON Schema 的 string 类型片段。
 func stringType() map[string]any {
 	return map[string]any{"type": "string"}
-}
-
-// confidenceType 返回 confidence 枚举类型，限定 high / medium / low 三档。
-func confidenceType() map[string]any {
-	return map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}}
 }
 
 // numberType 返回 integer 类型片段，用于 line / col / level / count 等数值字段。

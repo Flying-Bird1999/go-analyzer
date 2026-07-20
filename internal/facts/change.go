@@ -56,6 +56,4 @@ type ChangeFact struct {
 	Source string `json:"source"`
 	// SourceFactID 是触发该 root 的源 fact ID（如 gomod usage 触发的 symbol/file change），缺失时不输出。
 	SourceFactID string `json:"source_fact_id,omitempty"`
-	// Confidence 是该 root 的静态证据强度（high/medium/low）。
-	Confidence Confidence `json:"confidence"`
 }

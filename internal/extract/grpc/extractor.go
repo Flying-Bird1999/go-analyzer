@@ -91,7 +91,7 @@ func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts
 					calls = append(calls, facts.GrpcCallFact{
 						ID:           fmt.Sprintf("grpc_call:%s:%s:%d:%d", caller, entry.Operation.ID, span.StartLine, span.StartCol),
 						CallerSymbol: caller, OperationID: entry.Operation.ID, ClientBinding: entry.Binding, Span: span,
-						Evidence: []facts.EvidenceFact{{Kind: "grpc_call_expression", Raw: selector.Sel.Name, Span: span, Confidence: facts.ConfidenceHigh}, entry.Evidence},
+						Evidence: []facts.EvidenceFact{{Kind: "grpc_call_expression", Raw: selector.Sel.Name, Span: span}, entry.Evidence},
 					})
 					return true
 				})

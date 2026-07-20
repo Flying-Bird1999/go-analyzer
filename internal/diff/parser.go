@@ -55,7 +55,7 @@ func ParseUnified(input []byte) ([]FileChange, error) {
 
 	// flushDeletion 结束当前正在累积的删除块。
 	// addAnchor 为 true 时（遇到 context/added 行或 hunk 结束）追加一个
-	// RangeKindDeletionAnchor 行范围，让 mapper 据此生成 medium confidence root；
+	// RangeKindDeletionAnchor 行范围，让 mapper 据此生成变更根；
 	// 为 false 时（遇到 added 行）表示删除已被新增内容替换，仅保存删除块本身。
 	flushDeletion := func(addAnchor bool) {
 		if current == nil || !deletionPending {
