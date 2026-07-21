@@ -404,11 +404,7 @@ func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *fa
 			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcServerCatalogFailed, Severity: diagnostics.SeverityWarning, Message: catalogErr.Error()})
 			return nil
 		}
-		providers, issues, extractErr := grpcextract.ExtractServerProviders(p, idx, catalog)
-		if extractErr != nil {
-			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcServerCatalogFailed, Severity: diagnostics.SeverityWarning, Message: extractErr.Error()})
-			return nil
-		}
+		providers, issues := grpcextract.ExtractServerProviders(p, idx, catalog)
 		// facts 命令在 includeServiceEntry 模式下同时运行 gRPC client catalog（诊断模式
 		// gRPC 抽取，见上方 grpcMode != grpcModeOff 分支）与 server catalog：若同一个
 		// generated package 既被本项目作为 client 调用、又被注册为 server（服务网格中
@@ -418,10 +414,7 @@ func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *fa
 		store.GrpcOperations = append(store.GrpcOperations, dedupeNewGrpcOperations(store.GrpcOperations, catalog.Operations)...)
 		store.GrpcProviders = append(store.GrpcProviders, providers...)
 		for _, issue := range issues {
-			diagnostics.AddFact(store, diagnostics.Diagnostic{
-				Code: diagnostics.CodeGrpcServerBindingUnresolved, Severity: diagnostics.SeverityWarning,
-				Message: fmt.Sprintf("cannot resolve concrete implementation for %s (%s)", issue.RegisterFunction, issue.ServerInterface), Span: issue.Span,
-			})
+			addServerBindingIssueDiagnostic(store, issue)
 		}
 		return nil
 	})

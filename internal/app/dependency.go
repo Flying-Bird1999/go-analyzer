@@ -76,10 +76,8 @@ func strictAnalysisError(err error) error {
 	if errors.As(err, &ambiguity) {
 		return &AnalysisError{Code: "grpc_call_ambiguous", Err: err}
 	}
-	var serverAmbiguity *grpcextract.ServerImplementationAmbiguityError
-	if errors.As(err, &serverAmbiguity) {
-		return &AnalysisError{Code: "grpc_server_binding_ambiguous", Err: err}
-	}
+	// gRPC server 多实现歧义不再是硬错误：ExtractServerProviders 把它降级为
+	// ServerBindingIssue（诊断），单个注册的实现选不出来不影响其余注册被分析。
 	// 若 err 本身已是 AnalysisError，透传以保留原始 Code；
 	// 否则使用通用码而非 grpc_catalog_failed，避免误报 gRPC catalog 故障。
 	var existing *AnalysisError

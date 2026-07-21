@@ -1,7 +1,6 @@
 package grpc
 
 import (
-	"fmt"
 	"go/ast"
 	"path/filepath"
 	"sort"
@@ -12,21 +11,26 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-// ServerImplementationAmbiguityError prevents binding one registration to an
-// arbitrary implementation when multiple concrete types remain possible.
-type ServerImplementationAmbiguityError struct {
-	RegisterFunction string
-	Span             facts.SourceSpan
-}
+// ServerBindingIssueKind distinguishes why a registration's concrete
+// implementation could not be bound, so callers can raise a precise diagnostic.
+type ServerBindingIssueKind string
 
-func (e *ServerImplementationAmbiguityError) Error() string {
-	return fmt.Sprintf("ambiguous gRPC server implementation for %s at %s:%d", e.RegisterFunction, e.Span.File, e.Span.StartLine)
-}
+const (
+	// ServerBindingUnresolved: no concrete implementation type could be proven.
+	ServerBindingUnresolved ServerBindingIssueKind = "unresolved"
+	// ServerBindingAmbiguous: more than one concrete implementation type remains
+	// possible; the analyzer refuses to guess between them.
+	ServerBindingAmbiguous ServerBindingIssueKind = "ambiguous"
+)
 
 // ServerBindingIssue records a known registration whose concrete
-// implementation cannot be proven. The registration itself still produces
-// provider facts so registration diffs remain analyzable.
+// implementation cannot be proven (unresolved) or is not provably unique
+// (ambiguous). Either way the registration itself still produces provider
+// facts — without a resolved ImplementationType/HandlerSymbol — so the
+// contract stays analyzable and unrelated registrations in the same project
+// are never affected by one problematic registration.
 type ServerBindingIssue struct {
+	Kind             ServerBindingIssueKind
 	RegisterFunction string
 	ServerInterface  string
 	Span             facts.SourceSpan
@@ -64,11 +68,15 @@ func ServerRegistrationImportPaths(p *project.Project) []string {
 }
 
 // ExtractServerProviders binds generated RegisterXxxServer calls to concrete
-// project methods. It never guesses between multiple implementation types.
-func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *ServerCatalog) ([]facts.GrpcProviderFact, []ServerBindingIssue, error) {
+// project methods. It never guesses between multiple implementation types:
+// a registration whose implementation is unresolved or ambiguous still
+// produces provider facts for its methods (without a resolved
+// ImplementationType/HandlerSymbol) plus a ServerBindingIssue explaining why,
+// so one problematic registration never affects any other registration in
+// the same project.
+func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *ServerCatalog) ([]facts.GrpcProviderFact, []ServerBindingIssue) {
 	var providers []facts.GrpcProviderFact
 	var issues []ServerBindingIssue
-	var ambiguity *ServerImplementationAmbiguityError
 	concreteReturns := concreteCallableReturnTypes(p, idx)
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
@@ -99,15 +107,14 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 					span := serverCallSpan(p.Root, file, call)
 					candidates := implementationTypes(file, fn, idx, concreteReturns, call.Args[1])
 					candidates = matchingImplementationTypes(idx, candidates, service)
-					if len(candidates) > 1 {
-						ambiguity = &ServerImplementationAmbiguityError{RegisterFunction: service.RegisterFunction, Span: span}
-						return false
-					}
 					var implementation astindex.ValueType
-					if len(candidates) == 1 {
+					switch len(candidates) {
+					case 1:
 						implementation = candidates[0]
-					} else {
-						issues = append(issues, ServerBindingIssue{RegisterFunction: service.RegisterFunction, ServerInterface: service.ServerInterface, Span: span})
+					case 0:
+						issues = append(issues, ServerBindingIssue{Kind: ServerBindingUnresolved, RegisterFunction: service.RegisterFunction, ServerInterface: service.ServerInterface, Span: span})
+					default:
+						issues = append(issues, ServerBindingIssue{Kind: ServerBindingAmbiguous, RegisterFunction: service.RegisterFunction, ServerInterface: service.ServerInterface, Span: span})
 					}
 					for _, method := range service.Methods {
 						provider := facts.GrpcProviderFact{
@@ -137,9 +144,6 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 					}
 					return true
 				})
-				if ambiguity != nil {
-					return nil, nil, ambiguity
-				}
 			}
 		}
 	}
@@ -150,7 +154,7 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 		}
 		return issues[i].Span.StartLine < issues[j].Span.StartLine
 	})
-	return providers, issues, nil
+	return providers, issues
 }
 
 func implementationTypes(file *project.File, fn *ast.FuncDecl, idx *astindex.Index, concreteReturns map[facts.SymbolID][]astindex.ValueType, expr ast.Expr) []astindex.ValueType {

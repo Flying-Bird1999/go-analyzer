@@ -173,17 +173,11 @@ func buildGrpcServiceFacts(projectPath string, buildContext project.BuildContext
 		if catalogErr != nil {
 			return catalogErr
 		}
-		providers, issues, extractErr := grpcextract.ExtractServerProviders(built.project, built.index, catalog)
-		if extractErr != nil {
-			return extractErr
-		}
+		providers, issues := grpcextract.ExtractServerProviders(built.project, built.index, catalog)
 		built.store.GrpcOperations = append(built.store.GrpcOperations, catalog.Operations...)
 		built.store.GrpcProviders = append(built.store.GrpcProviders, providers...)
 		for _, issue := range issues {
-			diagnostics.AddFact(built.store, diagnostics.Diagnostic{
-				Code: diagnostics.CodeGrpcServerBindingUnresolved, Severity: diagnostics.SeverityWarning,
-				Message: fmt.Sprintf("cannot resolve concrete implementation for %s (%s)", issue.RegisterFunction, issue.ServerInterface), Span: issue.Span,
-			})
+			addServerBindingIssueDiagnostic(built.store, issue)
 		}
 		return nil
 	}); err != nil {
@@ -216,4 +210,23 @@ func discoverGrpcServerDependencies(p *project.Project, recorder *pipelineRecord
 		return dependencyErr
 	})
 	return dependencies, err
+}
+
+// addServerBindingIssueDiagnostic records why a gRPC server registration's
+// concrete implementation could not be bound. Unresolved (no candidate) and
+// ambiguous (multiple candidates) get distinct diagnostic codes so operators
+// can tell "we found nothing" apart from "we found too many and refused to
+// guess" — either way the registration's provider facts were still emitted
+// by ExtractServerProviders, just without a resolved implementation.
+func addServerBindingIssueDiagnostic(store *facts.Store, issue grpcextract.ServerBindingIssue) {
+	code := diagnostics.CodeGrpcServerBindingUnresolved
+	template := "cannot resolve concrete implementation for %s (%s)"
+	if issue.Kind == grpcextract.ServerBindingAmbiguous {
+		code = diagnostics.CodeGrpcServerBindingAmbiguous
+		template = "multiple concrete implementation types remain possible for %s (%s); skipped rather than guessing"
+	}
+	diagnostics.AddFact(store, diagnostics.Diagnostic{
+		Code: code, Severity: diagnostics.SeverityWarning,
+		Message: fmt.Sprintf(template, issue.RegisterFunction, issue.ServerInterface), Span: issue.Span,
+	})
 }
