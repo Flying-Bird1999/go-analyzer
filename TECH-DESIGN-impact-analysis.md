@@ -1,63 +1,81 @@
 # Go BFF 影响范围分析技术方案
 
-## 1. 方案目标
+## 1. 这套分析要解决什么
 
-`go-analyzer` 用静态代码证据回答一个核心问题：
+`go-analyzer` 用静态代码分析回答：
 
-> 一份 BFF 代码变更，最终会影响哪些 HTTP Endpoint 和出站 IM Event？
+> 一次 BFF 代码变更，需要回归哪些 HTTP 接口和出站 IM 事件？
 
-它还支持围绕 BFF 的 gRPC 双向查询：
+它还支持 BFF 与上游 gRPC 接口的双向查询：
 
-- 给定一个 BFF Endpoint，查询它可能调用的上游 gRPC Operation。
-- 给定一个上游 gRPC Operation，查询当前 BFF 中可能受影响的 Endpoint。
+- 给定一个 BFF 接口，查询代码中能够到达的上游 gRPC 接口。
+- 给定一个上游 gRPC 接口，反查当前 BFF 中能够到达该调用的 HTTP 接口。
 
-分析结果不仅要给出 Endpoint 列表，还必须解释：
+这里的“能够到达”表示源码中存在一条完整调用路径。例如某个 gRPC 调用位于 `if` 分支中，静态分析能证明接口代码可以走到该调用，但不能保证每次请求都会执行这个分支。因此，对外关系使用 `may_call` 表达“代码路径可达”，它不是准确率或置信度不确定。
 
-- 变更来自哪个文件、模块或 gRPC Operation。
-- Diff 命中了哪个代码声明或注册语句。
-- 影响经过了哪些函数、类型、路由和中间件。
-- Endpoint 的 HTTP Method 和 Path 来自哪条静态证据。
+### 1.1 使用者需要提供什么
 
-本方案面向单个 Go 项目。跨服务、跨 BFF 和前端页面的串联由外部编排层完成。
+| 输入 | 通俗说明 | 是否必需 |
+| --- | --- | --- |
+| BFF 项目目录 | 当前分支、已经包含本次代码改动的 Go 项目；CLI 中使用绝对路径 | 是 |
+| Git Diff 文件 | 例如当前分支相对 master 的 Unified Diff，用于定位本次改了哪些行 | Diff 分析时必需 |
+| 上游 gRPC 接口 | 完整接口名，例如 `/shopline.order.v1.OrderService/GetOrder` | gRPC 反查时必需 |
+| 代码筛选条件 | GOOS、GOARCH、Build Tags 和 cgo，用来决定哪些条件编译文件参与分析；一般使用默认值即可 | 否 |
+| 影响过滤配置 | 用于关闭或忽略指定的 go.mod 依赖变化，减少无效影响噪音 | 否 |
 
-### 1.1 输入与输出
-
-| 输入                  | 说明                                                         |
-| --------------------- | ------------------------------------------------------------ |
-| 变更后的 BFF 源码快照 | Diff 必须已经应用到该源码快照                                |
-| Unified Diff          | 描述文件、行范围和删除内容                                   |
-| 可选的 gRPC Operation | 使用`/package.Service/Method` 形式的 canonical full method |
-| Go Build Context      | GOOS、GOARCH、build tags、cgo                                |
-| 可选影响配置          | 仅控制 module change 的分析与过滤                            |
-
-| 输出          | 说明                                           |
-| ------------- | ---------------------------------------------- |
-| HTTP Endpoint | 规范化后的 Method、Path 以及路由辅助证据       |
-| IM Event      | 能静态确定的出站事件名                         |
-| 完整传播树    | 从每个变更根到业务入口的可审计路径             |
-| 来源反查摘要  | 从 Endpoint 反查影响它的文件、模块或 gRPC 来源 |
-
-### 1.2 范围边界
-
-本方案只输出能够被静态证据支持的关系。以下情况不推测运行时结果：
-
-- 反射和运行时动态路由表。
-- 无法唯一解析的依赖注入或接口分发。
-- 外部 SDK 内部隐藏的调用。
-- 完全动态的 Path、Event 或 Handler。
-- 仅凭名称相似度推断的 gRPC Operation。
-
-后端服务端 gRPC Provider、Dubbo、XXL-Job 等入站契约分析不在本文展开。它们可以共用项目加载、AST 索引、事实模型和图查询底座，但应使用独立技术方案描述。
-
-## 2. 先看一条完整分析链路
-
-本节使用一个最小 BFF 示例解释“代码变更为什么会影响某个 Endpoint”。后续章节再展开每个阶段的实现。
-
-### 2.1 示例代码
-
-请求模型：
+“代码筛选条件”的作用可以用一个例子理解：
 
 ```go
+//go:build linux
+
+package transport
+```
+
+这类文件只在目标系统为 Linux 时参与编译。指定 `--goos linux` 后，分析器才会把它纳入本次源码分析。没有跨平台或特殊 Build Tag 的项目通常不需要显式传入这些参数。
+
+### 1.2 会得到什么
+
+一次分析输出一个 JSON 文件。顶层结构与 `ts-analyzer` 的组织方式基本对齐：
+
+1. `summary` 给出最终受影响接口。
+2. `fileSources`、`moduleSources`、`grpcSources` 保存不同变更来源的详细证据。
+3. `endpointSourcesSummary` 从接口反查“它为什么受影响”。
+
+Go 与 TypeScript 的语言事实不同，因此内部树节点字段不会完全相同，但消费结构和阅读方式保持一致。
+
+下面是结构示意。注释只用于解释，不属于实际 JSON：
+
+```jsonc
+{
+  "summary": {
+    // 全局去重后的受影响 HTTP 接口
+    "impactedEndpoints": [],
+    // 全局去重后的出站 IM 事件
+    "impactedIMEvents": []
+  },
+  // 按普通代码 Diff 文件保存原始 Diff、变更点和完整传播树
+  "fileSources": [],
+  // 仅在 go.mod 产生有效依赖变化时出现
+  "moduleSources": [],
+  // 以上游 gRPC 接口作为输入时，保存 BFF 调用点和接口证据
+  "grpcSources": [],
+  // 按 HTTP 接口反查文件、依赖模块或 gRPC 来源
+  "endpointSourcesSummary": []
+}
+```
+
+`endpointSourcesSummary` 固定放在最后，方便使用者先看结论和完整来源，最后按接口进行反查。
+
+## 2. 用一个案例看懂完整流程
+
+本节只关注一件事：修改一个请求类型后，分析器为什么会报告 `POST /orders` 受影响。
+
+### 2.1 示例项目
+
+下面一个代码块表示三个不同文件，用文件注释分隔：
+
+```go
+// ---------- model/model.go ----------
 package model
 
 type Address struct {
@@ -67,11 +85,8 @@ type Address struct {
 type CreateOrderRequest struct {
 	Address Address `json:"address"`
 }
-```
 
-Controller：
-
-```go
+// ---------- controller/controller.go ----------
 package controller
 
 import "example.com/type-impact/model"
@@ -82,13 +97,10 @@ var API = &OrderAPI{}
 
 // @Post /orders
 func (api *OrderAPI) Create(req model.CreateOrderRequest) {
-	// ...
+	// 创建订单
 }
-```
 
-路由注册：
-
-```go
+// ---------- router/router.go ----------
 package router
 
 import "example.com/type-impact/controller"
@@ -98,7 +110,7 @@ func Init(group *Group) {
 }
 ```
 
-现在 Diff 修改了 `Address.City` 的 JSON tag：
+本次 Diff 只修改了 `Address.City` 的 JSON Tag：
 
 ```diff
  type Address struct {
@@ -107,67 +119,116 @@ func Init(group *Group) {
  }
 ```
 
-虽然 Diff 没有直接修改 Controller 或路由，`POST /orders` 仍然应被判定为受影响，因为它的请求类型依赖了 `Address`。
+虽然 Controller 和路由没有直接改动，但 `OrderAPI.Create` 的请求参数最终使用了 `Address`，因此 `POST /orders` 需要回归。
 
-### 2.2 分析器如何得到结论
+### 2.2 六步得到结论
 
-| 阶段         | 输入                           | 产生的数据                                  | 回答的问题                             |
-| ------------ | ------------------------------ | ------------------------------------------- | -------------------------------------- |
-| 1. 加载项目  | Go 源码、go.mod、Build Context | AST 文件、Package、声明索引                 | 项目中有哪些代码声明？                 |
-| 2. 提取事实  | AST 与声明索引                 | Symbol、Reference、Annotation、Route 等事实 | 声明之间如何关联？业务入口注册在哪里？ |
-| 3. 关联事实  | Route、Handler、Annotation     | Link 事实和已解析 Handler                   | 这条路由最终绑定哪个 Controller？      |
-| 4. 映射 Diff | Diff 行范围与事实位置          | `ChangeFact(Address)`                     | 本次变更命中了哪个语义节点？           |
-| 5. 影响传播  | ChangeFact 与只读查询图        | 从`Address` 到 Endpoint 的传播树          | 谁依赖这个变更？能否到达业务入口？     |
-| 6. 输出投影  | 传播树与入口摘要               | 稳定 JSON                                   | 哪些 Endpoint 受影响，为什么？         |
+```mermaid
+flowchart LR
+    A["1. 读取当前 BFF 源码"]
+    B["2. 记录代码声明和依赖关系"]
+    C["3. 关联控制器、路由和接口注释"]
+    D["4. 将 Diff 行定位到 Address 类型"]
+    E["5. 从 Address 找到所有依赖它的代码"]
+    F["6. 输出 POST /orders 及完整原因"]
 
-事实提取后，分析器掌握以下关键关系：
-
-```text
-CreateOrderRequest --type reference--> Address
-OrderAPI.Create    --type reference--> CreateOrderRequest
-router.Init        --value reference-> OrderAPI.Create
-POST /orders       --registered handler--> OrderAPI.Create
-OrderAPI.Create    --annotation------> POST /orders
+    A --> B --> C --> D --> E --> F
 ```
 
-`ReferenceFact` 在源码中的方向是“引用者依赖被引用者”。影响传播需要反向查询，因此运行时图的方向为：
+| 步骤 | 在示例中发生了什么 | 中间结果 |
+| --- | --- | --- |
+| 读取源码 | 解析三个 Go 文件 | 找到 `Address`、`CreateOrderRequest`、`OrderAPI.Create` 和 `Init` |
+| 记录关系 | 识别类型使用和函数值使用 | 知道谁依赖谁 |
+| 关联路由 | 将 `controller.API.Create` 解析成稳定的方法声明 | 知道 `POST /orders` 注册了哪个 Controller |
+| 定位 Diff | 修改行落在 `Address` 声明内部 | 产生“Address 发生变化”的变更起点 |
+| 传播影响 | 从被修改类型寻找引用它的类型、方法和路由 | 得到一条到达 HTTP 接口的路径 |
+| 输出结果 | 汇总接口并保留证据 | 得到摘要、完整传播树和接口来源摘要 |
 
-```text
-Address
-  -> CreateOrderRequest
-  -> OrderAPI.Create
-  -> route POST /orders
-  -> annotation POST /orders
-  -> endpoint POST /orders
+为什么必须先记录和关联代码，再定位 Diff？
+
+Diff 只提供文件名和行号，本身不知道这一行属于类型、方法还是路由。分析器先理解完整源码，才能将 `model/model.go:4` 准确定位为 `Address`，再沿代码关系传播。
+
+### 2.3 “依赖方向”和“影响方向”
+
+从写代码的角度，依赖关系是：
+
+```mermaid
+flowchart LR
+    CREATE["OrderAPI.Create"]
+    REQUEST["CreateOrderRequest"]
+    ADDRESS["Address"]
+
+    CREATE -->|"参数使用"| REQUEST
+    REQUEST -->|"字段使用"| ADDRESS
 ```
 
-### 2.3 最终结果
+这表示 `Create` 依赖 `CreateOrderRequest`，`CreateOrderRequest` 又依赖 `Address`。
 
-轻量摘要直接回答“影响了什么”：
+本次从 `Address` 的变化出发，需要反过来找“谁使用了它”，所以影响传播方向与代码依赖方向相反：
+
+```mermaid
+flowchart LR
+    ADDRESS["Address 发生变化"]
+    REQUEST["CreateOrderRequest 受影响"]
+    CREATE["OrderAPI.Create 受影响"]
+    ROUTE["路由注册 POST /orders"]
+    ANNOTATION["接口注释 @Post /orders"]
+    ENDPOINT["最终接口 POST /orders"]
+
+    ADDRESS -->|"被字段引用"| REQUEST
+    REQUEST -->|"被参数引用"| CREATE
+    CREATE -->|"被注册为处理函数"| ROUTE
+    CREATE -->|"声明接口身份"| ANNOTATION
+    ROUTE --> ENDPOINT
+    ANNOTATION --> ENDPOINT
+```
+
+本文后续所说的“反向引用查询”，就是从被修改的声明出发，反查所有直接或间接使用它的代码。
+
+### 2.4 输出为什么同时有 `method/path` 和 `routes`
+
+示例的接口摘要为：
 
 ```json
 {
-  "summary": {
-    "impactedEndpointCount": 1,
-    "impactedEndpoints": [
-      {
-        "method": "POST",
-        "path": "/orders",
-        "routes": [
-          {
-            "method": "POST",
-            "path": "/orders"
-          }
-        ]
-      }
-    ],
-    "impactedIMCount": 0,
-    "impactedIMEvents": []
-  }
+  "method": "POST",
+  "path": "/orders",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/orders"
+    }
+  ]
 }
 ```
 
-来源反查摘要解释“为什么受影响”：
+这两组字段承担不同职责：
+
+| 字段 | 来源 | 用途 |
+| --- | --- | --- |
+| `method`、`path` | Controller 上的接口注释；没有注释时才使用静态路由结果 | 作为接口的正式身份 |
+| `routes` | `group.POST(...)` 等真实路由注册代码 | 作为接口实际如何注册的辅助证据 |
+
+采用这个策略是因为 BFF 的路由经常经过 Group Prefix、Wrapper 或跨函数传递，静态分析得到的注册路径可能不完整；而 Controller 注释通常是下游系统使用的接口身份。两者同时输出还可以发现注释与路由不一致的问题。
+
+例如：
+
+```json
+{
+  "method": "POST",
+  "path": "/admin/api/bff-web/orders",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/bff-web/orders"
+    }
+  ]
+}
+```
+
+这里正式接口身份来自注释，`routes` 则明确展示静态解析到的注册路径，没有用其中一个悄悄覆盖另一个。
+
+### 2.5 如何看接口来源摘要
 
 ```json
 {
@@ -199,313 +260,474 @@ Address
 }
 ```
 
-完整传播树保留在 `fileSources[].symbols` 中，用于排查每一条引用边和路由证据。
+字段含义：
 
-## 3. 总体处理流程
+- `method/path`：正在解释的 HTTP 接口。
+- `sources`：影响该接口的所有来源，同一个接口可以同时受多个文件、Module 或 gRPC 接口影响。
+- `sourceType`：来源类型，可能是 `file`、`module` 或 `grpc`。
+- `sourceFile`：本例的变化来自 `model/model.go`。
+- `rootSymbols`：Diff 首先命中的代码声明，本例是 `Address`。
+- `chains`：从变化声明走到接口的简化路径，适合快速人工确认。
 
-### 3.1 主流程
+完整递归证据保留在 `fileSources[].symbols`；这里的 `chains` 是同一结论的精简阅读视图，不会重新计算影响范围。
+
+## 3. 一次分析在系统中怎样运行
+
+### 3.1 总体流程
 
 ```mermaid
 flowchart LR
-    SOURCE["BFF 源码快照"]
-    DIFF["Unified Diff"]
-    GRPC["可选 gRPC Operation"]
+    SOURCE["当前分支的 BFF 源码"]
+    DIFF["本次 Git Diff"]
+    RPC["可选：完整 gRPC 接口名"]
 
-    LOAD["加载源码并建立声明索引"]
-    EXTRACT["提取代码与领域事实"]
-    LINK["关联 Handler、Route 与 Annotation"]
-    CHANGE["将 Diff 映射为变更节点"]
-    PROPAGATE["沿依赖关系反向传播"]
-    QUERY["查询 gRPC Consumer"]
-    ENDPOINT["汇总 HTTP Endpoint 与 IM Event"]
-    OUTPUT["生成可追溯 JSON"]
+    UNDERSTAND["理解源码<br/>记录声明、引用、路由和注释"]
+    STORE["代码事实仓库"]
+    MAP["把 Diff 行映射成代码变更点"]
+    WALK["从变更点查找受影响代码"]
+    RPCQUERY["查找 gRPC 调用点及其 HTTP 入口"]
+    RESULT["汇总 HTTP 接口、IM 事件和原因"]
+    JSON["输出一个 JSON 文件"]
 
-    SOURCE --> LOAD --> EXTRACT --> LINK
-    DIFF --> CHANGE
-    LINK --> CHANGE
-    CHANGE --> PROPAGATE --> ENDPOINT
-    GRPC --> QUERY
-    LINK --> QUERY --> ENDPOINT
-    ENDPOINT --> OUTPUT
+    SOURCE --> UNDERSTAND --> STORE
+    DIFF --> MAP
+    STORE --> MAP --> WALK --> RESULT
+    RPC --> RPCQUERY
+    STORE --> RPCQUERY --> RESULT
+    RESULT --> JSON
 ```
 
-这张图只表达数据如何流动。代码目录与模块映射放在第 10 节，避免在读者理解主流程前引入内部包名。
+图中的两个分支分别回答：
 
-### 3.2 运行顺序
+- **代码 Diff 分支**：当前 BFF 的代码变化会影响哪些接口？
+- **gRPC 输入分支**：当前 BFF 的哪些接口在代码上能够到达这个上游 gRPC 调用？
 
-一次 `impact` 分析应按以下顺序执行：
+两个分支共用一次源码理解结果，不会重复解析项目。
 
-1. 校验命令参数和路径。
-2. 读取、解析并校验 Unified Diff。
-3. 加载变更后的项目源码并建立 AST 声明索引。
-4. 提取 Symbol、Reference、Annotation、Route、Middleware、IM 等事实。
-5. 关联 Route、Handler 和 Annotation。
-6. 按需建立 generated gRPC client catalog 并提取 BFF 调用点。
-7. 将 Diff 映射为 `ChangeFact`，恢复可证明的删除路由证据。
-8. 将 go.mod 变化映射到本仓真实使用点。
-9. 从每个 ChangeFact 执行影响传播。
-10. 合并可选的 gRPC Operation 反向查询结果。
-11. 构建稳定 JSON 和来源摘要。
+### 3.2 各阶段的输入和产物
 
-Diff 分支和 gRPC 输入分支共享同一份项目事实，不重复加载项目。
+| 阶段 | 做什么 | 产生什么 |
+| --- | --- | --- |
+| 源码理解 | 解析 Go 文件，识别声明、类型使用、函数调用、路由、注释、IM 和 gRPC 调用 | 代码事实仓库 |
+| Diff 定位 | 用文件和行号找到最具体的代码声明或注册语句 | 一个或多个变更起点 |
+| 影响传播 | 反查谁使用变更起点，并在路由注册处结束 | 带完整原因的 HTTP 接口和 IM 事件 |
+| gRPC 反查 | 从完整 gRPC 接口名找到 BFF 调用点，再反查 HTTP 入口 | gRPC 来源及接口调用链 |
+| 输出整理 | 对结论去重、排序，并按来源生成完整和精简视图 | 稳定 JSON |
 
-### 3.3 两类影响源
+## 4. 代码事实仓库
 
-```mermaid
-flowchart TB
-    subgraph FILE["代码或 go.mod 变更"]
-        F1["Diff 行范围"]
-        F2["ChangeFact"]
-        F3["反向引用与路由传播"]
-        F1 --> F2 --> F3
-    end
+### 4.1 它是什么
 
-    subgraph RPC["上游 gRPC 变更"]
-        G1["Canonical Operation"]
-        G2["GrpcCallFact"]
-        G3["Caller 与路由反查"]
-        G1 --> G2 --> G3
-    end
+分析器需要先把不同 Go 文件中的信息连接起来，才能回答“谁依赖谁”。`facts.Store` 就是一次分析过程中的临时数据容器：
 
-    F3 --> RESULT["HTTP Endpoint / IM Event"]
-    G3 --> RESULT
-```
+- 它不是数据库。
+- 它不是事件消息总线。
+- 它不执行影响传播。
+- 它只按类型保存从源码和本次 Diff 中得到的静态数据。
 
-- Diff 来源回答“当前 BFF 的代码变化影响什么”。
-- gRPC 来源回答“当前 BFF 中哪些 Endpoint 可能消费这个上游 Operation”。
-- 两类来源可以同时输入，并在同一份输出中保留各自证据。
-
-## 4. 核心数据模型
-
-### 4.1 `facts.Store` 是什么
-
-`facts.Store` 是一次分析过程中的**类型化事实仓库**，不是事件总线，也不负责执行传播。
-
-它按事实类型保存切片，核心形态如下：
+核心结构如下。注释说明了每个字段是什么以及由哪里产生：
 
 ```go
 type Store struct {
-	Project     ProjectFact
-	Symbols     []SymbolFact
-	References  []ReferenceFact
-	Annotations []AnnotationFact
-	RouteGroups []RouteGroupFact
-	Routes      []RouteRegistrationFact
-	Middleware  []MiddlewareBindingFact
-	Links       []LinkFact
-	IMEvents    []IMEventFact
-	Modules     []ModuleDependencyFact
+	Project ProjectFact // 项目根、module path 和本次代码筛选条件；由项目加载阶段写入
+	Modules []ModuleDependencyFact // 当前 go.mod 的 require/replace 依赖
 
-	GrpcOperations []GrpcOperationFact
-	GrpcCalls      []GrpcCallFact
+	Symbols []SymbolFact // 函数、方法、类型、包级变量和常量
+	References []ReferenceFact // Symbol 之间的 call/value/type 依赖边
 
-	RouteGroupFlows []RouteGroupFlowFact
-	Changes         []ChangeFact
-	ModuleChanges   []ModuleChangeFact
-	ModuleUsages    []ModuleUsageFact
-	Diagnostics     []DiagnosticFact
+	Annotations []AnnotationFact // Controller 注释中的 HTTP Method 和 Path
+	RouteGroups []RouteGroupFact // 路由 Group、Prefix 和父子关系
+	RouteGroupFlows []RouteGroupFlowFact // Group 作为参数或返回值时的跨函数流转
+	Routes []RouteRegistrationFact // GET/POST 等路由注册及其处理函数
+	Middleware []MiddlewareBindingFact // Group 上挂载的中间件和语句顺序
+	Links []LinkFact // Route -> Handler、Handler -> Annotation 的关联结果
+
+	IMEvents []IMEventFact // 出站 IM 事件及其 Event/Payload/条件依赖
+	GrpcOperations []GrpcOperationFact // Generated Client 中声明的完整 gRPC 接口
+	GrpcCalls []GrpcCallFact // BFF 代码中对 Generated Client 的调用点
+
+	Changes []ChangeFact // 本次 Diff 映射出的代码变更起点
+	ModuleChanges []ModuleChangeFact // 本次 go.mod Diff 中的依赖版本变化
+	ModuleUsages []ModuleUsageFact // 发生变化的 Module 在本项目中的真实引用位置
+	Diagnostics []DiagnosticFact // 无法解析、存在歧义或降级处理的原因
 }
 ```
 
-后端协议事实（`GrpcProviderFact`、`DubboProviderFact`、`JobRegistrationFact`）由后端服务分析链路写入同一个 Store，不在本文展开。
+### 4.2 从示例看 Store 里有什么
 
-事实分成三类：
+下面只展示与 `Address` 案例有关的数据，源码位置等辅助字段暂时省略；字段名和 Symbol ID 形式与对应 Fact 定义保持一致。`changes` 仅在内存中参与影响分析，不会出现在 `facts` 命令的公开 JSON 中：
 
-| 类别         | 示例                                                   | 生命周期                                |
-| ------------ | ------------------------------------------------------ | --------------------------------------- |
-| 项目代码事实 | Symbol、Reference、Route、Annotation、GrpcCall、Module | 从源码抽取，可输出到 facts JSON         |
-| 分析期事实   | Change、ModuleChange、ModuleUsage、RouteGroupFlow      | 单次影响分析使用，不进入公开 facts JSON |
-| 诊断事实     | 解析失败、歧义、降级原因                               | 用于排障，不混入正式影响摘要            |
+```jsonc
+{
+  "symbols": [
+    {
+      "id": "type:example.com/type-impact/model::Address",
+      "name": "Address",
+      "kind": "type"
+    },
+    {
+      "id": "type:example.com/type-impact/model::CreateOrderRequest",
+      "name": "CreateOrderRequest",
+      "kind": "type"
+    },
+    {
+      "id": "method:example.com/type-impact/controller:OrderAPI:Create",
+      "name": "Create",
+      "kind": "method"
+    }
+  ],
+  "references": [
+    {
+      // CreateOrderRequest 的字段使用 Address
+      "kind": "type",
+      "from_symbol": "type:example.com/type-impact/model::CreateOrderRequest",
+      "to_symbol": "type:example.com/type-impact/model::Address"
+    },
+    {
+      // Create 方法的参数使用 CreateOrderRequest
+      "kind": "type",
+      "from_symbol": "method:example.com/type-impact/controller:OrderAPI:Create",
+      "to_symbol": "type:example.com/type-impact/model::CreateOrderRequest"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "annotation:method:example.com/type-impact/controller:OrderAPI:Create:POST:/orders:0",
+      "handler_symbol": "method:example.com/type-impact/controller:OrderAPI:Create",
+      "method": "POST",
+      "path": "/orders"
+    }
+  ],
+  "routes": [
+    {
+      "id": "route:func:example.com/type-impact/router::Init:POST:/orders:1",
+      "method": "POST",
+      "local_path": "/orders",
+      "resolved_path": "/orders",
+      "handler_raw": "controller.API.Create",
+      "handler_symbol": "method:example.com/type-impact/controller:OrderAPI:Create"
+    }
+  ],
+  "links": [
+    {
+      "kind": "route_to_handler",
+      "from_id": "route:func:example.com/type-impact/router::Init:POST:/orders:1",
+      "to_id": "method:example.com/type-impact/controller:OrderAPI:Create"
+    },
+    {
+      "kind": "handler_to_annotation",
+      "from_id": "method:example.com/type-impact/controller:OrderAPI:Create",
+      "to_id": "annotation:method:example.com/type-impact/controller:OrderAPI:Create:POST:/orders:0"
+    }
+  ],
+  "changes": [
+    {
+      // 这一项不是源码固有数据，而是本次 Diff 定位后追加的外部输入
+      "kind": "symbol_changed",
+      "symbol_id": "type:example.com/type-impact/model::Address",
+      "file": "model/model.go",
+      "source": "git_diff"
+    }
+  ]
+}
+```
 
-### 4.2 事实如何写入和读取
+### 4.3 数据结构之间如何关联
+
+`ReferenceFact` 不复制 Symbol 内容，而是通过 `from` 和 `to` 中的稳定 Symbol ID 关联两条 `SymbolFact`：
 
 ```mermaid
 flowchart LR
-    INIT["初始化 Store"]
-    BASE["写入项目、模块和 Symbol"]
-    DOMAIN["各 Extractor 写入领域事实"]
-    LINK["Linker 补充关联事实"]
-    CHANGE["Diff Mapper 写入 ChangeFact"]
-    READONLY["Graph 与 Impact 只读消费"]
-    DOC["Output 只做文档投影"]
+    CREATE["SymbolFact<br/>OrderAPI.Create"]
+    REF1["ReferenceFact<br/>kind=type"]
+    REQUEST["SymbolFact<br/>CreateOrderRequest"]
+    REF2["ReferenceFact<br/>kind=type"]
+    ADDRESS["SymbolFact<br/>Address"]
 
-    INIT --> BASE --> DOMAIN --> LINK --> CHANGE --> READONLY --> DOC
+    CREATE -->|"from"| REF1
+    REF1 -->|"to"| REQUEST
+    REQUEST -->|"from"| REF2
+    REF2 -->|"to"| ADDRESS
 ```
 
-约束如下：
+同样：
 
-1. `app` 是唯一了解完整执行顺序的编排层。
-2. Extractor 可以读取 Project 和 AST Index，只能写入自己负责的事实。
-3. Extractor 之间不得共享私有 AST 缓存，也不得直接调用彼此。
-4. Linker 只做已有事实之间的身份对齐。
-5. ChangeFact 必须在领域事实和 Link 构建完成后写入。
-6. Graph、Dependency 和 Impact 阶段把 Store 视为只读快照。
-7. Output 不得重新扫描 AST 或补推业务关系。
+- `RouteRegistrationFact.handlerSymbol` 指向 Handler 的 Symbol ID。
+- `AnnotationFact.handlerSymbol` 指向同一个 Handler。
+- `LinkFact` 保存 Route、Handler 和 Annotation 的明确关联。
+- `ChangeFact.symbolID` 指向本次变化的 Symbol。
 
-### 4.3 代表性事实
+因此，影响传播不需要重新解析源码，只需要沿这些稳定 ID 查询关系。
 
-#### SymbolFact
+### 4.4 哪些数据来自源码，哪些来自外部输入
 
-表示一个稳定的代码声明：
+```mermaid
+flowchart TB
+    SOURCE["Go 源码和 go.mod"]
+    CODEFACTS["源码事实<br/>Symbol / Reference / Route / Annotation / Module"]
+    DIFF["Git Diff"]
+    CHANGEFACTS["本次分析事实<br/>Change / ModuleChange / ModuleUsage"]
+    STORE["同一个 Store"]
 
-```json
-{
-  "id": "method:example.com/type-impact/controller:OrderAPI:Create",
-  "kind": "method",
-  "package_path": "example.com/type-impact/controller",
-  "receiver": "OrderAPI",
-  "name": "Create",
-  "span": {
-    "file": "controller/controller.go",
-    "start_line": 10,
-    "end_line": 13
-  }
-}
+    SOURCE --> CODEFACTS --> STORE
+    DIFF --> CHANGEFACTS --> STORE
 ```
 
-#### ReferenceFact
+- 源码事实描述“当前项目是什么样子”，可以通过 `facts` 命令输出用于排查。
+- 本次分析事实描述“这次改了什么”，只在当前影响分析中使用。
+- Diagnostic 单独记录无法确定的原因，不混入正式接口结论。
 
-表示 `FromSymbol` 依赖 `ToSymbol`：
+### 4.5 谁负责写入
 
-```json
-{
-  "kind": "type",
-  "from_symbol": "method:example.com/type-impact/controller:OrderAPI:Create",
-  "to_symbol": "type:example.com/type-impact/model::CreateOrderRequest",
-  "span": {
-    "file": "controller/controller.go",
-    "start_line": 11,
-    "end_line": 11
-  }
-}
+流水线编排器 `internal/app` 负责按顺序调用各阶段。这里的 `app` 不是业务应用，而是 `go-analyzer` 内部的命令编排模块。
+
+写入顺序为：
+
+```mermaid
+flowchart LR
+    A["项目加载<br/>写 Project、Module、Symbol"]
+    B["源码提取<br/>写 Reference、Route、Annotation、IM、gRPC"]
+    C["关系关联<br/>写 Link 并补全 Handler"]
+    D["Diff 定位<br/>写 Change、ModuleChange、ModuleUsage"]
+    E["只读分析<br/>构建查询图并传播"]
+    F["输出整理<br/>生成 JSON"]
+
+    A --> B --> C --> D --> E --> F
 ```
 
-引用类型包括：
+进入只读分析阶段后，查询图和输出层不得重新扫描 Go 语法树（AST）或补造业务关系。
 
-- `call`：函数或方法调用。
-- `value`：函数值、变量值、注册参数。
-- `type`：参数、返回值、字段、组合字面量和泛型参数中的类型引用。
+## 5. 源码如何变成事实
 
-#### RouteRegistrationFact
+本节接着第 4 节说明 Store 中每类源码事实如何产生，不再引入第二套“领域事实”概念。
 
-表示一条路由注册：
+### 5.1 加载实际会参与构建的 Go 文件
 
-```json
-{
-  "method": "POST",
-  "local_path": "/orders",
-  "resolved_path": "/orders",
-  "handler_raw": "controller.API.Create",
-  "handler_symbol": "method:example.com/type-impact/controller:OrderAPI:Create",
-  "route_func": "func:example.com/type-impact/router::Init",
-  "file": "router/router.go"
-}
-```
+项目加载阶段读取 go.mod、Go 文件和条件编译声明。
 
-#### ChangeFact
-
-表示 Diff 命中的传播根：
-
-```json
-{
-  "kind": "symbol_changed",
-  "symbol_id": "type:example.com/type-impact/model::Address",
-  "file": "model/model.go",
-  "ranges": [
-    {
-      "start_line": 4,
-      "end_line": 4
-    }
-  ],
-  "source": "git_diff"
-}
-```
-
-`ChangeFact` 不是源码固有事实。它在 Diff 映射完成后写入 Store，并作为影响传播的入口。
-
-## 5. 项目加载与 Diff 处理
-
-### 5.1 项目加载
-
-项目加载阶段应：
-
-1. 从项目根的 go.mod 获取 module path。
-2. 识别嵌套 module，并按距离源码文件最近的 go.mod 恢复 import path。
-3. 根据 GOOS、GOARCH、build tags 和 cgo 应用 Go build constraints。
-4. 排除 `_test.go`、`vendor`、`testdata`、`node_modules` 和 Go 工具链忽略目录。
-5. 为每个源码文件保存 AST、FileSet、Package、相对路径和 import alias。
-6. 为 function、method、type、package-level var/const 建立稳定 Symbol ID。
-
-声明索引负责回答：
-
-- 某个 Diff 行号位于哪个最小声明内。
-- 某个 selector 或 method value 指向哪个项目内 Symbol。
-- 某个变量、字段或 constructor 的静态类型能否唯一确定。
-
-只有候选唯一且证据明确时，类型和 Symbol 才能标记为 resolved。
-
-### 5.2 变更后快照约束
-
-项目路径必须指向 Diff 已应用后的源码快照。分析前应校验：
-
-1. Diff 非空并符合 Unified Diff 语法。
-2. Diff 路径不能逃逸项目根目录。
-3. 新增或修改后的上下文与磁盘源码一致。
-4. 被删除文件在变更后快照中不存在。
-5. Diff 命中的 Go 文件能够被 AST 解析。
-
-这项约束保证 Diff 行号、AST Span 和变更语义属于同一份源码。
-
-### 5.3 Diff 到 ChangeFact
-
-Diff 行范围按以下优先级映射：
+GOOS、GOARCH、Build Tags 和 cgo 的含义是：同一个仓库中并非所有文件都会同时参与构建。例如：
 
 ```text
-Annotation
-  -> Route Group
-  -> Route Registration
-  -> Middleware Binding
-  -> [后端协议层级：Job Registration -> Dubbo Method -> Dubbo Service]
-  -> 最小包含 Symbol
-  -> File Fallback
+transport_linux.go   只在 Linux 构建
+transport_darwin.go  只在 macOS 构建
+feature_new.go       只在指定 feature_new Build Tag 时构建
 ```
 
-后端协议层级仅在后端服务分析链路中生效（Middleware Binding 与 Symbol 之间的可扩展位），BFF 分析链路不涉及。
+分析器使用与本次构建一致的条件选择文件，避免把不会参与编译的代码错误地传播到接口。一般项目使用默认环境；只有 CI 目标环境或特殊 Build Tag 与本机不同时才需要显式指定。
 
-规则：
+随后为以下声明建立稳定 Symbol：
 
-- 优先选择更具体的领域事实，避免把一条 Route 变更退化成整个函数变更。
-- 同时命中多个 Symbol 时选择 Span 最小的声明。
-- 相邻行命中同一目标时合并为一个 ChangeFact。
-- File Fallback 只保留来源证据，不默认扩大到整个 Package 或项目。
+- Function。
+- Receiver Method。
+- Type。
+- Package-level Var。
+- Package-level Const。
 
-### 5.4 删除证据恢复
+### 5.2 识别类型、调用和值引用
 
-变更后源码中已经不存在被删除的 Route 或 Handler，因此删除分析需要读取 Diff 删除块：
+只分析函数调用不足以覆盖 BFF：
 
-1. 将删除行包装为临时 Go 代码并解析 Route Call。
-2. 使用常规 Route Parser 恢复 Method、Local Path、Handler 和 Wrapper。
-3. 只结合变更后同一 Route Function 内的 Group 恢复 Prefix。
-4. 完整删除 Handler 时，可恢复合成 Symbol、Annotation 和 ChangeFact。
-5. 无法证明完整 Path 或 Handler 时保留 Diagnostic，不伪造 Endpoint。
+```go
+group.POST("/orders", controller.API.Create) // Create 作为函数值传入
 
-删除恢复只补充传播所需的局部证据，不尝试重建旧版本完整 AST。
+func Create(req model.CreateOrderRequest)    // 使用请求类型
+```
 
-### 5.5 go.mod 变化
+因此引用分为：
 
-go.mod 变化不能直接扩散到全仓。处理流程为：
+| 类型 | 例子 | 解决的问题 |
+| --- | --- | --- |
+| `call` | `service.Load()` | 谁调用了被修改函数 |
+| `value` | 将 `controller.Create` 传给路由 | 哪个 Handler 被注册 |
+| `type` | 参数使用 `CreateOrderRequest` | DTO 或字段变化影响哪些方法 |
+
+只有目标能够唯一解析到项目内 Symbol 时才建立确定引用；否则保留 Diagnostic，不随意选择同名声明。
+
+### 5.3 识别接口注释、路由和中间件
+
+接口注释：
+
+```go
+// @Post /admin/api/bff-web/orders
+func (api *OrderAPI) Create(...) {}
+```
+
+路由：
+
+```go
+admin := root.Group("/admin")
+web := admin.Group("/api/bff-web")
+web.Use(Auth())
+web.POST("/orders", controller.API.Create)
+```
+
+分析器记录：
+
+```mermaid
+flowchart LR
+    G1["Group /admin"]
+    G2["子 Group /api/bff-web"]
+    MW["中间件 Auth"]
+    ROUTE["注册 POST /orders"]
+    FULL["静态路径 POST /admin/api/bff-web/orders"]
+    HANDLER["处理方法 OrderAPI.Create"]
+
+    G1 --> G2 --> MW --> ROUTE --> FULL
+    ROUTE --> HANDLER
+```
+
+中间件还要记录语句顺序。同一个 Group 中，`.Use()` 只影响它之后注册的路由。
+
+Group 作为函数参数或返回值传递时，`RouteGroupFlowFact` 记录它跨函数去了哪里，从而继续拼接 Prefix 和传播 Group 上的依赖。
+
+### 5.4 关联 Route、Handler 和 Annotation
+
+路由源码首先提供的是表达式：
+
+```go
+controller.API.Create
+```
+
+关联阶段将它解析成稳定的 `OrderAPI.Create` 方法 Symbol，再连接该方法的接口注释：
+
+```mermaid
+flowchart LR
+    RAW["路由中的表达式<br/>controller.API.Create"]
+    SYMBOL["稳定方法声明<br/>OrderAPI.Create"]
+    NOTE["接口注释<br/>POST /orders"]
+
+    RAW -->|"解析接收者类型和方法"| SYMBOL
+    SYMBOL -->|"查找该方法的注释"| NOTE
+```
+
+Wrapper、Package Var、Struct Field 和 Method Value 也使用同一套身份解析，无法唯一确定时不伪造 Handler。
+
+### 5.5 识别出站 IM
+
+IM 分析先确认调用确实属于 IM，再解析 Event 和 Payload。
+
+#### 公共 SDK 调用
+
+精确匹配以下 Import：
 
 ```text
-require / replace 变化
-  -> ModuleChangeFact
-  -> 本仓 import usage
-  -> 对应 Symbol 或 File ChangeFact
-  -> 正常影响传播
+gopkg.inshopline.com/sc1/commons/utils/bus/notify/im
 ```
 
-没有真实 import usage 的 Module Change 标记为 `module_unreferenced`，不产生业务入口影响。
+以及四个函数：
 
-影响配置只控制 Module Change：
+```text
+SendIm
+SendImAsync
+SendImToUid
+SendImToUidAsync
+```
+
+以 `SendIm` 为例：
+
+```go
+notifyim.SendIm(ctx, "app", "group", "order/created", payload)
+```
+
+第 4 个参数是 Event，第 5 个参数是 Payload。Import 或函数名不匹配时不认作 IM；参数不足时记录 Diagnostic。
+
+#### Broadcast 协议
+
+项目代码必须同时存在：
+
+```text
+broadcast://
+/broadcast/send
+```
+
+两个锚点都存在后，才继续识别 `BroadcastParams{Event: ...}` Wrapper，或同一个发送对象上的 `Body` 赋值与 `.Event(topic)` 调用，降低普通 `Event` 方法或 `Body` 字段造成的误报。
+
+Event 可以由 String Literal、Const、字符串拼接、Imported Const 或可证明的 Enum 计算得到。动态 Event 保留在完整证据树中，但不进入正式 IM 摘要。
+
+### 5.6 识别 BFF 的 gRPC Client 调用
+
+详细流程见第 8 节。这里产生两类事实：
+
+- `GrpcOperationFact`：Generated Client 中声明的完整 gRPC 接口。
+- `GrpcCallFact`：BFF 的哪个方法调用了哪个 Generated Client Method。
+
+## 6. Diff 如何变成传播起点
+
+### 6.1 定位修改、新增和删除
+
+分析器读取当前分支修改后的源码，并使用 Diff 的文件名和行号定位本次变化。
+
+```mermaid
+flowchart LR
+    LINE["Diff<br/>model/model.go 第 4 行"]
+    FACTS["当前源码事实和位置"]
+    CHANGE["ChangeFact<br/>Address 类型发生变化"]
+
+    LINE --> FACTS --> CHANGE
+```
+
+定位优先选择最具体的目标：
+
+```text
+接口注释
+  -> 路由 Group
+  -> 路由注册
+  -> 中间件绑定
+  -> 最小的函数、方法、类型、变量或常量声明
+  -> 仅保留文件级变化
+```
+
+这样，修改 `group.POST(...)` 时会得到“路由变化”，而不是笼统地认为整个 `Init` 函数发生变化。
+
+项目目录天然使用修改后的代码，不需要使用者额外准备旧版本源码。分析器只需校验 Diff 的文件路径和上下文确实与当前源码一致，避免拿错 Diff。
+
+### 6.2 删除路由的例子
+
+删除后的源码已经看不到旧路由，因此需要从 Diff 的删除行恢复必要证据：
+
+```diff
+ func Init(group *Group) {
+-    group.POST("/orders", controller.API.Create)
+ }
+```
+
+处理过程：
+
+```mermaid
+flowchart LR
+    DELETE["Diff 删除行"]
+    PARSE["解析 POST、/orders 和 Create"]
+    RECOVER["生成临时的已删除路由事实"]
+    CHANGE["生成 route_deleted 变更起点"]
+    RESULT["报告被删除的 POST /orders"]
+
+    DELETE --> PARSE --> RECOVER --> CHANGE --> RESULT
+```
+
+只恢复删除分析需要的 Method、Path、Handler、Group 和 Annotation，不重建整个旧版本项目。无法从删除行和当前代码证明完整接口时，记录 Diagnostic，不猜测结果。
+
+### 6.3 go.mod 变化为什么需要特殊处理
+
+假设 go.mod 将某个 Module 从 `v1.2.0` 升级到 `v1.3.0`。只看到版本号变化时，分析器不知道哪些 BFF 代码真正使用了它。如果直接把整个项目标记为受影响，会产生大量无关接口。
+
+因此处理方式是：
+
+```mermaid
+flowchart LR
+    MOD["go.mod 中 Module 版本变化"]
+    IMPORT["查找本项目真实 Import"]
+    SYMBOL["定位使用 Module 的方法或文件"]
+    WALK["按普通代码变化继续传播"]
+    ENDPOINT["得到相关 HTTP 接口"]
+
+    MOD --> IMPORT --> SYMBOL --> WALK --> ENDPOINT
+```
+
+完全没有 Import 使用的 Module 不产生接口影响。
+
+### 6.4 如何过滤 Module 噪音
+
+部分 BFF 项目会频繁升级 Proto Module。经过业务确认，如果这类升级不应作为 BFF 逻辑回归触发源，可以使用忽略列表减少噪音：
 
 ```json
 {
@@ -516,575 +738,486 @@ require / replace 变化
 }
 ```
 
-配置应拒绝未知字段和非法 Glob，避免错误配置被静默忽略。
+当前配置提供：
 
-## 6. BFF 领域事实提取
+- `analyzeModuleChanges: false`：关闭全部 go.mod 依赖变化分析。
+- `ignoredModuleChanges`：黑名单语义，支持精确 Module Path 或 Glob。
 
-### 6.1 Annotation
+未配置的 Module 仍按真实 Import 使用点传播。配置只过滤 go.mod 版本变化，不改变 Route、Annotation、Middleware 等源码解析规则。
 
-Annotation Extractor 从 Handler 注释提取 HTTP Method 和 Path：
+CLI 可以通过 `--impact-config` 指定配置文件；没有指定时读取项目内：
+
+```text
+.analyzer/go-impact.config.json
+```
+
+显式传入的配置文件路径必须是绝对路径，未知字段和非法 Glob 直接报错。
+
+## 7. 影响如何传播到 HTTP 接口
+
+### 7.1 整体流程
+
+```mermaid
+flowchart LR
+    CHANGE["代码变更起点<br/>例如 Address"]
+    USERS["查找直接使用它的声明"]
+    MORE["继续查找上层使用者"]
+    BINDING{"是否到达路由、中间件<br/>或接口注释？"}
+    ENDPOINT["生成 HTTP 接口"]
+    IM["收集路径上的 IM Event"]
+    TREE["保存完整传播树"]
+
+    CHANGE --> USERS --> MORE --> BINDING
+    BINDING -->|"是"| ENDPOINT
+    BINDING -->|"否，继续查找"| MORE
+    USERS --> IM
+    MORE --> IM
+    ENDPOINT --> TREE
+    IM --> TREE
+```
+
+第 2 节的案例对应：
+
+```text
+Address
+  -> CreateOrderRequest
+  -> OrderAPI.Create
+  -> POST /orders
+```
+
+### 7.2 四类查询关系
+
+下表不是新的处理步骤，而是传播阶段为了快速查关系而建立的四种内存索引：
+
+| 查询关系 | 通俗说明 | 在案例中的作用 |
+| --- | --- | --- |
+| 反向引用索引 | 从被使用的声明反查所有使用者 | 从 `Address` 找到 `CreateOrderRequest` 和 `Create` |
+| 路由索引 | 从 Handler、Group 或 Middleware 查到注册路由 | 从 `Create` 找到 `POST /orders` |
+| 调用索引 | 从 Handler 沿函数调用向下查找 | 查询 Endpoint 使用了哪些 gRPC 接口 |
+| IM 索引 | 判断当前传播路径是否命中某个 IM Event、Payload 或条件 | 将相关 IM Event 加入结果 |
+
+这些索引只引用第 4 节的事实，不复制第二套业务数据，也不修改 Store。
+
+### 7.3 不同变更起点怎样进入传播
+
+| 变化类型 | 处理方式 |
+| --- | --- |
+| 函数、方法、类型、变量或常量变化 | 反查所有使用者，直到路由或 IM 终点 |
+| 接口注释变化 | 直接得到该注释声明的 HTTP 接口 |
+| 路由变化 | 直接分析该路由绑定的 Handler 和接口 |
+| 路由删除 | 使用第 6.2 节恢复的删除证据 |
+| Group Prefix 变化 | 分析该 Group 及所有子 Group 的路由 |
+| Middleware 变化 | 只分析该 Middleware 挂载后注册的路由 |
+| 仅能定位到文件 | 保留文件变化，不扩大到整个 Package 或项目 |
+
+### 7.4 遍历方式
+
+每个变更起点独立生成一棵传播树。算法使用递归深度优先遍历：
+
+```text
+展开(当前声明, 当前路径):
+  查找所有直接使用当前声明的上层声明
+  对每个上层声明:
+    如果它已经在当前路径中:
+      标记为循环，不再继续
+    否则:
+      将它加入当前路径
+      递归展开它
+      返回后从当前路径移除
+
+  查找当前声明关联的路由和中间件
+  生成能够证明的 HTTP 接口
+  收集当前路径关联的 IM Event
+```
+
+约束：
+
+- 当前路径集合只用于识别循环；同一个声明可以出现在不同的有效分支中。
+- 同一父节点下重复的子节点在展开后合并，减少输出重复。
+- HTTP 接口全局去重，但不同文件和不同变更起点的原因分别保留。
+- 所有 Map、Set 和 Slice 在输出前稳定排序。
+
+完整传播树需要保留不同到达路径，高扇出项目的树规模可能随有效路径数量增长。不能直接缓存依赖当前路径的完整子树，否则会破坏循环标记和 IM 匹配。需要限制时，应将“接口可达性计算”和“证据路径生成”分开；超过显式节点预算必须返回明确错误并停止分析，不得静默截断。
+
+## 8. BFF 如何识别上游 gRPC 调用
+
+本节只讨论 BFF 作为 gRPC Client 的出站调用。
+
+### 8.1 什么是 Generated Client Catalog
+
+“Generated Client Catalog”可以理解为：
+
+> 从 Protobuf 生成代码中提取的一张“Go Client 方法 -> 完整 gRPC 接口名”的可靠对照表。
+
+Generated 文件通常包含类似代码：
 
 ```go
-// @Post /admin/api/bff-web/orders
-func (api *OrderAPI) Create(...) {}
-```
+// Code generated by protoc-gen-go-grpc. DO NOT EDIT.
 
-它只记录注释声明，不负责路由拼接，也不判断最终 Endpoint 是否已注册。
+const OrderService_GetOrder_FullMethodName =
+	"/shopline.order.v1.OrderService/GetOrder"
 
-### 6.2 Route、Group 与 Middleware
-
-Route Extractor 应识别：
-
-- `GET`、`POST`、`PUT`、`PATCH`、`DELETE` 等注册调用。
-- Group Prefix 和父子 Group。
-- Group 作为函数参数或返回值的跨函数流转。
-- `.Use()` 中间件及其语句顺序。
-- Handler Wrapper 和 Group Wrapper。
-- Package Var、Struct Field、Method Value 等可静态解析的 Handler。
-- Nexus 或 Codegen 生成的标准路由模板。
-
-例如：
-
-```go
-admin := root.Group("/admin")
-web := admin.Group("/api/bff-web")
-web.Use(Auth())
-web.POST("/orders", controller.API.Create)
-```
-
-应产生：
-
-```text
-RouteGroup(/admin)
-  -> RouteGroup(/api/bff-web)
-  -> Middleware(Auth)
-  -> RouteRegistration(POST /orders)
-  -> ResolvedPath(POST /admin/api/bff-web/orders)
-```
-
-中间件必须记录语句顺序。同一个 Group 中，`.Use()` 只影响它之后注册的 Route。
-
-### 6.3 Reference
-
-Reference Extractor 建立项目内依赖边：
-
-```text
-FromSymbol depends on ToSymbol
-```
-
-除了函数调用，还必须覆盖函数值和类型引用，否则无法分析以下场景：
-
-```go
-group.POST("/orders", controller.API.Create) // value reference
-
-func Create(req model.CreateOrderRequest)    // type reference
-```
-
-无法唯一解析的目标保留原始表达式和 Diagnostic，不生成指向任意候选的确定关系。
-
-### 6.4 Link
-
-Linker 将语法事实对齐到稳定身份：
-
-```text
-Route.HandlerRaw
-  -> Handler Symbol
-  -> Handler Annotation
-```
-
-它可以读取 AST Index 和已有 Route、Annotation、Middleware 事实，但不能重新承担完整项目扫描。
-
-Link 完成后：
-
-- Route 可以查询到唯一 Handler Symbol。
-- Handler 可以查询到 Annotation。
-- Middleware 表达式可以查询到对应 Symbol。
-- Wrapper 内引用可以成为 Route Dependency。
-
-### 6.5 出站 IM Event
-
-IM 分析分为三步：
-
-1. 识别可信 Transport。
-2. 静态求值 Event。
-3. 记录 Event、Payload 和 Control Dependency。
-
-可信 Transport 有两类识别机制：
-
-- **SDK 函数精确匹配**：import path 为 `gopkg.inshopline.com/sc1/commons/utils/bus/notify/im`，函数名为 `SendIm`、`SendImAsync`、`SendImToUid` 或 `SendImToUidAsync`，event 取第 4 个参数（0-based index 3）、payload 取第 5 个参数（0-based index 4）。import path 或函数名不匹配时拒绝，参数数量不足时记录 Diagnostic。
-- **协议双锚点发现**：项目代码中同时出现 `"broadcast://"` scheme 锚和 `"/broadcast/send"` endpoint 锚时，识别 `BroadcastParams` 复合字面量包装（Event 字段 + Payload 参数）或直接协议发送（Body 赋值 + `.Event(topic)` 调用）。
-
-静态求值可以覆盖：
-
-- String Literal 和 Const。
-- 字符串拼接。
-- Imported Const。
-- 可证明的 Typed Enum 与静态字符串表。
-- Wrapper 参数替换。
-- `if/else` 字符串相等条件形成的 Event 分支。
-
-动态 Event 作为 unresolved 节点保留在完整树中，不进入 `impactedIMEvents` 摘要。
-
-## 7. 影响传播
-
-### 7.1 查询图
-
-事实提取和关联完成后，分析阶段从 Store 构建只读查询视图：
-
-| 查询图       | 作用                                                 |
-| ------------ | ---------------------------------------------------- |
-| ReverseGraph | 从被依赖 Symbol 查询引用它的 Symbol                  |
-| RouteGraph   | 查询 Handler、Group、Middleware、Annotation 和 Route |
-| CallGraph    | 从 Endpoint Handler 正向查询可执行调用链             |
-| IMGraph      | 匹配传播路径上的 IM Event 依赖                       |
-
-查询图只保存索引和邻接关系，不复制第二套业务事实，也不修改 Store。
-
-### 7.2 ChangeFact 的入口规则
-
-| Change Kind             | 传播入口                                  |
-| ----------------------- | ----------------------------------------- |
-| `symbol_changed`      | 从 Symbol 沿 ReverseGraph 和领域依赖传播  |
-| `annotation_changed`  | 直接解析对应 Annotation Endpoint          |
-| `route_changed`       | 直接展开该 Route                          |
-| `route_deleted`       | 输出恢复出的删除 Route 证据               |
-| `route_group_changed` | 展开该 Group 和 Descendant Group 的 Route |
-| `middleware_changed`  | 展开该 Middleware 挂载后受作用的 Route    |
-| `file_changed`        | 保留文件级根，不自动扩大范围              |
-
-### 7.3 Symbol 传播算法
-
-对每个 `symbol_changed` 根独立构建传播树：
-
-```text
-function expand(current, path):
-  for each ref in ReverseGraph.Referrers(current):
-    if ref in path: mark cycle, skip
-    path.add(ref)
-    expand(ref, path)
-    path.remove(ref)
-
-  for each route in RouteGraph.DependentRoutes(current):
-    resolve handler annotation or route fallback
-    emit endpoint terminal
-
-  for each route in RouteGraph.DependentMiddlewareRoutes(current):
-    resolve handler annotation or route fallback
-    emit endpoint terminal
-
-  collect IMGraph.EventsForPath(current path)
-
-expand(changed symbol, {changed symbol})
-```
-
-遍历约束：
-
-- 递归 DFS，使用 Path Map 做当前路径上的 Cycle Detection（同一 Symbol 可出现在不同分支）。
-- 同一父节点下相同 ID + Relation 的子节点在展开后合并，避免菱形依赖指数展开。
-- 相同 Endpoint 全局去重，但保留不同来源和不同根的传播树。
-- 输出前对 Map、Set 和 Slice 统一稳定排序。
-
-### 7.4 Endpoint 身份
-
-BFF Endpoint 使用 Annotation-first 规则：
-
-1. Handler 存在 Annotation 时，Annotation 的 Method 和 Path 是正式 Endpoint。
-2. 静态解析出的 Route 作为同级 `routes[]` 辅助证据。
-3. Handler 没有 Annotation 时，使用静态 Route Method 和 Resolved Path。
-4. Method 统一转换为大写，Path 执行一致的规范化。
-
-示例：
-
-```json
-{
-  "method": "POST",
-  "path": "/admin/api/bff-web/orders",
-  "routes": [
-    {
-      "method": "POST",
-      "path": "/api/bff-web/orders"
-    }
-  ]
+func (c *orderServiceClient) GetOrder(
+	ctx context.Context,
+	in *GetOrderRequest,
+	opts ...grpc.CallOption,
+) (*GetOrderResponse, error) {
+	out := new(GetOrderResponse)
+	err := c.cc.Invoke(
+		ctx,
+		OrderService_GetOrder_FullMethodName,
+		in,
+		out,
+		opts...,
+	)
+	return out, err
 }
 ```
 
-正式 Endpoint 与 Route 证据分开表达，可以暴露 Annotation 和 Route 漂移，又不会用不完整的动态路由覆盖接口身份。
-
-### 7.5 Group、Middleware 与 Wrapper
-
-- Group Prefix 变化影响该 Group 和 Descendant Group 下的 Route。
-- Group 跨函数传递时，Guard、Factory 和 Middleware 依赖传播到其后代 Route。
-- Middleware 函数变化只影响其绑定后注册的 Route。
-- Wrapper 中引用的 Symbol 变化只影响使用该 Wrapper 的 Route。
-- 无法静态证明 Group Prefix 或 Handler 的 Route 不生成虚构 Endpoint。
-
-## 8. BFF 与上游 gRPC 的关系
-
-本节只讨论 BFF 作为 gRPC Client 的出站依赖，不展开后端 Server Provider 分析。
-
-### 8.1 Generated Client Catalog
-
-gRPC Operation 必须由 generated transport 证明：
-
-- Generated Marker。
-- Unary RPC 的 `Invoke`，或 Streaming RPC 的 `NewStream`。
-- Canonical Full Method 字符串。
-- Generated Constructor、Client Interface 和 Concrete Client Method 的绑定。
-
-Operation 的唯一身份为：
+分析器从 Generated Marker、`Invoke`/`NewStream`、完整接口字符串、Client Interface 和实现方法建立对照：
 
 ```text
-/package.Service/Method
+OrderServiceClient.GetOrder
+  -> /shopline.order.v1.OrderService/GetOrder
 ```
 
-Go Method 名、变量名、目录名和 Protobuf Message 名都不能单独证明 gRPC Operation。
+这里的完整接口名由三部分组成：
 
-### 8.2 BFF 调用点
+```text
+/protobuf package.Service/Method
 
-调用 `client.GetOrder(...)` 只有同时满足以下条件才形成 `GrpcCallFact`：
+/shopline.order.v1.OrderService/GetOrder
+ └──── package ────┘ └ Service ┘└ Method ┘
+```
 
-1. Generated Catalog 中存在对应 Operation。
-2. Receiver 静态类型唯一绑定到 Generated Client。
-3. 调用位于项目内可执行 Function 或 Method 中。
+它是跨仓库稳定匹配 gRPC 接口的身份。只看 Go 方法名 `GetOrder` 不够，因为不同 Service 可以存在同名方法。
 
-关系标记为 `may_call`：静态调用链证明该 Endpoint 可能到达此调用，但不承诺每次请求都一定执行。
+### 8.2 BFF 调用的真实例子
+
+```go
+type OrderGateway struct {
+	client orderv1.OrderServiceClient
+}
+
+func (g *OrderGateway) LoadOrder(ctx context.Context, id string) error {
+	_, err := g.client.GetOrder(ctx, &orderv1.GetOrderRequest{Id: id})
+	return err
+}
+
+// @Get /orders/:id
+func (api *OrderAPI) Detail(ctx *Context) {
+	_ = api.gateway.LoadOrder(ctx, ctx.Param("id"))
+}
+
+func Init(group *Group) {
+	group.GET("/orders/:id", controller.API.Detail)
+}
+```
+
+识别过程：
+
+```mermaid
+flowchart LR
+    GENERATED["Generated 对照表<br/>GetOrder -> 完整 gRPC 接口"]
+    CALL["BFF 调用<br/>client.GetOrder(...)"]
+    RECEIVER["确认 client 的静态类型<br/>OrderServiceClient"]
+    CALLER["上层方法<br/>LoadOrder -> Detail"]
+    ROUTE["HTTP 接口<br/>GET /orders/:id"]
+
+    GENERATED --> CALL
+    RECEIVER --> CALL
+    CALL --> CALLER --> ROUTE
+```
+
+只有同时满足以下证据才记录 gRPC 调用：
+
+1. Generated 对照表存在该方法和完整接口名。
+2. `client` 的静态类型能够唯一解析为对应 Generated Client。
+3. 调用位于项目内可执行的方法中。
+
+不会根据变量名、目录名、Protobuf Message 名或相似的 Go 方法名猜测接口。
 
 ### 8.3 双向查询
 
-正向查询：
+查询 BFF 接口依赖的 gRPC：
 
 ```text
-Endpoint
-  -> Handler
-  -> Project CallGraph
-  -> GrpcCallFact
-  -> Canonical Operation
+GET /orders/:id
+  -> OrderAPI.Detail
+  -> OrderGateway.LoadOrder
+  -> client.GetOrder
+  -> /shopline.order.v1.OrderService/GetOrder
 ```
 
-反向查询：
+查询一个上游 gRPC 接口影响的 BFF 接口：
 
 ```text
-Canonical Operation
-  -> GrpcCallFact
-  -> Caller
-  -> Handler
-  -> Route / Annotation
-  -> Endpoint
+/shopline.order.v1.OrderService/GetOrder
+  -> client.GetOrder 调用点
+  -> OrderGateway.LoadOrder
+  -> OrderAPI.Detail
+  -> GET /orders/:id
 ```
 
-同一项目快照和 Build Context 下应满足：
+同一项目快照和代码筛选条件下，两种查询应满足：
 
 ```text
-endpoint-assets(A) 包含 gRPC B
-iff
-impact --grpc B 包含 Endpoint A
+接口 A 的 gRPC 依赖包含 B
+等价于
+gRPC 接口 B 的 BFF 反查结果包含 A
 ```
 
-## 9. 输出契约
+## 9. 输出 JSON
 
-### 9.1 顶层结构
+### 9.1 顶层字段
 
-`impact` 输出字段顺序固定为：
+实际输出按以下顺序组织：
 
 ```json
 {
-  "summary": {},
+  "summary": {
+    "impactedEndpointCount": 0,
+    "impactedEndpoints": [],
+    "impactedIMCount": 0,
+    "impactedIMEvents": []
+  },
   "fileSources": [],
   "grpcSources": [],
   "endpointSourcesSummary": []
 }
 ```
 
-`moduleSources` 只在 go.mod 形成语义 Module Change 时出现；出现时位于 `fileSources` 之后、`grpcSources` 之前。其它数组即使为空也输出空数组。
+`moduleSources` 只在 go.mod 形成有效 Module Change 时出现，位置在 `fileSources` 之后、`grpcSources` 之前。
 
-| 字段                       | 消费目的                                                 |
-| -------------------------- | -------------------------------------------------------- |
-| `summary`                | 快速获取全局去重后的 Endpoint 和 IM Event                |
-| `fileSources`            | 查看每个普通 Diff 文件的原始 Patch、变更根和完整传播树   |
-| `moduleSources`          | 查看 Module Change、真实 Usage 和传播结果                |
-| `grpcSources`            | 查看输入 gRPC Operation、BFF Consumer 和 Call-site Chain |
-| `endpointSourcesSummary` | 从 Endpoint 反查 File、Module 或 gRPC 来源               |
+| 字段 | 主要用途 |
+| --- | --- |
+| `summary` | CI 或测试平台快速读取最终结论 |
+| `fileSources` | 人工查看某个代码文件的原始 Diff、变化声明和完整传播树 |
+| `moduleSources` | 查看依赖版本变化、真实 Import 使用点和传播结果 |
+| `grpcSources` | 查看输入的完整 gRPC 接口、BFF 调用点和 HTTP 入口 |
+| `endpointSourcesSummary` | 按 HTTP 接口反查所有影响来源和简化链路 |
 
-### 9.2 完整树与轻量摘要
-
-输出同时保留三种视图：
+### 9.2 三种视图必须来自同一结论
 
 ```text
 summary
-  适合 CI、测试平台和默认消费
+  最精简：哪些接口和 IM Event 受影响
 
 fileSources / moduleSources / grpcSources
-  适合审计完整证据
+  最完整：每个来源的原始输入和递归证据
 
 endpointSourcesSummary
-  适合解释某个 Endpoint 为什么受影响
+  最易解释：某个接口为什么受影响
 ```
 
-三种视图只能是同一份分析结果的不同投影，不允许各自执行影响判断。
+输出层只整理、去重和排序分析结果，不重新扫描源码或自行判断影响。
 
-`endpointSourcesSummary` 中：
+### 9.3 稳定性
 
-- File Source 保留 Source File、Root Symbols 和最短人读链路。
-- Module Source 保留 Module Path、Change Type、Version 和 Usage Root。
-- gRPC Source 保留 Canonical Full Method 和不同 Call-site Chain。
+相同源码、Diff、gRPC 输入和代码筛选条件必须产生字节级稳定的 JSON：
 
-### 9.3 确定性
+- 数组有固定排序规则。
+- Map 和 Set 在输出前转换为有序切片。
+- 接口、Event、变更起点和链路使用确定性去重键。
+- 空集合输出 `[]`，不输出 `null`。
+- Go 输出结构、JSON Schema 和 Golden Sample 保持一致。
 
-相同项目快照、Diff、gRPC 输入和 Build Context 必须产生字节级稳定的 JSON：
+## 10. 代码模块怎样分层
 
-- 所有数组定义稳定排序规则。
-- 所有 Set 和 Map 在输出前转换为有序切片。
-- Endpoint、Event、Root 和 Chain 使用确定性去重键。
-- 空集合统一输出 `[]`，不输出 `null`。
-- JSON Schema、Go 输出结构和 Golden Sample 保持一致。
-
-## 10. 模块与目录设计
-
-模块按照处理阶段组织，而不是按照命令复制一套实现。
+前文先解释处理流程，本节再将每个阶段映射到代码目录。
 
 ```mermaid
 flowchart TB
-    CLI["cmd/go-analyzer<br/>命令与参数"]
-    APP["internal/app<br/>流水线编排"]
-    BASE["internal/project + internal/astindex + internal/diff<br/>源码、索引与变更输入"]
-    FACT["internal/facts + internal/extract + internal/link<br/>事实模型、提取与关联"]
-    QUERY["internal/graph + internal/dependency + internal/impact<br/>查询与影响传播"]
-    OUT["internal/output<br/>JSON 与 Schema"]
+    CLI["命令接入<br/>cmd/go-analyzer"]
+    APP["流程编排<br/>internal/app"]
+    BASE["源码和 Diff 基础能力<br/>internal/project、astindex、diff"]
+    FACT["事实模型、提取和关联<br/>internal/facts、extract、link"]
+    QUERY["查询和影响传播<br/>internal/graph、dependency、impact"]
+    OUT["JSON 和 Schema<br/>internal/output"]
 
     CLI --> APP
     APP --> BASE
     APP --> FACT
     APP --> QUERY
     APP --> OUT
-    BASE --> FACT
-    FACT --> QUERY
-    QUERY --> OUT
+    BASE --> FACT --> QUERY --> OUT
 ```
 
-### 10.1 分层职责
+| 层 | 负责什么 | 不负责什么 |
+| --- | --- | --- |
+| 命令接入 | 参数、绝对路径、stdout/stderr | AST 规则和影响传播 |
+| 流程编排 | 按正确顺序执行各阶段、错误语义和耗时 | 具体协议语法 |
+| 基础能力 | 加载项目、建立声明索引、解析和校验 Diff | 判断业务接口影响 |
+| 事实与关联 | 从 AST 产生原子事实并连接稳定身份 | 输出最终影响结论 |
+| 查询与传播 | 构建只读索引、双向查询和传播树 | 修改源码事实 |
+| 输出 | 稳定 JSON、Schema、排序和去重 | 补造代码关系 |
 
-| 层     | 模块                                                             | 职责                                      |
-| ------ | ---------------------------------------------------------------- | ----------------------------------------- |
-| 接入层 | `cmd/go-analyzer`                                              | 子命令、Flag、绝对路径校验、stdout/stderr |
-| 编排层 | `internal/app`                                                 | 阶段顺序、抽取模式、Typed Error、Metrics  |
-| 基础层 | `internal/project`、`internal/astindex`、`internal/diff`   | 项目加载、声明索引、Diff 解析与校验       |
-| 事实层 | `internal/facts`、`internal/extract/*`、`internal/link`    | 类型化事实、领域提取、身份关联            |
-| 查询层 | `internal/graph`、`internal/dependency`、`internal/impact` | 只读图、双向查询、传播树                  |
-| 输出层 | `internal/output`                                              | 稳定文档投影、JSON、Schema                |
+新增协议时，应先定义它的原子事实和最低静态证据，再增加查询和输出；不能把协议特例堆到 CLI 或输出层。
 
-### 10.2 依赖规则
+## 11. 错误、诊断和性能
 
-1. `cmd` 不包含 AST、传播或 JSON 业务拼装逻辑。
-2. `app` 负责顺序，不实现协议专属 AST 匹配。
-3. `extract` 依赖 Project、AST Index 和 Facts，不依赖 Impact 或 Output。
-4. `link` 只连接已有事实，不重新实现 Extractor。
-5. `graph`、`dependency` 和 `impact` 不修改源码事实。
-6. `output` 不依赖 Extractor 私有实现，不补推业务结论。
-7. 新协议应先定义原子事实和准入证据，再增加查询与输出投影。
-
-## 11. 错误、诊断与可观测性
-
-### 11.1 错误语义
-
-以下问题应终止正式分析：
+### 11.1 哪些情况停止分析
 
 - 项目路径或 Diff 路径非法。
 - Unified Diff 无法解析。
-- Diff 与变更后源码快照不一致。
-- Diff 命中的 Go 文件无法解析。
-- gRPC 严格查询所需依赖或 Generated Catalog 无法建立。
-- 输出契约无法完成稳定序列化。
+- Diff 与当前源码不匹配。
+- 本次改动命中的 Go 文件无法解析。
+- gRPC 严格查询无法建立 Generated 对照表。
+- 最终 JSON 无法按契约生成。
 
-正式分析不得在关键证据缺失时输出半份结果。
+关键证据缺失时不输出半份正式结果。
 
-### 11.2 Diagnostic
+### 11.2 哪些情况记录 Diagnostic
 
-可恢复问题进入 Diagnostic：
+- 没有改动的文件存在语法错误。
+- Route Path、IM Event 或 Handler 是动态表达式。
+- Receiver 或接口实现存在多个候选。
+- 删除 Diff 只能恢复局部证据。
+- Module 变化在本项目中没有真实使用点。
 
-- 非变更文件解析失败。
-- 动态 Route Path 或 IM Event。
-- Handler、Receiver 或 Interface Binding 存在歧义。
-- 删除证据只能局部恢复。
-- Module Change 无真实 Usage。
+Diagnostic 用于 `facts` 命令排查，不计入正式接口和 IM Event 数量。
 
-Diagnostic 用于 `facts` 排障，不计入正式 Endpoint 或 IM Event 数量。
+### 11.3 性能和观测
 
-### 11.3 性能与指标
-
-一次命令只加载一次项目并共用 AST Index 和 Store。主要阶段应记录耗时：
+一次命令只加载一次项目。主要阶段记录耗时：
 
 - Project Load。
 - AST Index。
-- 各类 Extractor。
+- Fact Extraction。
 - Link。
 - Diff Map。
 - Impact Analyze。
 - Output Build 和 Render。
 
-Metrics 只写 stderr，JSON stdout 只包含稳定业务文档。
+性能约束：
 
-性能设计要求：
-
-- AST 文件和声明查询建立索引，避免重复全仓扫描。
-- Generated gRPC 依赖按需加载，不遍历无关依赖图。
-- 图遍历使用 Cycle Detection 和共享子图缓存。
+- 为文件、声明和图关系建立索引，避免传播时重复扫描全仓。
+- 只在 gRPC 查询需要时加载 Generated Client 依赖。
+- 使用当前路径集合阻止递归环。
+- 合并同一父节点下的重复子节点。
+- 观测 `impact_analyze` 耗时、展开节点数和输出大小。
 - 大型 Map 和 Set 只在最终输出阶段排序。
 
-### 11.4 安全与隔离
+Metrics 写入 stderr，JSON stdout 只包含业务结果。
 
-- 所有 Diff 路径在规范化后必须位于项目根目录。
-- 分析器只读取源码、go.mod、Diff 和必要的 Go 依赖元数据。
-- 不执行被分析项目代码。
-- 不将机器绝对路径写入业务事实或设计文档示例。
-- 输出中的源码位置统一使用项目相对路径。
+## 12. 测试和验收
 
-## 12. 测试与验收
+### 12.1 最小案例测试
 
-### 12.1 单元测试
+每条规则使用最小 Go 项目同时覆盖正例和反例：
 
-每条静态规则应使用最小 Fixture 覆盖正例和反例：
+- Call、Value、Type 三类引用。
+- Annotation、Group、Route、Middleware 和 Wrapper。
+- Diff 定位、相邻行合并和删除恢复。
+- Module 变化、真实 Import 和忽略配置。
+- IM SDK、Broadcast 双锚点和动态 Event。
+- Generated gRPC 对照表、Receiver 类型和双向查询。
+- 循环、菱形依赖、去重和稳定排序。
 
-- Symbol ID 和 Span。
-- Call、Value、Type Reference。
-- Annotation 解析。
-- Route Group、Middleware 顺序和 Wrapper。
-- Handler 与 Annotation Link。
-- Diff 行范围映射和相邻根合并。
-- 删除 Route 与 Handler 恢复。
-- Module Change 与 Usage。
-- IM Event 静态求值和 unresolved。
-- Generated gRPC Client Catalog、Receiver Binding 和双向查询。
-- 图循环、菱形依赖和稳定排序。
+### 12.2 完整流程测试
 
-### 12.2 集成与契约测试
-
-- 使用完整 CLI Pipeline 运行最小项目。
-- 使用 Golden JSON 验证完整传播树和字段顺序。
+- 通过 CLI 运行完整 Pipeline。
+- 使用 Golden JSON 验证完整传播树和字段。
 - 校验 Go 输出结构与 JSON Schema 对齐。
-- 验证 stdout 只包含 JSON，stderr 承载 Error 和 Timings。
-- 验证 `endpoint-assets` 与 `impact --grpc` 的双向不变量。
+- 验证 stdout 只有 JSON，stderr 承载 Error 和 Timings。
+- 验证 Endpoint 与 gRPC 的双向查询结果一致。
 - 对相同输入重复执行并比较字节输出。
 
 ### 12.3 真实 BFF 验证
 
-真实项目验证以以下项目族为主：
+| 项目 | 验证重点 |
+| --- | --- |
+| `sl-sc1-admin-bff` | Annotation、Route Alias、Middleware、IM、Module Change |
+| `sl-sc1-bff-service` | Route Group 跨函数流转、BFF gRPC Client、IM |
+| `sl-sc2-admin-bff` | BFF 项目差异和零配置兼容性 |
 
-| 项目                   | 验证重点                                               |
-| ---------------------- | ------------------------------------------------------ |
-| `sl-sc1-admin-bff`   | Annotation、Route Alias、Middleware、IM、Module Change |
-| `sl-sc1-bff-service` | Route Group Flow、BFF gRPC Client、IM                  |
-| `sl-sc2-admin-bff`   | BFF 项目族差异和零配置兼容性                           |
-
-每次验证应保留：
-
-- 原始 Diff。
-- 完整分析 JSON。
-- 受影响 Endpoint 和 IM Event 数量。
-- 关键 Source Chain。
-- 人工确认的误报、漏报和不支持范式。
+每次验证保留原始 Diff、完整 JSON、接口数量、关键来源链路，以及人工确认的误报、漏报和不支持写法。
 
 ### 12.4 验收标准
 
-1. Function、Method、DTO、Const 和 Var 变化可以传播到可证明的 Endpoint。
-2. Route、Group、Middleware 和 Wrapper 变化只影响真实依赖它们的 Route。
-3. Annotation 和 Route 漂移不会生成错误的 Endpoint Identity。
-4. 静态 IM Event 进入摘要，动态 Event 只保留 unresolved 证据。
-5. Endpoint 与 gRPC Operation 支持双向查询并满足不变量。
-6. go.mod 变化只从真实 Module Usage 传播。
-7. 删除 Route 和 Handler 能恢复可证明证据，无法恢复时不猜测。
-8. 每个 Endpoint 可以反查 Source File、Module 或 gRPC Operation。
+1. Function、Method、DTO、Const 和 Var 变化能够传播到有证据的 HTTP 接口。
+2. Route、Group、Middleware 和 Wrapper 变化只影响真实依赖它们的路由。
+3. Annotation 与 Route 不一致时，同时保留正式接口身份和注册证据。
+4. 静态 IM Event 进入摘要，动态 Event 只保留未解析证据。
+5. Endpoint 与 gRPC 接口支持双向查询并得到一致结果。
+6. go.mod 变化只从真实 Module 使用点传播，忽略配置可以控制 Proto 等噪音。
+7. 删除 Route 和 Handler 能恢复可证明的接口，无法恢复时不猜测。
+8. 每个 Endpoint 可以反查代码文件、Module 或 gRPC 来源。
 9. 相同输入产生字节级稳定 JSON。
-10. 关键证据缺失时正式分析失败，不输出误导性部分结果。
+10. 关键证据缺失时停止正式分析，不输出误导性部分结果。
 
-## 13. CLI 与集成
+## 13. CLI 和集成
 
 ### 13.1 核心命令
 
-| 命令                | 用途                                                         |
-| ------------------- | ------------------------------------------------------------ |
-| `impact`          | 输入 Diff 和/或 gRPC Operation，输出 BFF Endpoint 与 IM 影响 |
-| `grpc-impact`     | 后端服务入站契约影响分析（详见独立技术方案）                 |
-| `endpoint-assets` | 查询 Endpoint 依赖的上游 gRPC Operation                      |
-| `facts`           | 输出项目事实和 Diagnostic，用于排障                          |
-| `schema`          | 输出稳定 JSON Schema（`--type facts\|impact\|grpc-impact`）  |
+| 命令 | 用途 |
+| --- | --- |
+| `impact` | 输入 Diff 和/或完整 gRPC 接口名，输出 BFF HTTP/IM 影响 |
+| `endpoint-assets` | 查询 BFF 接口依赖的上游 gRPC 接口 |
+| `facts` | 输出当前项目的源码事实和 Diagnostic，用于排查 |
+| `grpc-impact` | 后端服务入站契约分析，使用独立技术方案 |
+| `schema --type facts\|impact\|grpc-impact` | 输出对应 JSON Schema |
 
-项目和文件路径参数必须使用绝对路径。设计文档、配置文件和输出中的源码位置使用项目相对路径。
+项目和文件路径参数使用绝对路径；JSON 中的源码位置统一使用项目相对路径。
 
-`impact` 和 `grpc-impact` 均支持可选的 `--impact-config` 参数指定影响配置文件（绝对路径）；未提供时自动尝试读取项目根下 `.analyzer/go-impact.config.json`。
-
-`impact` 至少接收一个 Diff 或 gRPC Operation：
+`impact` 至少接收 Diff 或 gRPC 接口之一：
 
 ```text
 impact --diff
   分析 BFF 代码和 go.mod 变化
 
 impact --grpc
-  分析上游 gRPC Operation 在当前 BFF 的消费者
+  反查当前 BFF 中使用指定上游 gRPC 接口的 HTTP 入口
 
 impact --diff --grpc
-  共用一次项目事实构建，保留两类来源
+  共用一次源码事实构建，在同一 JSON 中保留两类来源
 ```
 
-### 13.2 集成边界
+影响配置：
 
-CLI 适合作为 CI、Nexus 或其它编排平台的稳定接入层：
+```text
+--impact-config <绝对路径>
+```
 
-- JSON 写入 stdout。
-- Timings 和错误写入 stderr。
+没有传入时自动读取 `.analyzer/go-impact.config.json`。
+
+### 13.2 Nexus 或 CI 集成
+
+- JSON 写 stdout。
+- Timings 和错误写 stderr。
 - 非法输入返回非零退出码。
-- 调用方显式选择命令，不依赖目录名猜测项目类型。
-- 上层系统通过 Endpoint 和 Canonical gRPC Operation 串联多个项目结果。
+- 调用方显式选择命令，不根据目录名猜项目类型。
+- 上层系统使用 HTTP Method/Path 和完整 gRPC 接口名串联多个项目结果。
 
-## 14. 后续扩展
+## 14. 后续方向
 
-以下能力不改变 BFF 主流程，但应使用独立设计文档：
+以下能力使用独立方案，不在 BFF 主流程中展开：
 
-- 后端服务端 gRPC、HTTP、Dubbo 和 XXL-Job 入站契约影响。
+- 后端服务端 gRPC、HTTP、Dubbo 和 XXL-Job 入站契约分析。
 - 多仓 gRPC 到 BFF 再到前端页面的自动编排。
 - 更精确的接口多实现和依赖注入分析。
 - 增量 AST、事实缓存和大仓并行分析。
 - 基于静态证据生成 QA 回归建议。
 
-扩展时必须保持以下原则：
+扩展仍应遵守：先定义事实，再定义关系，最后定义影响终点和输出契约。
 
-1. 先定义可验证的原子事实。
-2. 再定义事实之间的静态关系。
-3. 最后定义影响终点和输出契约。
-4. 不在 Output 或 CLI 中堆叠协议特例。
+## 附录：核心术语
 
-## 附录 A：事实生产者与消费者
-
-| Fact                      | 主要生产者                          | 主要消费者                     |
-| ------------------------- | ----------------------------------- | ------------------------------ |
-| `ProjectFact`           | Project Loader                      | Output、Dependency             |
-| `SymbolFact`            | AST Index                           | Diff Mapper、Graph、Impact     |
-| `ReferenceFact`         | Reference Extractor                 | ReverseGraph、CallGraph        |
-| `AnnotationFact`        | Annotation Extractor                | Linker、RouteGraph、Impact     |
-| `RouteGroupFact`        | Route Extractor                     | Diff Mapper、RouteGraph        |
-| `RouteRegistrationFact` | Route Extractor、删除恢复           | Linker、RouteGraph、Impact     |
-| `MiddlewareBindingFact` | Route Extractor                     | Linker、RouteGraph、Impact     |
-| `LinkFact`              | Linker                              | RouteGraph、Dependency、Impact |
-| `IMEventFact`           | IM Extractor                        | IMGraph、Impact                |
-| `GrpcOperationFact`     | Generated Client Catalog            | Dependency、Output             |
-| `GrpcCallFact`          | gRPC Client Extractor               | CallGraph、Dependency          |
-| `ModuleChangeFact`      | go.mod Diff Mapper                  | Module Usage、Output           |
-| `ModuleDependencyFact`  | go.mod Loader                       | Module Change、Output          |
-| `ModuleUsageFact`       | Module Usage Mapper                 | ChangeFact Mapper、Output      |
-| `RouteGroupFlowFact`    | Route Extractor                     | Route Group Prefix 解析        |
-| `ChangeFact`            | Diff Mapper、删除恢复、Module Usage | Impact                         |
-| `DiagnosticFact`        | 所有可降级阶段                      | Facts Output                   |
-
-## 附录 B：核心术语
-
-| 术语                     | 含义                                                |
-| ------------------------ | --------------------------------------------------- |
-| Symbol                   | Function、Method、Type、Var 或 Const 的稳定声明身份 |
-| Fact                     | 从源码或输入中提取的原子静态证据                    |
-| ChangeFact               | Diff 映射得到的影响传播根                           |
-| Link                     | Route、Handler、Annotation 等事实之间的身份关联     |
-| ReverseGraph             | 从被依赖者反查引用者的运行时索引                    |
-| Endpoint                 | 规范化后的 HTTP Method 与 Path                      |
-| Source Chain             | 从变更根到 Endpoint 的人读传播路径                  |
-| Canonical gRPC Operation | `/package.Service/Method` 形式的稳定 RPC 身份     |
-| Resolved                 | 静态证据能够唯一确定                                |
-| Symbolic / Unresolved    | 保留表达式或局部证据，但不伪造运行时值              |
+| 术语 | 通俗含义 |
+| --- | --- |
+| Symbol | 一个可稳定定位的函数、方法、类型、包级变量或常量 |
+| Fact | 从源码、go.mod 或 Diff 中得到的一条原子静态数据 |
+| Store | 单次分析中保存全部 Fact 的临时数据容器 |
+| ChangeFact | 本次 Diff 定位出的代码变化起点 |
+| ReferenceFact | 两个 Symbol 之间的调用、值使用或类型使用关系 |
+| LinkFact | Route、Handler 和 Annotation 之间已经解析清楚的关联 |
+| AST | Go 源码解析后的语法树，分析器通过它理解声明、调用和表达式 |
+| Handler | 接收 HTTP 请求并执行业务逻辑的 Controller 方法或函数 |
+| Module | go.mod 中声明的一项 Go 依赖 |
+| Diagnostic | 不影响其它可用分析继续进行、但需要保留给排查人员的解析问题 |
+| 反向引用查询 | 从被修改声明反查所有直接或间接使用者 |
+| Endpoint | 规范化后的 HTTP Method 和 Path |
+| 来源链路 | 从代码变化起点到 Endpoint 的简化传播路径 |
+| 完整 gRPC 接口名 | `/package.Service/Method` 形式的跨仓库稳定接口身份 |
+| Resolved | 静态证据能够唯一确定 |
+| Unresolved | 只能保留原始表达式，不能确定运行时值 |
