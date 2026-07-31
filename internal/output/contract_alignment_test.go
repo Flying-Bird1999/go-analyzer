@@ -248,6 +248,22 @@ func TestImpactDocumentStructsAlignSchemaDefinitions(t *testing.T) {
 				"module_replacement":                  reflect.TypeOf(ModuleReplacement{}),
 			},
 		},
+		{
+			schema: "endpoint-assets",
+			defs: map[string]reflect.Type{
+				"dependency_project":   reflect.TypeOf(dependencyProject{}),
+				"dependency_endpoint":  reflect.TypeOf(dependencyEndpoint{}),
+				"dependency_symbol":    reflect.TypeOf(dependencySymbol{}),
+				"dependency_client":    reflect.TypeOf(dependencyClient{}),
+				"dependency_call_site": reflect.TypeOf(dependencyCallSite{}),
+				"dependency_chain":     reflect.TypeOf(dependencyChain{}),
+				"dependency_grpc":      reflect.TypeOf(dependencyGrpc{}),
+				"endpoint_asset":       reflect.TypeOf(endpointAsset{}),
+				"endpoint_asset_dependencies": reflect.TypeOf(struct {
+					Grpc []dependencyGrpc `json:"grpc"`
+				}{}),
+			},
+		},
 	}
 	for _, dc := range cases {
 		defs := schemaDocuments[dc.schema]["$defs"].(map[string]any)

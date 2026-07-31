@@ -16,6 +16,8 @@ func TestSchemaDocumentsAreValidJSON(t *testing.T) {
 	}{
 		{name: "facts", wantProp: "project"},
 		{name: "impact", wantProp: "fileSources"},
+		{name: "grpc-impact", wantProp: "entrySourcesSummary"},
+		{name: "endpoint-assets", wantProp: "endpointAssets"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -301,6 +303,16 @@ func TestImpactSchemaDoesNotExposeSpanOrDebugEvidence(t *testing.T) {
 		if bytes.Contains(got, []byte(forbidden)) {
 			t.Fatalf("impact schema should not expose %s: %s", forbidden, got)
 		}
+	}
+}
+
+func TestFactsSchemaRequiresRedactedProjectRoot(t *testing.T) {
+	defs := schemaDocuments["facts"]["$defs"].(map[string]any)
+	projectDef := defs["project"].(map[string]any)
+	properties := projectDef["properties"].(map[string]any)
+	root := properties["root"].(map[string]any)
+	if root["const"] != "." {
+		t.Fatalf("facts project root schema = %#v, want const dot", root)
 	}
 }
 

@@ -20,7 +20,7 @@ func TestIMGraphMatchesOnlyEventsForCurrentDependencyPath(t *testing.T) {
 		testIMEvent("inbox_customer_msg", sender, message),
 	}
 
-	graph := NewIMGraph(store)
+	graph := NewIMGraph(facts.Freeze(store))
 	got := graph.EventsForPath(sender, map[facts.SymbolID]bool{message: true}, facts.ChangeFact{})
 	var names []string
 	for _, match := range got {
@@ -48,7 +48,7 @@ func TestIMGraphMatchesDirectSenderRangeWithoutSelectingSiblingSend(t *testing.T
 	}}
 	store.IMEvents = []facts.IMEventFact{second, first}
 
-	graph := NewIMGraph(store)
+	graph := NewIMGraph(facts.Freeze(store))
 	got := graph.EventsForPath(sender, map[facts.SymbolID]bool{sender: true}, facts.ChangeFact{
 		SymbolID: sender,
 		File:     "send.go",

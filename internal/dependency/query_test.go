@@ -1,8 +1,12 @@
 package dependency
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	endpointcatalog "gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
@@ -10,7 +14,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	store := queryStore()
 	endpoint := Endpoint{Method: "GET", Path: "/stale/orders/:id"}
 	registeredEndpoint := Endpoint{Method: "GET", Path: "/orders/:id"}
-	assets, err := FindEndpointAssets(store, []Endpoint{endpoint, endpoint})
+	assets, err := findEndpointAssetsForTest(store, []Endpoint{endpoint, endpoint})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +31,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumers, err := FindGrpcImpactSources(store, []GrpcMethod{method})
+	consumers, err := findGrpcImpactSourcesForTest(store, []GrpcMethod{method})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,16 +45,69 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, err := FindGrpcImpactSources(store, []GrpcMethod{missing})
+	empty, err := findGrpcImpactSourcesForTest(store, []GrpcMethod{missing})
 	if err != nil || len(empty) != 1 || len(empty[0].Consumers) != 0 {
 		t.Fatalf("empty=%#v err=%v", empty, err)
 	}
 }
 
 func TestEndpointQueryRejectsUnknownEndpoint(t *testing.T) {
-	_, err := FindEndpointAssets(queryStore(), []Endpoint{{Method: "GET", Path: "/missing"}})
+	_, err := findEndpointAssetsForTest(queryStore(), []Endpoint{{Method: "GET", Path: "/missing"}})
 	if err == nil {
 		t.Fatal("expected endpoint-not-found error")
+	}
+}
+
+func TestEndpointAliasKeepsGrpcBidirectionalInvariant(t *testing.T) {
+	store := queryStore()
+	handler := store.Routes[0].HandlerSymbol
+	store.Annotations[0].Path = "/orders/:id"
+	store.Routes = append(store.Routes, facts.RouteRegistrationFact{
+		ID: "route:legacy", Method: "GET", ResolvedPath: "/legacy/orders/:id", HandlerSymbol: handler,
+	})
+
+	alias := Endpoint{Method: "GET", Path: "/legacy/orders/:id"}
+	assets, err := findEndpointAssetsForTest(store, []Endpoint{alias})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 1 || len(assets[0].Grpc) != 1 {
+		t.Fatalf("alias assets = %#v", assets)
+	}
+	method, err := ParseGrpcMethod("/shop.order.v1.OrderService/Get")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := findGrpcImpactSourcesForTest(store, []GrpcMethod{method})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundAlias := false
+	for _, consumer := range sources[0].Consumers {
+		foundAlias = foundAlias || consumer.Endpoint == alias
+	}
+	if !foundAlias {
+		t.Fatalf("grpc reverse query omitted alias: %#v", sources)
+	}
+}
+
+func TestEndpointQueryEnforcesTraversalBudget(t *testing.T) {
+	store := queryStore()
+	service := store.References[0].ToSymbol
+	helper := facts.SymbolID("func:example.com/project/service::Helper")
+	store.References = append(store.References, facts.ReferenceFact{
+		ID: "call:helper", Kind: facts.ReferenceKindCall, FromSymbol: service, ToSymbol: helper,
+	})
+	store.GrpcCalls[0].CallerSymbol = helper
+	snapshot := facts.Freeze(store)
+	limits := analysis.DefaultLimits()
+	limits.MaxDepth = 1
+	_, err := FindEndpointAssets(context.Background(), snapshot, endpointcatalog.Build(snapshot), limits, []Endpoint{{
+		Method: "GET", Path: "/stale/orders/:id",
+	}})
+	var budgetErr *analysis.BudgetError
+	if !errors.As(err, &budgetErr) {
+		t.Fatalf("query error = %v, want BudgetError", err)
 	}
 }
 
@@ -75,7 +132,7 @@ func TestForwardChainsRecordsAllPathsToSharedGrpcHelper(t *testing.T) {
 	store.GrpcOperations = []facts.GrpcOperationFact{operation}
 	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: helper, OperationID: operation.ID, ClientBinding: facts.GrpcClientBinding{GoPackage: "example.com/proto", ClientType: "OrderClient", GoMethod: "Get"}}}
 
-	assets, err := FindEndpointAssets(store, []Endpoint{{Method: "GET", Path: "/orders/:id"}})
+	assets, err := findEndpointAssetsForTest(store, []Endpoint{{Method: "GET", Path: "/orders/:id"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,4 +166,14 @@ func queryStore() *facts.Store {
 	store.GrpcOperations = []facts.GrpcOperationFact{operation}
 	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: service, OperationID: operation.ID, ClientBinding: facts.GrpcClientBinding{GoPackage: "example.com/proto", ClientType: "OrderClient", GoMethod: "Get"}}}
 	return store
+}
+
+func findEndpointAssetsForTest(store *facts.Store, inputs []Endpoint) ([]EndpointAsset, error) {
+	snapshot := facts.Freeze(store)
+	return FindEndpointAssets(context.Background(), snapshot, endpointcatalog.Build(snapshot), analysis.DefaultLimits(), inputs)
+}
+
+func findGrpcImpactSourcesForTest(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpactSource, error) {
+	snapshot := facts.Freeze(store)
+	return FindGrpcImpactSources(context.Background(), snapshot, endpointcatalog.Build(snapshot), analysis.DefaultLimits(), inputs)
 }

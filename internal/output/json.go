@@ -9,14 +9,14 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
-// RenderJSON 把 facts.Store 序列化为缩进 JSON，末尾追加换行。
-//
-// 步骤：用 append(nil, src...) 拷贝每类事实避免污染 Store；按 ID 字典序稳定排序；
-// nil 切片转为空切片使 JSON 输出 "[]" 而非 null；最后 MarshalIndent 序列化。
-// 该函数是 facts 命令的对外契约实现，相同 Store 产出字节级一致输出。
-func RenderJSON(store *facts.Store) ([]byte, error) {
+// RenderSnapshotJSON renders a frozen fact snapshot. Project root is redacted to
+// "." so facts artifacts can be stored without leaking CI or workstation paths.
+func RenderSnapshotJSON(snapshot facts.Snapshot) ([]byte, error) {
+	store := snapshot.Store()
+	project := store.Project
+	project.Root = "."
 	doc := Document{
-		Project:          store.Project,
+		Project:          project,
 		Symbols:          append([]facts.SymbolFact(nil), store.Symbols...),
 		Annotations:      append([]facts.AnnotationFact(nil), store.Annotations...),
 		RouteGroups:      append([]facts.RouteGroupFact(nil), store.RouteGroups...),

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
@@ -138,6 +139,192 @@ func RegisterAll(s grpc.ServiceRegistrar) {
 	if barImplementation != "BarImpl" {
 		t.Fatalf("unrelated registration must still resolve its implementation, got %q", barImplementation)
 	}
+}
+
+func TestExtractServerProvidersResolvesGenericContainerRegistration(t *testing.T) {
+	root := t.TempDir()
+	writeContainerRegistrationProject(t, root, `
+func RegisterAll(s api.Registrar) {
+	try.Check(container.Provide(provider.NewEchoServer))
+	api.RegisterEchoServiceServer(s, container.GetBean[api.EchoServiceServer]().MustGet())
+}
+`)
+
+	providers, issues := extractContainerRegistrationProviders(t, root)
+	if len(issues) != 0 {
+		t.Fatalf("issues = %#v, want none", issues)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("providers = %#v, want 2", providers)
+	}
+	for _, provider := range providers {
+		if provider.ImplementationType != "EchoServer" {
+			t.Fatalf("implementation type = %q, want EchoServer", provider.ImplementationType)
+		}
+		if provider.HandlerSymbol == "" {
+			t.Fatalf("handler symbol must be resolved: %#v", provider)
+		}
+	}
+}
+
+func TestExtractServerProvidersKeepsGenericContainerAmbiguity(t *testing.T) {
+	root := t.TempDir()
+	writeContainerRegistrationProject(t, root, `
+func RegisterAll(s api.Registrar) {
+	try.Check(container.Provide(provider.NewEchoServer))
+	try.Check(container.Provide(provider.NewAlternativeEchoServer))
+	api.RegisterEchoServiceServer(s, container.GetBean[api.EchoServiceServer]().MustGet())
+}
+`)
+
+	providers, issues := extractContainerRegistrationProviders(t, root)
+	if len(issues) != 1 || issues[0].Kind != ServerBindingAmbiguous {
+		t.Fatalf("issues = %#v, want one ambiguous issue", issues)
+	}
+	for _, provider := range providers {
+		if provider.ImplementationType != "" || provider.HandlerSymbol != "" {
+			t.Fatalf("ambiguous container registration must remain unresolved: %#v", provider)
+		}
+	}
+}
+
+func TestExtractServerProvidersIgnoresConditionalContainerRegistration(t *testing.T) {
+	root := t.TempDir()
+	writeContainerRegistrationProject(t, root, `
+func RegisterAll(s api.Registrar, enabled bool) {
+	if enabled {
+		try.Check(container.Provide(provider.NewEchoServer))
+	}
+	api.RegisterEchoServiceServer(s, container.GetBean[api.EchoServiceServer]().MustGet())
+}
+`)
+
+	providers, issues := extractContainerRegistrationProviders(t, root)
+	if len(issues) != 1 || issues[0].Kind != ServerBindingUnresolved {
+		t.Fatalf("issues = %#v, want one unresolved issue", issues)
+	}
+	for _, provider := range providers {
+		if provider.ImplementationType != "" || provider.HandlerSymbol != "" {
+			t.Fatalf("conditional container registration must remain unresolved: %#v", provider)
+		}
+	}
+}
+
+func TestExtractServerProvidersIgnoresContainerRegistrationAfterServerRegistration(t *testing.T) {
+	root := t.TempDir()
+	writeContainerRegistrationProject(t, root, `
+func RegisterAll(s api.Registrar) {
+	api.RegisterEchoServiceServer(s, container.GetBean[api.EchoServiceServer]().MustGet())
+	try.Check(container.Provide(provider.NewEchoServer))
+}
+`)
+
+	providers, issues := extractContainerRegistrationProviders(t, root)
+	if len(issues) != 1 || issues[0].Kind != ServerBindingUnresolved {
+		t.Fatalf("issues = %#v, want one unresolved issue", issues)
+	}
+	for _, provider := range providers {
+		if provider.ImplementationType != "" || provider.HandlerSymbol != "" {
+			t.Fatalf("late container registration must remain unresolved: %#v", provider)
+		}
+	}
+}
+
+func TestExtractServerProvidersIgnoresContainerFactoryWithUnknownReturnPath(t *testing.T) {
+	root := t.TempDir()
+	writeContainerRegistrationProject(t, root, `
+func RegisterAll(s api.Registrar) {
+	try.Check(container.Provide(provider.NewUncertainEchoServer))
+	api.RegisterEchoServiceServer(s, container.GetBean[api.EchoServiceServer]().MustGet())
+}
+`)
+
+	providers, issues := extractContainerRegistrationProviders(t, root)
+	if len(issues) != 1 || issues[0].Kind != ServerBindingUnresolved {
+		t.Fatalf("issues = %#v, want one unresolved issue", issues)
+	}
+	for _, provider := range providers {
+		if provider.ImplementationType != "" || provider.HandlerSymbol != "" {
+			t.Fatalf("container factory with unknown return path must remain unresolved: %#v", provider)
+		}
+	}
+}
+
+func extractContainerRegistrationProviders(t *testing.T, root string) ([]facts.GrpcProviderFact, []ServerBindingIssue) {
+	t.Helper()
+	p, err := project.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := astindex.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := BuildServerCatalog(p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ExtractServerProviders(p, idx, catalog)
+}
+
+func writeContainerRegistrationProject(t *testing.T, root, registration string) {
+	t.Helper()
+	writeServerExtractorFile(t, root, "go.mod", "module example.com/container\n\ngo 1.24\n")
+	writeServerExtractorFile(t, root, "api/echo_grpc.pb.go", `// Code generated by protoc-gen-go-grpc. DO NOT EDIT.
+package api
+
+type Registrar interface{}
+
+type EchoServiceServer interface {
+	Ping()
+	Health()
+}
+
+func RegisterEchoServiceServer(_ Registrar, _ EchoServiceServer) {}
+
+var EchoService_ServiceDesc = ServiceDesc{
+	ServiceName: "example.echo.v1.EchoService",
+	HandlerType: (*EchoServiceServer)(nil),
+	Methods: []MethodDesc{{MethodName: "Ping"}, {MethodName: "Health"}},
+}
+
+type MethodDesc struct { MethodName string }
+type ServiceDesc struct {
+	ServiceName string
+	HandlerType any
+	Methods []MethodDesc
+}
+`)
+	writeServerExtractorFile(t, root, "provider/echo.go", `package provider
+
+import "example.com/container/api"
+
+type EchoServer struct{}
+func NewEchoServer() api.EchoServiceServer { return &EchoServer{} }
+func (EchoServer) Ping() {}
+func (EchoServer) Health() {}
+
+type AlternativeEchoServer struct{}
+func NewAlternativeEchoServer() api.EchoServiceServer { return &AlternativeEchoServer{} }
+func (AlternativeEchoServer) Ping() {}
+func (AlternativeEchoServer) Health() {}
+
+func NewUncertainEchoServer(enabled bool) api.EchoServiceServer {
+	if enabled {
+		return &EchoServer{}
+	}
+	return nil
+}
+`)
+	writeServerExtractorFile(t, root, "app/register.go", `package app
+
+import (
+	"example.com/container/api"
+	"example.com/container/provider"
+	container "example.com/runtime/container"
+	try "example.com/runtime/try"
+)
+`+registration)
 }
 
 func writeServerExtractorFile(t *testing.T, root, relPath, content string) {

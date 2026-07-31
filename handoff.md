@@ -21,17 +21,18 @@
 | `endpoint-assets` | BFF | 一个或多个 `--endpoint` | endpoint 对 gRPC 的依赖资产 |
 | `grpc-impact` | 后端 Go 服务 | 已应用的 `--diff` | 受影响的 gRPC、Dubbo、HTTP、XXL-Job 入站契约 |
 | `facts` | 支持的 Go 项目 | `--project` | 原子 facts 与 diagnostics，仅用于排障 |
-| `schema` | 无项目加载 | `--type facts|impact|grpc-impact` | 稳定 JSON Schema |
+| `schema` | 无项目加载 | `--type facts|impact|endpoint-assets|grpc-impact` | 稳定 JSON Schema |
 
-路径参数必须是绝对路径。`impact` 至少传 `--diff` 或 `--grpc` 之一，二者可以组合且只输出一份 JSON。`grpc-impact` 的 diff 必须已应用到 `--project` 的变更后源码。`--timings` 只写 stderr，JSON stdout 不得混入日志、timing、diagnostics 或 `buildContext`。
+路径参数必须是绝对路径。`impact` 至少传 `--diff` 或 `--grpc` 之一，二者可以组合且只输出一份 JSON。`grpc-impact` 的 diff 必须已应用到 `--project` 的变更后源码。`--timings` 只写 stderr；`--diagnostics-output` 原子写入独立 JSON sidecar；正式 JSON stdout 不得混入日志、timing、diagnostics 或 `buildContext`。
 
 ## 3. 分层架构
 
 ```text
 project.Load + AST index + diff parser
         -> protocol extractors
-        -> facts.Store
-        -> reverse graph / route graph
+        -> facts.Builder
+        -> facts.Snapshot (freeze)
+        -> reverse graph / route graph / EndpointCatalog
         -> impact 或 serviceimpact
         -> internal/output
         -> 稳定 JSON / Schema
@@ -43,8 +44,8 @@ project.Load + AST index + diff parser
 | 应用编排 | `internal/app` | 加载项目、组织 facts 构建、调用分析与输出 | 协议专属 AST 规则 |
 | 项目与索引 | `internal/project`、`internal/astindex` | package 加载、build constraint、源文件与符号定位 | 影响结论推导 |
 | 事实抽取 | `internal/extract/*` | 从 AST 提取符号、引用、route、gRPC、Dubbo、Job、IM 等原子事实 | 跨协议最终影响聚合 |
-| 事实存储 | `internal/facts` | fact ID、symbol、change、diagnostics 的统一模型 | 对外 JSON 兼容逻辑 |
-| 图与连接 | `internal/graph`、`internal/link` | 反向引用、route 到 handler 的可达性与连接关系 | 输出字段组装 |
+| 事实存储 | `internal/facts` | Builder 汇聚事实，Freeze 后提供防御性复制的只读 Snapshot | 对外 JSON 兼容逻辑 |
+| 图与连接 | `internal/graph`、`internal/link`、`internal/endpoint` | 反向引用、route 可达性与唯一 Endpoint 身份目录 | 输出字段组装 |
 | BFF 分析 | `internal/impact` | 由 diff/gRPC root 向 BFF endpoint、IM 传播 | 后端服务入口投影 |
 | 服务分析 | `internal/serviceimpact` | 由 diff root 投影到入站服务契约 | BFF controller annotation 语义 |
 | 输出 | `internal/output` | 去重、排序、固定空数组、JSON 与 Schema | 重新解释 AST 或补全分析事实 |
@@ -66,6 +67,7 @@ diff / gRPC operation
 - endpoint 的主要身份来自 controller annotation；route 解析提供注册证据与 `routes` 信息。
 - annotation 路径与 route 路径不一致时，两者都属于证据，但不可让动态 route 推断覆盖 annotation 定义的 endpoint 身份。
 - endpoint 的 HTTP method 统一规范化为大写（annotation 与 route fallback 都经 `strings.ToUpper`），保证 `impact`、`endpoint-assets`、`impact --grpc` 三处对同一 endpoint 的身份比对大小写一致。
+- Annotation-first、Route Fallback、注解路径漂移和 Route Alias 只由 `internal/endpoint.EndpointCatalog` 判定；Impact 与 Dependency Query 不得各自实现 Endpoint 规则。
 - `endpoint-assets --endpoint` 采用 annotation 格式，例如 `GET /orders/:id`。
 - BFF gRPC 调用需同时具备 generated client、静态 receiver 类型、项目内可执行调用链三类证据；不穿透外部 SDK，也不跨 BFF 仓分析。
 - BFF 的 `impact` 通过一个 JSON 同时容纳 diff 模式和 gRPC 输入模式，不能重新拆成多个彼此孤立的正式结果。
@@ -95,6 +97,8 @@ diff
 | XXL-Job | 指定 map 类型的注册、静态 job name、可解析 handler | job name / `registered_job` | 动态任务名或无法唯一绑定 handler 不进入正式结果 |
 
 四类协议（gRPC、HTTP、Dubbo、Job）都要求 registration liveness：注册函数有项目内引用，或符合 `main`、`Register*`、`Initialize*` 启动约定。未满足时不进入正式 summary；当前实现不为此独立输出 diagnostics。
+
+gRPC 服务端允许解析一类受限的泛型容器注册：同一函数顶层、`RegisterXxxServer` 调用之前存在 `container.Provide(factory)`，且该工厂声明返回的接口与 `container.GetBean[Interface]().MustGet()` 的类型实参完全一致，并能从工厂返回语句证明唯一的项目内具体类型。条件分支、循环、跨函数容器状态、注册顺序倒置或多个候选实现均不推断，保留绑定诊断。
 
 ## 6. 输出契约
 
@@ -175,8 +179,11 @@ go build ./cmd/go-analyzer
 git diff --check
 go run ./cmd/go-analyzer schema --type facts
 go run ./cmd/go-analyzer schema --type impact
+go run ./cmd/go-analyzer schema --type endpoint-assets
 go run ./cmd/go-analyzer schema --type grpc-impact
 ```
+
+`facts` 与 diagnostic sidecar 是内部受限排障产物，最长保留 7 天；facts 的 `project.root` 必须保持 `"."`，所有源码位置必须是项目相对路径。正式 impact/grpc-impact 产物最长保留 90 天，按 CI 影响报告权限访问。
 
 按“CLI -> app -> extractor/facts -> graph/link -> analyzer -> output/schema”的数据流阅读，不要按目录随机抽读。协议改动或发现可疑路径后，构造已应用的真实项目 diff，覆盖单/多文件、handler 变更和注册配置变更。
 

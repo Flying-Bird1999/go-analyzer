@@ -5,14 +5,128 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/output"
 )
+
+func TestRunFactsContextReturnsStableCancellationCode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := RunFactsWithMetricsContext(ctx, Options{
+		ProjectPath: filepath.Join("..", "..", "testdata", "fixtures", "mini-bff"),
+		Format:      "json",
+	})
+	var analysisErr *AnalysisError
+	if !errors.As(err, &analysisErr) || analysisErr.Code != ErrorAnalysisCancelled {
+		t.Fatalf("error = %v, want %s", err, ErrorAnalysisCancelled)
+	}
+}
+
+func TestRunImpactReturnsStableDiffBudgetCode(t *testing.T) {
+	root := filepath.Join("..", "..", "testdata", "fixtures", "mini-bff")
+	diffPath := filepath.Join(t.TempDir(), "large.diff")
+	if err := os.WriteFile(diffPath, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RunImpactWithMetrics(ImpactOptions{
+		ProjectPath: root,
+		DiffPath:    diffPath,
+		Format:      "json",
+		Limits:      analysis.Limits{MaxDiffBytes: 1},
+	})
+	var analysisErr *AnalysisError
+	if !errors.As(err, &analysisErr) || analysisErr.Code != ErrorAnalysisBudget {
+		t.Fatalf("error = %v, want %s", err, ErrorAnalysisBudget)
+	}
+}
+
+func TestRunImpactGrpcOnlySkipsAutomaticModuleConfig(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "go.mod", "module example.com/grpc-only\n\ngo 1.24\n")
+	writeTestFile(t, root, "main.go", "package grpconly\n\nfunc Handler() {}\n")
+	writeTestFile(t, root, ".analyzer/go-impact.config.json", "{invalid")
+
+	_, err := RunImpactWithMetrics(ImpactOptions{
+		ProjectPath: root,
+		GrpcMethods: []string{"/example.v1.OrderService/Get"},
+		Format:      "json",
+	})
+	var analysisErr *AnalysisError
+	if errors.As(err, &analysisErr) && analysisErr.Code == ErrorConfigInvalid {
+		t.Fatalf("gRPC-only impact read unrelated module config: %v", err)
+	}
+}
+
+func TestRunImpactRejectsExplicitConfigWithoutDiff(t *testing.T) {
+	_, err := RunImpactWithMetrics(ImpactOptions{
+		ProjectPath:      t.TempDir(),
+		GrpcMethods:      []string{"/example.v1.OrderService/Get"},
+		ImpactConfigPath: filepath.Join(t.TempDir(), "impact.json"),
+		Format:           "json",
+	})
+	var analysisErr *AnalysisError
+	if !errors.As(err, &analysisErr) || analysisErr.Code != ErrorInvalidArgument {
+		t.Fatalf("error = %v, want %s", err, ErrorInvalidArgument)
+	}
+}
+
+func TestPublicQueryInputsUseStableInvalidArgumentCode(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "malformed grpc method",
+			run: func() error {
+				_, err := RunImpactWithMetrics(ImpactOptions{
+					ProjectPath: t.TempDir(),
+					GrpcMethods: []string{"not-a-full-method"},
+					Format:      "json",
+				})
+				return err
+			},
+		},
+		{
+			name: "missing endpoint",
+			run: func() error {
+				_, err := RunEndpointAssetsWithMetrics(EndpointAssetsOptions{
+					ProjectPath: t.TempDir(),
+					Format:      "json",
+				})
+				return err
+			},
+		},
+		{
+			name: "malformed endpoint",
+			run: func() error {
+				_, err := RunEndpointAssetsWithMetrics(EndpointAssetsOptions{
+					ProjectPath: t.TempDir(),
+					Endpoints:   []string{"GET"},
+					Format:      "json",
+				})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.run()
+			var analysisErr *AnalysisError
+			if !errors.As(err, &analysisErr) || analysisErr.Code != ErrorInvalidArgument {
+				t.Fatalf("error = %v, want %s", err, ErrorInvalidArgument)
+			}
+		})
+	}
+}
 
 // TestRunFactsRequiresProjectPath 验证 project path 为空时 RunFacts 直接报错。
 func TestRunFactsRequiresProjectPath(t *testing.T) {
@@ -535,16 +649,24 @@ func TestRunImpactOmitsUnresolvedGoModDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := RunImpact(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
+	result, err := RunImpactWithMetrics(ImpactOptions{ProjectPath: root, DiffPath: diffPath, Format: "json"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := result.Output
 	var doc output.ImpactDocument
 	if err := json.Unmarshal(got, &doc); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(got, []byte(`"diagnostics"`)) {
 		t.Fatalf("impact output should omit diagnostics: %s", got)
+	}
+	found := false
+	for _, diagnostic := range result.Diagnostics {
+		found = found || diagnostic.Code == string(diagnostics.CodeModuleDiffUnresolved)
+	}
+	if !found {
+		t.Fatalf("session diagnostics = %#v, want %s", result.Diagnostics, diagnostics.CodeModuleDiffUnresolved)
 	}
 }
 

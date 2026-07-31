@@ -14,7 +14,7 @@
 
 ## P1：正确性与安全
 
-### [ ] GA-001 统一 EndpointCatalog
+### [x] GA-001 统一 EndpointCatalog
 
 **差距**
 
@@ -42,7 +42,7 @@
 - `endpoint-assets(A)` 包含 gRPC B，当且仅当 `impact --grpc B` 包含 A。
 - 三类查询输出的 Endpoint Key 与 Route 候选完全一致。
 
-### [ ] GA-002 统一 `endpointSourcesSummary` Chain 方向
+### [x] GA-002 统一 `endpointSourcesSummary` Chain 方向
 
 **差距**
 
@@ -67,7 +67,7 @@ File/Module 来源的 Chain 从代码变化根走向 Endpoint；gRPC 来源在 `
 - 每条 Chain 首节点可由 Source 元数据验证，末节点必须等于所属 Endpoint。
 - 同一输入重复执行得到字节相同的 Chain。
 
-### [ ] GA-003 合并同一 Endpoint 的全部 Route 证据
+### [x] GA-003 合并同一 Endpoint 的全部 Route 证据
 
 **差距**
 
@@ -92,7 +92,7 @@ File/Module 来源的 Chain 从代码变化根走向 Endpoint；gRPC 来源在 `
 - 跨 File/Module/gRPC Source 合并时不丢 Route。
 - `summary`、Source 摘要和 `endpointSourcesSummary` 满足技术方案第 8.8 节集合不变量。
 
-### [ ] GA-004 加固符号链接路径边界
+### [x] GA-004 加固符号链接路径边界
 
 **差距**
 
@@ -115,7 +115,7 @@ File/Module 来源的 Chain 从代码变化根走向 Endpoint；gRPC 来源在 `
 - 指向项目内部的合法符号链接行为有明确测试。
 - 错误映射为稳定的输入安全错误码。
 
-### [ ] GA-005 增加取消、超时和资源预算
+### [x] GA-005 增加取消、超时和资源预算
 
 **差距**
 
@@ -139,7 +139,7 @@ File/Module 来源的 Chain 从代码变化根走向 Endpoint；gRPC 来源在 `
 - 超预算返回 `analysis_budget_exceeded`，取消返回 `analysis_cancelled`。
 - 正常 Fixture 和真实 BFF 结果不受预算机制影响。
 
-### [ ] GA-006 统一 Fatal Error Code
+### [x] GA-006 统一 Fatal Error Code
 
 **差距**
 
@@ -164,7 +164,7 @@ File/Module 来源的 Chain 从代码变化根走向 Endpoint；gRPC 来源在 `
 
 ## P2：契约与可观测性
 
-### [ ] GA-007 为会话级 Diagnostic 提供结构化通道
+### [x] GA-007 为会话级 Diagnostic 提供结构化通道
 
 **差距**
 
@@ -189,7 +189,7 @@ Diff 映射、删除恢复和 Module Usage Diagnostic 只存在于 `impact` 会�
 - 默认 stdout 仍只包含正式 JSON。
 - Diagnostic 的开关与输出格式有契约测试。
 
-### [ ] GA-008 补齐 `endpoint-assets` Schema 与确定性
+### [x] GA-008 补齐 `endpoint-assets` Schema 与确定性
 
 **差距**
 
@@ -212,7 +212,7 @@ Diff 映射、删除恢复和 Module Usage Diagnostic 只存在于 `impact` 会�
 - 重复执行和随机化 Fact 插入顺序仍得到字节相同 JSON。
 - CLI Help、README 和技术方案中的 `--type` 值域一致。
 
-### [ ] GA-009 将 Store Builder 与只读 Snapshot 分离
+### [x] GA-009 将 Store Builder 与只读 Snapshot 分离
 
 **差距**
 
@@ -235,7 +235,7 @@ Diff 映射、删除恢复和 Module Usage Diagnostic 只存在于 `impact` 会�
 - Freeze 后追加 Fact 的测试明确失败或无法编译。
 - 现有 Golden 结果保持不变。
 
-### [ ] GA-010 gRPC-only Impact 跳过 Module Config
+### [x] GA-010 gRPC-only Impact 跳过 Module Config
 
 **差距**
 
@@ -259,7 +259,7 @@ Diff 映射、删除恢复和 Module Usage Diagnostic 只存在于 `impact` 会�
 
 ## P3：健壮性
 
-### [ ] GA-011 Impact Config 拒绝尾随 JSON
+### [x] GA-011 Impact Config 拒绝尾随 JSON
 
 **差距**
 
@@ -274,7 +274,7 @@ Diff 映射、删除恢复和 Module Usage Diagnostic 只存在于 `impact` 会�
 - 首次解码后再次解码并要求 `io.EOF`。
 - 增加尾随对象、尾随数组和非空垃圾文本测试。
 
-### [ ] GA-012 明确 Facts 绝对路径脱敏策略
+### [x] GA-012 明确 Facts 绝对路径脱敏策略
 
 **差距**
 

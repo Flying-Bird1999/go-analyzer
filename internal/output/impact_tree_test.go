@@ -367,6 +367,41 @@ func TestBuildImpactDocumentAddsEndpointSourcesSummaryForModuleSources(t *testin
 	if got.ChangeType != facts.ModuleChangeUpgraded || got.VersionBefore != "v1.0.0" || got.VersionAfter != "v1.1.0" {
 		t.Fatalf("module metadata = %#v", got)
 	}
+	if len(got.Chains) != 1 || len(got.Chains[0]) < 4 ||
+		got.Chains[0][0] != "module example.com/lib" ||
+		got.Chains[0][1] != "import service/payment.go" ||
+		got.Chains[0][len(got.Chains[0])-1] != "POST /pay" {
+		t.Fatalf("module chain direction = %#v", got.Chains)
+	}
+}
+
+func TestBuildImpactDocumentMergesRouteEvidenceAcrossRoots(t *testing.T) {
+	endpoint := func(routePath string) impact.RootImpact {
+		return impact.RootImpact{
+			Change: facts.ChangeFact{ID: "change:" + routePath, File: "controller/orders.go"},
+			Root: impact.Node{
+				ID: "func:example.com/app::" + routePath, Kind: "func", Children: []impact.Node{{
+					ID: "endpoint:GET:/orders", Kind: "endpoint", Method: "GET", Path: "/orders", Children: []impact.Node{},
+				}},
+			},
+			Endpoints: []impact.EndpointImpact{{
+				Method: "GET", Path: "/orders",
+				Routes: []impact.EndpointRoute{{Method: "GET", Path: routePath}},
+			}},
+		}
+	}
+	doc := BuildImpactDocument(nil, impact.TreeResult{Roots: []impact.RootImpact{
+		endpoint("/orders"),
+		endpoint("/v1/orders"),
+	}}, ImpactDocumentOptions{})
+
+	if len(doc.Summary.ImpactedEndpoints) != 1 {
+		t.Fatalf("summary endpoints = %#v", doc.Summary.ImpactedEndpoints)
+	}
+	routes := doc.Summary.ImpactedEndpoints[0].Routes
+	if len(routes) != 2 || routes[0].Path != "/orders" || routes[1].Path != "/v1/orders" {
+		t.Fatalf("merged routes = %#v", routes)
+	}
 }
 
 // 场景：JSON 顶层字段顺序把 endpointSourcesSummary 放在 fileSources/moduleSources 之后，便于人工阅读。

@@ -110,7 +110,54 @@ func projectPath(root, path string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(path))
 	// 拒绝空路径、绝对路径，以及清理后等于 ".." 或以 "../" 开头的相对逃逸路径。
 	if path == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("unsafe diff path %q", path)
+		return "", &PathSecurityError{Path: path, Reason: "path is not project-relative"}
 	}
-	return filepath.Join(root, clean), nil
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", &PathSecurityError{Path: path, Reason: fmt.Sprintf("resolve project root: %v", err)}
+	}
+	candidate := filepath.Join(root, clean)
+	resolved, err := resolveExistingPath(candidate)
+	if err != nil {
+		return "", &PathSecurityError{Path: path, Reason: err.Error()}
+	}
+	if !pathWithin(realRoot, resolved) {
+		return "", &PathSecurityError{Path: path, Reason: "resolved path escapes project root"}
+	}
+	return candidate, nil
+}
+
+// PathSecurityError identifies a diff path that crosses the project boundary.
+type PathSecurityError struct {
+	Path   string
+	Reason string
+}
+
+func (e *PathSecurityError) Error() string {
+	return fmt.Sprintf("unsafe diff path %q: %s", e.Path, e.Reason)
+}
+
+func resolveExistingPath(path string) (string, error) {
+	current := path
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(current)
+			if resolveErr != nil {
+				return "", fmt.Errorf("resolve symbolic link: %w", resolveErr)
+			}
+			return resolved, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect path: %w", err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no existing parent")
+		}
+		current = parent
+	}
+}
+
+func pathWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

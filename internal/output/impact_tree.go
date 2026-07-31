@@ -296,9 +296,8 @@ func BuildImpactDocument(fileChanges []diff.FileChange, result impact.TreeResult
 				continue
 			}
 			summary := EndpointSummary{Method: endpoint.Method, Path: endpoint.Path, Routes: routesForImpact(endpoint.Routes)}
-			endpointID := endpointKey(summary)
-			builder.endpoints[endpointID] = summary
-			globalEndpoints[endpointID] = summary
+			mergeEndpointSummary(builder.endpoints, summary)
+			mergeEndpointSummary(globalEndpoints, summary)
 		}
 		for _, event := range root.IMEvents {
 			// 空事件不计入任何摘要；动态事件在树中以 im_event_unresolved 终端存在但 Event 为空。
@@ -683,7 +682,11 @@ func addEndpointSourceFile(builders map[string]*endpointSourceSummaryBuilder, so
 				continue
 			}
 			impactSource.RootSymbols = append(impactSource.RootSymbols, rootSymbolSummary(root))
-			impactSource.Chains = append(impactSource.Chains, chainLabels(path))
+			labels := chainLabels(path)
+			if metadata.sourceType == "module" {
+				labels = append([]string{"module " + metadata.modulePath, "import " + metadata.sourceFile}, labels...)
+			}
+			impactSource.Chains = append(impactSource.Chains, labels)
 		}
 		builder.sources[sourceKey] = impactSource
 	}
@@ -898,6 +901,7 @@ func normalizeFileSource(source FileSourceImpact) FileSourceImpact {
 		source.ImpactedEndpoints = []EndpointSummary{}
 	}
 	sortEndpointSummaries(source.ImpactedEndpoints)
+	source.ImpactedEndpoints = uniqueEndpointSummaries(source.ImpactedEndpoints)
 	if source.ImpactedIMEvents == nil {
 		source.ImpactedIMEvents = []string{}
 	}
@@ -920,6 +924,19 @@ func RenderImpactTreeJSON(doc ImpactDocument) ([]byte, error) {
 // endpointKey 构造端点去重 key。用 \x00 分隔避免 method/path 拼接歧义。
 func endpointKey(endpoint EndpointSummary) string {
 	return endpoint.Method + "\x00" + endpoint.Path
+}
+
+// mergeEndpointSummary is the only map write path for endpoint summaries. It
+// preserves the union of route evidence when independent roots or handlers map
+// to the same canonical endpoint.
+func mergeEndpointSummary(target map[string]EndpointSummary, candidate EndpointSummary) {
+	candidate.Method = strings.ToUpper(candidate.Method)
+	candidate.Routes = uniqueDependencyEndpoints(candidate.Routes)
+	key := endpointKey(candidate)
+	if existing, ok := target[key]; ok {
+		candidate.Routes = uniqueDependencyEndpoints(append(existing.Routes, candidate.Routes...))
+	}
+	target[key] = candidate
 }
 
 // routesForImpact 把 impact 层解析出的路由候选投影为对外 dependencyEndpoint 列表。

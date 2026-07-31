@@ -14,16 +14,16 @@ type CallGraph struct {
 	grpcByCaller map[facts.SymbolID][]facts.GrpcCallFact
 }
 
-func NewCallGraph(store *facts.Store) *CallGraph {
+func NewCallGraph(snapshot facts.Snapshot) *CallGraph {
 	g := &CallGraph{forward: map[facts.SymbolID][]facts.SymbolID{}, reverse: map[facts.SymbolID][]facts.SymbolID{}, grpcByCaller: map[facts.SymbolID][]facts.GrpcCallFact{}}
-	for _, ref := range store.References {
+	for _, ref := range snapshot.References() {
 		if ref.Kind != facts.ReferenceKindCall || ref.FromSymbol == "" || ref.ToSymbol == "" {
 			continue
 		}
 		g.forward[ref.FromSymbol] = appendSymbolOnce(g.forward[ref.FromSymbol], ref.ToSymbol)
 		g.reverse[ref.ToSymbol] = appendSymbolOnce(g.reverse[ref.ToSymbol], ref.FromSymbol)
 	}
-	for _, call := range store.GrpcCalls {
+	for _, call := range snapshot.GrpcCalls() {
 		if call.CallerSymbol != "" {
 			// 与 forward/reverse 一致使用 appendOnce 去重：GrpcCallFact.ID 按调用点构造
 			// 理论上唯一，但若上游因任何原因（如未来新增的抽取路径）产生同 ID 重复

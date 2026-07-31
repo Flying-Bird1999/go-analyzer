@@ -35,14 +35,14 @@ type RouteGraph struct {
 	AnnotationsByHandler map[facts.SymbolID][]facts.AnnotationFact
 }
 
-// NewRouteGraph 扫描 store，构建路由图的全部索引。流程：
+// NewRouteGraph 扫描只读快照，构建路由图的全部索引。流程：
 //  1. 索引路由分组，建立 parent->child 关系（来源：ParentGroupID 字段、RouteGroupFlow）。
 //  2. 索引路由，按 group、handler 聚合。
 //  3. 扫描 references：若 reference span 落在某条 route 的 span 内，则建立
 //     route-scoped 依赖；若落在某 group 创建表达式 span 内，则把该 group 及其
 //     descendant group 的全部路由纳入 assigned-group 依赖。
 //  4. 索引中间件绑定、注解，并最终统一排序保证输出稳定。
-func NewRouteGraph(store *facts.Store) *RouteGraph {
+func NewRouteGraph(snapshot facts.Snapshot) *RouteGraph {
 	// routesByFunc / groupsByFunc 为内部辅助索引，按路由函数 symbol 聚合 route/group，
 	// 用于后续按 reference 的 FromSymbol 快速定位候选 route/group。
 	routesByFunc := map[facts.SymbolID][]facts.RouteRegistrationFact{}
@@ -59,7 +59,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		AnnotationsByHandler: map[facts.SymbolID][]facts.AnnotationFact{},
 	}
 	// 第 1 步：建立 parent->child 索引，来源为 group 自带的 ParentGroupID 字段。
-	for _, group := range store.RouteGroups {
+	for _, group := range snapshot.RouteGroups() {
 		g.GroupsByID[group.ID] = group
 		groupsByFunc[group.RouteFunc] = append(groupsByFunc[group.RouteFunc], group)
 		if group.ParentGroupID != "" {
@@ -71,14 +71,14 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	// RouteGroupFlow 记录，或被多条 flow 记录命中；RoutesForGroup 递归靠 seenGroups
 	// 兜底不会因此重复收集路由，但重复条目会误导直接读 ChildGroupsByID 的消费方，
 	// 也让递归多做无意义的重复调用。
-	for _, flow := range store.RouteGroupFlows {
+	for _, flow := range snapshot.RouteGroupFlows() {
 		if flow.ParentGroupID == "" || flow.ChildGroupID == "" {
 			continue
 		}
 		g.ChildGroupsByID[flow.ParentGroupID] = appendStringOnce(g.ChildGroupsByID[flow.ParentGroupID], flow.ChildGroupID)
 	}
 	// 第 2 步：索引路由，按有效 group ID 与 handler symbol 聚合。
-	for _, route := range store.Routes {
+	for _, route := range snapshot.Routes() {
 		g.RoutesByID[route.ID] = route
 		routesByFunc[route.RouteFunc] = append(routesByFunc[route.RouteFunc], route)
 		groupID := effectiveGroupID(route.GroupID, route.RouteFunc, route.GroupVar)
@@ -89,7 +89,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 	}
 	// 第 3 步：把每条 reference 关联到其 span 所在的 route（route-scoped）或 group
 	// （assigned-group），建立依赖 symbol -> 路由的映射。
-	for _, ref := range store.References {
+	for _, ref := range snapshot.References() {
 		if ref.ToSymbol == "" || ref.FromSymbol == "" {
 			continue
 		}
@@ -113,7 +113,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 		}
 	}
 	// 第 4 步：索引中间件绑定与注解。
-	for _, binding := range store.Middleware {
+	for _, binding := range snapshot.MiddlewareBindings() {
 		g.MiddlewareByID[binding.ID] = binding
 		for _, symbol := range binding.MiddlewareSymbols {
 			if symbol == "" {
@@ -122,7 +122,7 @@ func NewRouteGraph(store *facts.Store) *RouteGraph {
 			g.MiddlewareBySymbol[symbol] = append(g.MiddlewareBySymbol[symbol], binding)
 		}
 	}
-	for _, annotation := range store.Annotations {
+	for _, annotation := range snapshot.Annotations() {
 		g.AnnotationsByHandler[annotation.HandlerSymbol] = append(g.AnnotationsByHandler[annotation.HandlerSymbol], annotation)
 	}
 	g.sort()

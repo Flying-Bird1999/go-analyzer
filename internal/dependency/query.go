@@ -2,18 +2,18 @@
 package dependency
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	endpointcatalog "gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/graph"
 )
 
-type Endpoint struct {
-	Method string
-	Path   string
-}
+type Endpoint = endpointcatalog.Key
 type GrpcMethod struct {
 	FullMethod   string
 	ProtoPackage string
@@ -69,28 +69,44 @@ func ParseGrpcMethod(raw string) (GrpcMethod, error) {
 	return GrpcMethod{FullMethod: raw, ProtoPackage: strings.Join(service[:len(service)-1], "."), Service: service[len(service)-1], Method: parts[1]}, nil
 }
 
-func FindEndpointAssets(store *facts.Store, inputs []Endpoint) ([]EndpointAsset, error) {
-	routes := graph.NewRouteGraph(store)
-	calls := graph.NewCallGraph(store)
-	handlers := endpointHandlers(store, routes)
+func FindEndpointAssets(ctx context.Context, snapshot facts.Snapshot, catalog *endpointcatalog.Catalog, limits analysis.Limits, inputs []Endpoint) ([]EndpointAsset, error) {
+	var err error
+	limits, err = limits.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := analysis.CheckCount("endpoint_inputs", len(inputs), limits.MaxRoots); err != nil {
+		return nil, err
+	}
+	store := snapshot.Store()
+	calls := graph.NewCallGraph(snapshot)
+	guard := analysis.NewGuard(ctx, limits)
 	operations := map[string]facts.GrpcOperationFact{}
 	for _, operation := range store.GrpcOperations {
 		operations[operation.ID] = operation
 	}
 	var out []EndpointAsset
 	for _, input := range uniqueEndpoints(inputs) {
-		matched := handlers[input]
-		if len(matched) == 0 {
+		entry, ok := catalog.Lookup(input)
+		if !ok || len(entry.Handlers) == 0 {
 			return nil, fmt.Errorf("endpoint not found: %s %s", input.Method, input.Path)
 		}
 		asset := EndpointAsset{
 			Endpoint: input,
-			Routes:   routesForHandlers(routes, matched),
-			Handlers: append([]facts.SymbolID(nil), matched...),
+			Routes:   dependencyRoutes(entry.Routes),
+			Handlers: append([]facts.SymbolID(nil), entry.Handlers...),
 		}
 		byOperation := map[string]*GrpcDependency{}
-		for _, handler := range matched {
-			for _, chain := range forwardChains(calls, handler) {
+		for _, handler := range entry.Handlers {
+			guard.BeginRoot()
+			chains, err := forwardChains(ctx, calls, handler, guard)
+			if err != nil {
+				return nil, err
+			}
+			for _, chain := range chains {
 				operation, ok := operations[chain.Call.OperationID]
 				if !ok {
 					return nil, fmt.Errorf("gRPC call references missing operation %s", chain.Call.OperationID)
@@ -121,13 +137,15 @@ func FindEndpointAssets(store *facts.Store, inputs []Endpoint) ([]EndpointAsset,
 }
 
 // FindGrpcImpactSources maps changed upstream gRPC methods to BFF HTTP consumers.
-func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpactSource, error) {
-	handlers := endpointHandlers(store, graph.NewRouteGraph(store))
-	endpoints := make([]Endpoint, 0, len(handlers))
-	for endpoint := range handlers {
-		endpoints = append(endpoints, endpoint)
+func FindGrpcImpactSources(ctx context.Context, snapshot facts.Snapshot, catalog *endpointcatalog.Catalog, limits analysis.Limits, inputs []GrpcMethod) ([]GrpcImpactSource, error) {
+	entries := catalog.Entries()
+	endpoints := make([]Endpoint, 0, len(entries))
+	for _, entry := range entries {
+		if len(entry.Handlers) > 0 {
+			endpoints = append(endpoints, entry.Endpoint)
+		}
 	}
-	assets, err := FindEndpointAssets(store, endpoints)
+	assets, err := FindEndpointAssets(ctx, snapshot, catalog, limits, endpoints)
 	if err != nil {
 		return nil, err
 	}
@@ -153,44 +171,14 @@ func FindGrpcImpactSources(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpac
 	return out, nil
 }
 
-func endpointHandlers(store *facts.Store, routes *graph.RouteGraph) map[Endpoint][]facts.SymbolID {
-	out := map[Endpoint][]facts.SymbolID{}
-	for handler, registered := range routes.RoutesByHandler {
-		annotations := routes.AnnotationsForHandler(handler)
-		if len(annotations) > 0 {
-			for _, annotation := range annotations {
-				endpoint := Endpoint{Method: strings.ToUpper(annotation.Method), Path: annotation.Path}
-				out[endpoint] = appendSymbol(out[endpoint], handler)
-			}
-			continue
-		}
-		for _, route := range registered {
-			if route.ResolvedPath != "" {
-				endpoint := Endpoint{Method: strings.ToUpper(route.Method), Path: route.ResolvedPath}
-				out[endpoint] = appendSymbol(out[endpoint], handler)
-			}
-		}
+func dependencyRoutes(routes []endpointcatalog.Route) []Endpoint {
+	out := make([]Endpoint, 0, len(routes))
+	for _, route := range routes {
+		out = append(out, Endpoint(route))
 	}
 	return out
 }
-func routesForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []Endpoint {
-	var out []Endpoint
-	for _, handler := range handlers {
-		for _, route := range routes.RoutesByHandler[handler] {
-			if route.ResolvedPath != "" {
-				out = append(out, Endpoint{Method: strings.ToUpper(route.Method), Path: route.ResolvedPath})
-			}
-		}
-	}
-	out = uniqueEndpoints(out)
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Method != out[j].Method {
-			return out[i].Method < out[j].Method
-		}
-		return out[i].Path < out[j].Path
-	})
-	return out
-}
+
 // forwardChains 从 handler 出发遍历可执行调用图，收集所有到达 gRPC 调用点的路径。
 //
 // 多条不同路径可能汇聚到同一个发起 gRPC 调用的 helper（如 handler 分别经 A、B 两条
@@ -198,10 +186,14 @@ func routesForHandlers(routes *graph.RouteGraph, handlers []facts.SymbolID) []En
 // 的调用链证据。为避免对共享下游子树重复展开（菱形调用图下会造成组合爆炸），按符号
 // 记忆化下游链：每个符号的"到达 gRPC 调用点的相对后缀路径"只计算一次并缓存，多个
 // 上游路径复用同一份缓存结果，整体复杂度为 O(V+E) 而非路径数的指数级。
-func forwardChains(calls *graph.CallGraph, handler facts.SymbolID) []Chain {
-	memo := &chainMemo{calls: calls, cache: map[facts.SymbolID][]relChain{}, inProgress: map[facts.SymbolID]bool{}}
+func forwardChains(ctx context.Context, calls *graph.CallGraph, handler facts.SymbolID, guard *analysis.Guard) ([]Chain, error) {
+	memo := &chainMemo{ctx: ctx, calls: calls, guard: guard, cache: map[facts.SymbolID][]relChain{}, inProgress: map[facts.SymbolID]bool{}}
 	var out []Chain
-	for _, rel := range memo.chainsFrom(handler) {
+	relative, err := memo.chainsFrom(handler, 0)
+	if err != nil {
+		return nil, err
+	}
+	for _, rel := range relative {
 		symbols := append([]facts.SymbolID{handler}, rel.suffix...)
 		out = append(out, Chain{Symbols: symbols, Call: rel.call})
 	}
@@ -211,7 +203,7 @@ func forwardChains(calls *graph.CallGraph, handler facts.SymbolID) []Chain {
 		}
 		return symbolPathLess(out[i].Symbols, out[j].Symbols)
 	})
-	return out
+	return out, nil
 }
 
 // relChain 是相对于某个起始符号的下游链：suffix 为起始符号之后的符号序列（不含起始
@@ -224,35 +216,53 @@ type relChain struct {
 // chainMemo 按符号缓存"从该符号出发能到达的全部 gRPC 调用相对链"，使菱形调用图中
 // 被多条上游路径共享的下游子树只展开一次。
 type chainMemo struct {
+	ctx        context.Context
 	calls      *graph.CallGraph
+	guard      *analysis.Guard
 	cache      map[facts.SymbolID][]relChain
 	inProgress map[facts.SymbolID]bool // 检测计算过程中的环，环边不再向下展开
 }
 
-func (m *chainMemo) chainsFrom(symbol facts.SymbolID) []relChain {
+func (m *chainMemo) chainsFrom(symbol facts.SymbolID, depth int) ([]relChain, error) {
+	if err := m.ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := m.guard.Visit(depth); err != nil {
+		return nil, err
+	}
 	if cached, ok := m.cache[symbol]; ok {
-		return cached
+		return cached, nil
 	}
 	if m.inProgress[symbol] {
 		// 递归回到一个正在计算中的符号：说明存在环，环边到此为止不再展开，
 		// 避免无限递归；不写入 cache，因为该符号的完整结果仍在其外层调用中计算。
-		return nil
+		return nil, nil
 	}
 	m.inProgress[symbol] = true
 	defer delete(m.inProgress, symbol)
 
 	var out []relChain
 	for _, call := range m.calls.GrpcCalls(symbol) {
+		if err := m.guard.Visit(depth); err != nil {
+			return nil, err
+		}
 		out = append(out, relChain{call: call})
 	}
 	for _, next := range m.calls.Callees(symbol) {
-		for _, sub := range m.chainsFrom(next) {
+		subchains, err := m.chainsFrom(next, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		for _, sub := range subchains {
+			if err := m.guard.Visit(depth); err != nil {
+				return nil, err
+			}
 			suffix := append([]facts.SymbolID{next}, sub.suffix...)
 			out = append(out, relChain{suffix: suffix, call: sub.call})
 		}
 	}
 	m.cache[symbol] = out
-	return out
+	return out, nil
 }
 
 // symbolPathLess 按字典序比较两条符号路径，供同一 Call.ID 下多条路径产生稳定顺序。
@@ -315,5 +325,10 @@ func sortDependency(value *GrpcDependency) {
 		}
 		return a.GoMethod < b.GoMethod
 	})
-	sort.Slice(value.Chains, func(i, j int) bool { return value.Chains[i].Call.ID < value.Chains[j].Call.ID })
+	sort.Slice(value.Chains, func(i, j int) bool {
+		if value.Chains[i].Call.ID != value.Chains[j].Call.ID {
+			return value.Chains[i].Call.ID < value.Chains[j].Call.ID
+		}
+		return symbolPathLess(value.Chains[i].Symbols, value.Chains[j].Symbols)
+	})
 }

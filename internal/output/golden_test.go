@@ -11,6 +11,7 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/app"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	annotationextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
 	referenceextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/reference"
 	routeextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/route"
@@ -114,7 +115,8 @@ func TestTypeImpactTreeGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.Changes = diff.MapChanges(fileChanges, store, "git_diff")
-	result := impact.AnalyzeTrees(store)
+	snapshot := facts.Freeze(store)
+	result := impact.AnalyzeSnapshot(snapshot, endpoint.Build(snapshot))
 	doc := output.BuildImpactDocument(fileChanges, result, output.ImpactDocumentOptions{})
 	got, err := output.RenderImpactTreeJSON(doc)
 	if err != nil {

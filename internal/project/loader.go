@@ -15,6 +15,8 @@
 package project
 
 import (
+	"context"
+	"fmt"
 	"go/ast"
 	"go/build"
 	"go/parser"
@@ -35,10 +37,34 @@ func Load(root string) (*Project, error) {
 // LoadWithOptions 按指定选项加载项目：解析 go.mod 得到 module path，构造构建上下文，
 // 递归遍历目录树，对每个通过过滤的 .go 文件解析 AST 并归入对应 Package。
 func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
+	return LoadWithContext(context.Background(), root, opts)
+}
+
+// LoadWithContext loads a project while honoring cancellation during directory
+// traversal. Existing parsing semantics are identical to LoadWithOptions.
+func LoadWithContext(ctx context.Context, root string, opts LoadOptions) (*Project, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project root: %w", err)
+	}
+	rootInfo, err := os.Stat(realRoot)
+	if err != nil {
+		return nil, err
+	}
+	if !rootInfo.IsDir() {
+		return nil, fmt.Errorf("project root is not a directory: %s", root)
+	}
+	absRoot = realRoot
 	modulePath, err := ReadModulePath(absRoot)
 	if err != nil {
 		return nil, err
@@ -54,6 +80,9 @@ func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
 		moduleRoots:  map[string]string{absRoot: modulePath},
 	}
 	if err := filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return err
 		}
@@ -63,6 +92,15 @@ func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			resolved, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil {
+				return &PathSecurityError{Path: path, Reason: resolveErr.Error()}
+			}
+			if !isWithinRoot(absRoot, resolved) {
+				return &PathSecurityError{Path: path, Reason: "symbolic link escapes project root"}
+			}
 		}
 		// 跳过 _/. 前缀文件、非 .go 文件以及 _test.go。
 		if isGoIgnoredName(d.Name()) || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -77,6 +115,22 @@ func LoadWithOptions(root string, opts LoadOptions) (*Project, error) {
 		return nil, err
 	}
 	return p, nil
+}
+
+// PathSecurityError identifies a project source path that resolves outside the
+// analyzed project root.
+type PathSecurityError struct {
+	Path   string
+	Reason string
+}
+
+func (e *PathSecurityError) Error() string {
+	return fmt.Sprintf("unsafe project path %q: %s", e.Path, e.Reason)
+}
+
+func isWithinRoot(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // shouldSkipDir 判断目录是否应整体跳过：Go 工具链忽略的 _/. 前缀目录，

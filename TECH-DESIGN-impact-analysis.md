@@ -1700,10 +1700,13 @@ error_code=<code> message=<message>
 | CLI 输入 | `invalid_argument` |
 | 项目加载 | `project_load_failed` |
 | Diff 解析或快照不一致 | `diff_invalid`、`diff_snapshot_mismatch` |
+| 输入路径越界 | `input_security_violation` |
 | 配置 | `impact_config_invalid` |
 | gRPC 依赖或绑定 | `dependency_load_failed`、`grpc_call_ambiguous` |
+| Endpoint 查询 | `endpoint_not_found` |
 | 资源预算 | `analysis_budget_exceeded`、`analysis_cancelled` |
 | 输出契约 | `output_render_failed` |
+| 未分类分析故障 | `analysis_failed` |
 
 错误信息可以补充上下文，但调用方只能依赖错误码分类，不能解析自然语言。
 
@@ -1743,9 +1746,9 @@ timing impact_render=...
 - Handler、Route、Annotation 和 Event 的原始表达式。
 - 项目相对文件路径和 Package Path。
 
-`facts` JSON 还包含项目根目录和更完整的源码位置、Diagnostic 与依赖证据，敏感级别不低于 `impact`。
+`facts` JSON 还包含更完整的源码位置、Diagnostic 与依赖证据，敏感级别不低于 `impact`。其公开投影必须把 `project.root` 固定为 `"."`，源码位置统一使用项目相对路径；绝对项目根只允许存在于进程内的分析快照中。
 
-因此产物应按源码数据处理。上层系统需要控制访问、存储周期和日志范围，不应把完整 JSON 写入公开日志；对外展示前应移除本机绝对路径。
+因此产物应按源码数据处理，不应把完整 JSON 写入公开日志。`facts` 与 Diagnostic Sidecar 只允许内部受限访问，最长保留 7 天；正式 `impact` 产物按 CI 影响报告权限访问，最长保留 90 天。任何集成方都不得把本机或 CI Runner 的绝对路径重新写入公开产物。
 
 ## 12. 模块分层
 

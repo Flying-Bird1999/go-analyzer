@@ -78,6 +78,8 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 	var providers []facts.GrpcProviderFact
 	var issues []ServerBindingIssue
 	concreteReturns := concreteCallableReturnTypes(p, idx)
+	strictConcreteReturns := strictConcreteCallableReturnTypes(p, idx)
+	declaredReturns := declaredCallableReturnTypes(p)
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
 			for _, decl := range file.AST.Decls {
@@ -86,6 +88,7 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 					continue
 				}
 				registrationSymbol := functionDeclarationSymbol(file, fn)
+				containerProviders := collectContainerProviders(file, fn, strictConcreteReturns, declaredReturns)
 				ast.Inspect(fn.Body, func(node ast.Node) bool {
 					call, ok := node.(*ast.CallExpr)
 					if !ok || len(call.Args) < 2 {
@@ -106,6 +109,7 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 					}
 					span := serverCallSpan(p.Root, file, call)
 					candidates := implementationTypes(file, fn, idx, concreteReturns, call.Args[1])
+					candidates = append(candidates, containerProvidedImplementationTypes(file, containerProviders, service, call.Args[1])...)
 					candidates = matchingImplementationTypes(idx, candidates, service)
 					var implementation astindex.ValueType
 					switch len(candidates) {
@@ -243,6 +247,53 @@ func concreteCallableReturnTypes(p *project.Project, idx *astindex.Index) map[fa
 	}
 	for id, types := range out {
 		out[id] = uniqueValueTypes(types)
+	}
+	return out
+}
+
+// strictConcreteCallableReturnTypes recognizes only factories for which every
+// return path has the same explicit project-local concrete type. This is
+// deliberately stricter than concreteCallableReturnTypes: a direct
+// registration expression can still surface multiple candidates as ambiguous,
+// while a container lookup has no call-site evidence to select among branches.
+func strictConcreteCallableReturnTypes(p *project.Project, idx *astindex.Index) map[facts.SymbolID]astindex.ValueType {
+	out := map[facts.SymbolID]astindex.ValueType{}
+	for _, pkg := range p.Packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.AST.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				var concrete astindex.ValueType
+				found := false
+				unknown := false
+				ast.Inspect(fn.Body, func(node ast.Node) bool {
+					switch node := node.(type) {
+					case *ast.FuncLit:
+						return false
+					case *ast.ReturnStmt:
+						if len(node.Results) == 0 {
+							unknown = true
+							return false
+						}
+						valueType, ok := explicitConcreteType(file, idx, node.Results[0])
+						if !ok || (found && valueType != concrete) {
+							unknown = true
+							return false
+						}
+						concrete = valueType
+						found = true
+						return false
+					default:
+						return !unknown
+					}
+				})
+				if !unknown && found {
+					out[functionDeclarationSymbol(file, fn)] = concrete
+				}
+			}
+		}
 	}
 	return out
 }

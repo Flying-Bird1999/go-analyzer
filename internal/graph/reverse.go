@@ -25,11 +25,11 @@ type ReverseGraph struct {
 	ByTarget map[facts.SymbolID][]facts.ReferenceFact
 }
 
-// NewReverseGraph 扫描 store 中全部 ReferenceFact，按 ToSymbol 聚合并排序后
+// NewReverseGraph 扫描只读快照中的全部 ReferenceFact，按 ToSymbol 聚合并排序后
 // 构造反向引用图。ToSymbol 为空的引用会被跳过。
-func NewReverseGraph(store *facts.Store) *ReverseGraph {
+func NewReverseGraph(snapshot facts.Snapshot) *ReverseGraph {
 	g := &ReverseGraph{ByTarget: map[facts.SymbolID][]facts.ReferenceFact{}}
-	for _, ref := range store.References {
+	for _, ref := range snapshot.References() {
 		if ref.ToSymbol == "" {
 			continue
 		}

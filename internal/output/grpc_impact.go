@@ -1,6 +1,7 @@
 package output
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -8,8 +9,9 @@ import (
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
 
-// AddGrpcSources 将 gRPC 变更源及其静态 BFF 消费关系合入 impact 文档。
-func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependency.GrpcImpactSource) {
+// AddGrpcSourcesSnapshot 将 gRPC 变更源及其静态 BFF 消费关系合入 impact 文档。
+func AddGrpcSourcesSnapshot(doc *ImpactDocument, snapshot facts.Snapshot, results []dependency.GrpcImpactSource) {
+	store := snapshot.Store()
 	for _, result := range results {
 		source := GrpcSourceImpact{
 			Grpc: GrpcOperationSummary{
@@ -24,7 +26,7 @@ func AddGrpcSources(doc *ImpactDocument, store *facts.Store, results []dependenc
 		for _, consumer := range result.Consumers {
 			source.Consumers = append(source.Consumers, GrpcConsumerImpact{
 				Endpoint: endpointForDependency(consumer.Endpoint), Routes: endpointsForDependency(consumer.Routes), Relation: "may_call",
-				Handlers: symbolsForDependency(store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(store, consumer.Chains),
+				Handlers: symbolsForDependency(&store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(&store, consumer.Chains),
 			})
 			summary := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: endpointsForDependency(consumer.Routes)}
 			source.ImpactedEndpoints = append(source.ImpactedEndpoints, summary)
@@ -72,14 +74,22 @@ func addEndpointGrpcSource(builders map[string]*endpointSourceSummaryBuilder, so
 			}
 		}
 		for _, chain := range consumer.Chains {
-			labels := make([]string, 0, len(chain.Symbols)+1)
-			for index, symbol := range chain.Symbols {
-				labels = append(labels, strings.TrimSpace(symbol.Kind+" "+symbol.Name))
-				if index == 0 {
-					impactSource.RootSymbols = append(impactSource.RootSymbols, EndpointRootSymbolSummary{ID: symbol.ID, Kind: symbol.Kind, Name: symbol.Name, File: symbol.File})
-				}
+			labels := []string{"grpc " + source.Grpc.FullMethod}
+			client := chain.client
+			if client.GoPackage == "" && client.ClientType == "" && client.GoMethod == "" && len(consumer.Clients) == 1 {
+				client = consumer.Clients[0]
 			}
-			labels = append(labels, "grpc "+source.Grpc.FullMethod)
+			if client.GoPackage != "" || client.ClientType != "" || client.GoMethod != "" {
+				labels = append(labels, strings.TrimSpace("generated_client "+client.GoPackage+" "+client.ClientType+"."+client.GoMethod))
+			}
+			if chain.CallSite.File != "" {
+				labels = append(labels, fmt.Sprintf("call_site %s:%d:%d", chain.CallSite.File, chain.CallSite.Line, chain.CallSite.Column))
+			}
+			for index := len(chain.Symbols) - 1; index >= 0; index-- {
+				symbol := chain.Symbols[index]
+				labels = append(labels, strings.TrimSpace(symbol.Kind+" "+symbol.Name))
+			}
+			labels = append(labels, endpoint.Method+" "+endpoint.Path)
 			impactSource.Chains = append(impactSource.Chains, labels)
 		}
 		builder.sources[sourceKey] = impactSource

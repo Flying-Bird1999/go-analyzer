@@ -142,20 +142,24 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 | `grpc-impact` | 从已应用 diff 分析后端服务受影响的 gRPC/HTTP/Dubbo/XXL-Job 入口 | 接入 |
 | `endpoint-assets` | 查询一个或多个精确 endpoint 的 gRPC 依赖 | 接入 |
 | `facts` | 输出项目 facts JSON，用于调试抽取结果与 diagnostics | 调试 |
-| `schema` | 输出 facts / impact / grpc-impact JSON Schema，校验稳定输出契约 | 调试 |
+| `schema` | 输出 facts / impact / endpoint-assets / grpc-impact JSON Schema，校验稳定输出契约 | 调试 |
 | `--project` | 目标项目根目录（绝对路径） | 接入 |
 | `--diff` | 已应用到变更后源码的 unified diff（绝对路径） | 接入 |
 | `--impact-config` | 可选 module 版本变更过滤配置（绝对路径） | 接入 |
 | `--format` | 输出格式，默认 `json` | 接入 |
 | `--goos` / `--goarch` / `--tags` / `--cgo` | 指定 Go build context，影响 build constraint 文件过滤；未指定按 `go/build` 默认值 | 调试 |
 | `--timings` | 把各 pipeline stage 耗时写到 stderr | 调试 |
+| `--diagnostics-output` | 把本次会话 Diagnostic 原子写入指定绝对路径，不改变 stdout | 调试 |
 
 ### 诊断与可观测性
 
 - `impact` JSON **不含** diagnostics（设计如此，保证接入输出稳定）。
 - 用 `facts` 查看项目级诊断，例如非变更文件解析失败产生的 `package_load_failed`。
+- 用 `--diagnostics-output /absolute/path/to/diagnostics.json` 获取 Diff 映射、删除恢复和 Module Usage 等本次会话诊断；未传时不生成 sidecar。
 - 用 `--timings` 查看各 stage 耗时（写到 stderr，不污染 stdout 的 JSON）。
-- 用 `schema --type facts|impact|grpc-impact` 校验或对齐输出契约。
+- 用 `schema --type facts|impact|endpoint-assets|grpc-impact` 校验或对齐输出契约。
+
+`facts` 是内部排障产物：`project.root` 固定投影为 `"."`，源码与 Span 路径均为项目相对路径。共享平台只能按内部受限权限保存 facts/diagnostic sidecar，最长保留 7 天；正式 impact 产物按 CI 影响报告权限保存，最长保留 90 天。任何调用方都不得把内存中的绝对项目根重新写回公开产物。
 
 `endpoint-assets` 的 `--endpoint` 采用 controller annotation 格式，例如 `GET /orders/:id`；`impact` 的 `--grpc` 采用 canonical full method，例如 `/package.OrderService/GetOrder`，可与 `--diff` 组合。gRPC 关系仅在 generated client、静态 receiver 类型和项目内可执行调用链共同证明时输出；不穿透外部 SDK 的隐藏调用，也不进行跨 BFF 仓聚合。
 
@@ -163,7 +167,7 @@ go-analyzer impact --project /absolute/path/to/sl-sc1-bff-service --diff /absolu
 
 lego BFF 的 route、annotation、handler wrapper、route group wrapper 写法由 analyzer 内置识别；业务方不需要维护语法配置。
 提供 `--diff` 时，`impact` 要求 diff 已应用到 `--project` 对应的变更后源码；旧快照、空 diff、越界路径或变更文件语法错误会直接失败。`--diff` 与 `--grpc` 至少提供一个。
-`--impact-config` 是可选配置；未传时会自动尝试读取项目内 `.analyzer/go-impact.config.json`，文件不存在则使用默认行为。
+`--impact-config` 是 Diff 模式的可选配置；未传时会自动尝试读取项目内 `.analyzer/go-impact.config.json`，文件不存在则使用默认行为。仅传 `--grpc` 时不会读取该配置，显式同时传 `--impact-config` 但不传 `--diff` 会直接失败。
 当前配置只用于 module 版本变更过滤，不开放 route、annotation、middleware 等业务语法配置；配置文件会严格校验字段，未知字段或旧 schema 会直接失败：
 
 ```json

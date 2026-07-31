@@ -3,11 +3,59 @@
 package diff
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestValidateAppliedRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "escaped.go"), []byte("package escaped\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err := ValidateApplied(root, []FileChange{{
+		NewPath: "linked/escaped.go",
+		Status:  StatusModified,
+		ExpectedLines: []ExpectedLine{{
+			Line: 1,
+			Text: "package escaped",
+		}},
+	}})
+	var securityErr *PathSecurityError
+	if !errors.As(err, &securityErr) {
+		t.Fatalf("ValidateApplied error = %v, want PathSecurityError", err)
+	}
+}
+
+func TestValidateAppliedAllowsInternalSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "real", "source.go"), []byte("package real\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	err := ValidateApplied(root, []FileChange{{
+		NewPath: "linked/source.go",
+		Status:  StatusModified,
+		ExpectedLines: []ExpectedLine{{
+			Line: 1,
+			Text: "package real",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("ValidateApplied internal symlink: %v", err)
+	}
+}
 
 // TestValidateAppliedAcceptsPostChangeSource 验证期望行与磁盘内容一致时校验通过。
 func TestValidateAppliedAcceptsPostChangeSource(t *testing.T) {

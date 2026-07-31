@@ -6,7 +6,7 @@
 // Package impact 从 ChangeFact 出发构造影响树，沿反向引用图、路由图、IM 图传播，
 // 输出受影响的 HTTP 端点与 IM 事件，并恢复 diff 中被删除的路由注册。
 //
-// 主入口为 AnalyzeTrees 与 RecoverDeletedRoutes：前者按变更事实逐棵展开影响树，
+// 主入口为 AnalyzeSnapshotContext 与 RecoverDeletedRoutes：前者按变更事实逐棵展开影响树，
 // 在符号上递归反向查找引用者，并经过路由图落到端点注解或路由 method/path 降级端点，
 // 同时通过 IM 图把命中传播路径的 IM 事实投影为 im_event 或 im_event_unresolved 终端；
 // 后者把 diff 删除块中的路由注册语句解析出来，补充合成路由事实与 route_deleted 根。
@@ -14,10 +14,13 @@
 package impact
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/graph"
 )
@@ -32,6 +35,9 @@ type treeBuilder struct {
 	imEvents map[string]IMEventImpact
 	// change 是当前正在展开的变更事实。
 	change facts.ChangeFact
+	ctx    context.Context
+	guard  *analysis.Guard
+	err    error
 }
 
 // treeContext 是跨多个 ChangeFact 复用的查询上下文，封装三类图与符号/注解索引，
@@ -39,6 +45,8 @@ type treeBuilder struct {
 type treeContext struct {
 	// store 是共享的事实总线，提供路由组、中间件绑定等查询来源。
 	store *facts.Store
+	// endpointCatalog 是冻结快照构建的统一 Endpoint Catalog。
+	endpointCatalog *endpoint.Catalog
 	// reverse 是反向引用图，按 ToSymbol -> []FromSymbol 提供引用者查询。
 	reverse *graph.ReverseGraph
 	// routes 是路由图，提供 handler/中间件/路由组到路由与注解的查询。
@@ -53,25 +61,50 @@ type treeContext struct {
 	jobs map[string]facts.JobRegistrationFact
 }
 
-// AnalyzeTrees 是影响分析的主入口：为 Store 中每个 ChangeFact 独立展开一棵影响树，
-// 同时收集命中的端点与已解析 IM 事件，并按变更 ID 稳定排序输出。
-//
-// 多个变更根互不覆盖：每个根各自生成一棵传播树及对应的端点/IM 事件摘要，
-// 不在跨根之间做合并或裁剪。
-func AnalyzeTrees(store *facts.Store) TreeResult {
+// AnalyzeSnapshot analyzes a frozen fact snapshot with the shared endpoint
+// catalog. Production pipelines use this entry point after all facts are built.
+func AnalyzeSnapshot(snapshot facts.Snapshot, endpoints *endpoint.Catalog) TreeResult {
+	limits, _ := analysis.DefaultLimits().Normalize()
+	result, _ := AnalyzeSnapshotContext(context.Background(), snapshot, endpoints, limits)
+	return result
+}
+
+// AnalyzeSnapshotContext analyzes a frozen snapshot with cancellation and
+// resource budgets. Any cancellation or budget breach aborts the whole result.
+func AnalyzeSnapshotContext(ctx context.Context, snapshot facts.Snapshot, endpoints *endpoint.Catalog, limits analysis.Limits) (TreeResult, error) {
+	var err error
+	limits, err = limits.Normalize()
+	if err != nil {
+		return TreeResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	result := TreeResult{
 		Roots: []RootImpact{},
 	}
 	// 构造一次跨根共享的查询上下文（三类图 + 符号/注解索引）。
-	context := newTreeContext(store)
+	context := newTreeContext(snapshot, endpoints)
+	store := snapshot.Store()
 	// 复制变更切片并按 ID 排序，保证输出顺序与变更在 Store 中的位置无关。
 	changes := append([]facts.ChangeFact(nil), store.Changes...)
+	if err := analysis.CheckCount("change_roots", len(changes), limits.MaxRoots); err != nil {
+		return TreeResult{}, err
+	}
 	sort.Slice(changes, func(i, j int) bool {
 		return changes[i].ID < changes[j].ID
 	})
+	guard := analysis.NewGuard(ctx, limits)
 	for _, change := range changes {
-		builder := newTreeBuilder(context, change)
+		if err := ctx.Err(); err != nil {
+			return TreeResult{}, err
+		}
+		guard.BeginRoot()
+		builder := newTreeBuilder(context, change, ctx, guard)
 		root := builder.buildRoot()
+		if builder.err != nil {
+			return TreeResult{}, builder.err
+		}
 		// 把本棵树收集的端点 map 转为切片，并按 method/path 稳定排序。
 		endpoints := make([]EndpointImpact, 0, len(builder.endpoints))
 		for _, endpoint := range builder.endpoints {
@@ -98,20 +131,22 @@ func AnalyzeTrees(store *facts.Store) TreeResult {
 			IMEvents:  imEvents,
 		})
 	}
-	return result
+	return result, nil
 }
 
 // newTreeContext 基于 facts.Store 构造跨根复用的查询上下文：建立反向引用图、路由图、
 // IM 图，并对符号与注解建立按 ID 的索引以便快速补全节点元信息。
-func newTreeContext(store *facts.Store) *treeContext {
+func newTreeContext(snapshot facts.Snapshot, endpoints *endpoint.Catalog) *treeContext {
+	store := snapshot.Store()
 	context := &treeContext{
-		store:       store,
-		reverse:     graph.NewReverseGraph(store),
-		routes:      graph.NewRouteGraph(store),
-		im:          graph.NewIMGraph(store),
-		symbols:     map[facts.SymbolID]facts.SymbolFact{},
-		annotations: map[string]facts.AnnotationFact{},
-		jobs:        map[string]facts.JobRegistrationFact{},
+		store:           &store,
+		endpointCatalog: endpoints,
+		reverse:         graph.NewReverseGraph(snapshot),
+		routes:          graph.NewRouteGraph(snapshot),
+		im:              graph.NewIMGraph(snapshot),
+		symbols:         map[facts.SymbolID]facts.SymbolFact{},
+		annotations:     map[string]facts.AnnotationFact{},
+		jobs:            map[string]facts.JobRegistrationFact{},
 	}
 	for _, symbol := range store.Symbols {
 		context.symbols[symbol.ID] = symbol
@@ -126,13 +161,26 @@ func newTreeContext(store *facts.Store) *treeContext {
 }
 
 // newTreeBuilder 为单个变更事实创建一棵独立影响树的构造器，初始化端点与 IM 事件的去重容器。
-func newTreeBuilder(context *treeContext, change facts.ChangeFact) *treeBuilder {
+func newTreeBuilder(context *treeContext, change facts.ChangeFact, ctx context.Context, guard *analysis.Guard) *treeBuilder {
 	return &treeBuilder{
 		treeContext: context,
 		endpoints:   map[string]EndpointImpact{},
 		imEvents:    map[string]IMEventImpact{},
 		change:      change,
+		ctx:         ctx,
+		guard:       guard,
 	}
+}
+
+func (b *treeBuilder) track(level int) bool {
+	if b.err != nil {
+		return false
+	}
+	if err := b.guard.Visit(level); err != nil {
+		b.err = err
+		return false
+	}
+	return true
 }
 
 // buildRoot 按领域优先级把 ChangeFact 映射成对应类型的根节点并展开。
@@ -147,6 +195,9 @@ func (b *treeBuilder) buildRoot() Node {
 	}
 	// 2) 路由组领域根：展开组内及其子组的全部路由。
 	if group, ok := b.routes.GroupsByID[b.change.TargetID]; ok {
+		if !b.track(0) {
+			return Node{}
+		}
 		root := Node{
 			ID:       group.ID,
 			Kind:     "route_group",
@@ -159,6 +210,9 @@ func (b *treeBuilder) buildRoot() Node {
 		}
 		for _, route := range b.routes.RoutesForGroup(group.ID) {
 			root.Children = append(root.Children, b.routeNode(route, 1, "route_group_contains"))
+			if b.err != nil {
+				return root
+			}
 		}
 		root.Children = mergeAndSortChildren(root.Children)
 		return root
@@ -173,6 +227,9 @@ func (b *treeBuilder) buildRoot() Node {
 	}
 	// 5) Job 注册领域根：直接命中某条 job 注册语句。
 	if job, ok := b.jobs[b.change.TargetID]; ok {
+		if !b.track(0) {
+			return Node{}
+		}
 		return Node{
 			ID:       job.ID,
 			Kind:     "job",
@@ -193,6 +250,9 @@ func (b *treeBuilder) buildRoot() Node {
 		return root
 	}
 	// 7) 文件降级根：无法映射到任何语义事实时保留为文件级根，无子节点。
+	if !b.track(0) {
+		return Node{}
+	}
 	return Node{
 		ID:       b.change.File,
 		Kind:     "file",
@@ -214,8 +274,15 @@ func (b *treeBuilder) buildRoot() Node {
 //  5. IM 事件：通过 IMGraph 在当前传播 path 上精确匹配 payload/event/control 依赖。
 //
 // path 用于环路检测：若下一个符号已在当前 DFS 路径中，则不再递归、只标记 Cycle。
-// 这保证了传播始终能终止，而不需要深度或目录裁剪配置。
+// 环路检测与深度、节点预算共同保证传播终止并限制异常图的资源消耗。
 func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
+	if b.err != nil {
+		return
+	}
+	if err := b.ctx.Err(); err != nil {
+		b.err = err
+		return
+	}
 	symbolID := facts.SymbolID(node.ID)
 	references := b.reverse.ReferencesTo(symbolID)
 	routes := b.routes.RoutesForHandler(symbolID)
@@ -223,6 +290,9 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 	middlewareBindings := b.middlewareBindingsForSymbol(symbolID)
 	for _, ref := range references {
 		child := b.symbolNode(ref.FromSymbol, node.Level+1)
+		if b.err != nil {
+			return
+		}
 		child.Relation = referenceRelation(ref.Kind)
 		child.Raw = ref.ToRaw
 		child.Span = ref.Span
@@ -231,6 +301,9 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 			// 命中环路：标记后不再递归展开，避免无限循环。
 			child.Cycle = true
 		} else {
+			if b.err != nil {
+				return
+			}
 			// 就地回溯：进入子分支前标记、返回后清除，避免每条边复制整张 path map。
 			// 环路检测与 EventsForPath 行为与复制版完全等价，但每条边从 O(L) 拷贝降到 O(1)。
 			path[ref.FromSymbol] = true
@@ -264,6 +337,9 @@ func (b *treeBuilder) expandSymbol(node *Node, path map[facts.SymbolID]bool) {
 // 已解析的事件使用 im_event，按事件名标识；未解析或事件名为空的事件降级为
 // im_event_unresolved，使用 IM 事实自身 ID 与原始事件表达式，保留在树中但不计入摘要。
 func (b *treeBuilder) imEventNode(match graph.IMEventMatch, level int) Node {
+	if !b.track(level) {
+		return Node{}
+	}
 	kind := "im_event"
 	id := "im_event:" + match.Fact.Event
 	name := match.Fact.Event
@@ -298,6 +374,9 @@ func (b *treeBuilder) middlewareBindingsForSymbol(symbolID facts.SymbolID) []fac
 // symbolNode 构造一个符号节点。若符号在 facts 中存在，则补全 file/package/span 等元信息；
 // 否则只通过 ID 拆分出 kind 与 name，仍保留节点以保证传播链路完整。
 func (b *treeBuilder) symbolNode(id facts.SymbolID, level int) Node {
+	if !b.track(level) {
+		return Node{}
+	}
 	symbol, ok := b.symbols[id]
 	if !ok {
 		return Node{
@@ -333,6 +412,9 @@ func (b *treeBuilder) symbolFile(id facts.SymbolID, fallback string) string {
 // endpoint 来源优先级：handler 注解优先；缺失注解时降级为路由的 method/path fallback
 // （被删除路由使用 deleted_route_endpoint 关系）。这与 ARCHITECTURE 第 9 节描述的端点语义一致。
 func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, relation string) Node {
+	if !b.track(level) {
+		return Node{}
+	}
 	path := route.ResolvedPath
 	if path == "" {
 		path = route.LocalPath
@@ -350,101 +432,29 @@ func (b *treeBuilder) routeNode(route facts.RouteRegistrationFact, level int, re
 		Path:     path,
 		Children: []Node{},
 	}
-	annotations := b.routes.AnnotationsForHandler(route.HandlerSymbol)
-	if len(annotations) == 0 {
-		// 无注解时使用路由 method/path 降级端点。
-		if route.Method != "" && path != "" {
+	for _, resolution := range b.endpointCatalog.ForRoute(route.ID) {
+		if resolution.AnnotationID == "" {
 			endpointRelation := "route_endpoint"
 			if route.RecoveredFromDiff {
 				endpointRelation = "deleted_route_endpoint"
 			}
-			node.Children = append(node.Children, b.endpointNode(
-				route.Method,
-				path,
-				"",
-				route.HandlerSymbol,
-				route.Span,
-				level+1,
-				endpointRelation,
-			))
-		}
-		return node
-	}
-	// 别名注册判定（按 route 而非按 handler）：同一 handler 注册多条路径时（典型为
-	// 新 bff 路径 + 旧路径别名），只有与注解 method+path 对应的那条 route 才归属注解
-	// 端点身份。当本 route 不与任何注解对应、且 handler 的每条注解都已被其他 route
-	// 认领时，本 route 是独立的第二条 URL（别名注册）：端点取其自身 method/path
-	// （与无注解 fallback 同规格），避免被注解身份吞并造成旧路径接口漏报。
-	// 注解路径漂移不受影响：只要还有注解未被任何 route 认领（漂移注解的注册正是
-	// 当前这类不对应 route），就维持注解身份，不判别名。
-	if !routeMatchesAnyAnnotation(route, annotations) && b.annotationsClaimedByOtherRoutes(route, annotations) {
-		if route.Method != "" && path != "" {
-			endpointRelation := "route_endpoint"
-			if route.RecoveredFromDiff {
-				endpointRelation = "deleted_route_endpoint"
+			node.Children = append(node.Children, b.endpointNode(resolution, route.Span, level+1, endpointRelation))
+			if b.err != nil {
+				return node
 			}
-			node.Children = append(node.Children, b.endpointNode(
-				route.Method,
-				path,
-				"",
-				route.HandlerSymbol,
-				route.Span,
-				level+1,
-				endpointRelation,
-			))
+			continue
 		}
-		return node
-	}
-	for _, annotation := range annotations {
-		node.Children = append(node.Children, b.annotationNode(annotation, route, level+1, "handler_annotation"))
+		annotation, ok := b.annotations[resolution.AnnotationID]
+		if !ok {
+			continue
+		}
+		node.Children = append(node.Children, b.annotationNode(annotation, route, resolution, level+1, "handler_annotation"))
+		if b.err != nil {
+			return node
+		}
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node
-}
-
-// routeMatchesAnyAnnotation 判断 route 是否与其中某条注解对应。
-func routeMatchesAnyAnnotation(route facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
-	for _, annotation := range annotations {
-		if routeMatchesAnnotation(route, annotation) {
-			return true
-		}
-	}
-	return false
-}
-
-// routeMatchesAnnotation 判断 route 与 annotation 是否指向同一条 endpoint 注册：
-// HTTP method 相同（大小写归一），且注解路径等于 route 的 resolved path 或 local path。
-// 同时接受 local path 是刻意保守：能对应上的 route 维持注解身份（现行为），
-// 只有确定不对应的才走别名分支。
-func routeMatchesAnnotation(route facts.RouteRegistrationFact, annotation facts.AnnotationFact) bool {
-	if annotation.Path == "" || !strings.EqualFold(route.Method, annotation.Method) {
-		return false
-	}
-	if annotation.Path == route.ResolvedPath {
-		return true
-	}
-	return route.LocalPath != "" && annotation.Path == route.LocalPath
-}
-
-// annotationsClaimedByOtherRoutes 判断 handler 的每条注解是否都已被除当前 route 以外的
-// 其他 route 认领（method+path 对应）。全部认领时说明注解身份均有各自的注册承载，
-// 当前不对应的 route 是额外的别名注册；只要有一条注解未被认领（可能是漂移注解，
-// 其注册正是当前 route），就不判别名，保守维持注解身份。
-func (b *treeBuilder) annotationsClaimedByOtherRoutes(route facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
-	siblings := b.routes.RoutesForHandler(route.HandlerSymbol)
-	for _, annotation := range annotations {
-		claimed := false
-		for _, sibling := range siblings {
-			if sibling.ID != route.ID && routeMatchesAnnotation(sibling, annotation) {
-				claimed = true
-				break
-			}
-		}
-		if !claimed {
-			return false
-		}
-	}
-	return true
 }
 
 // annotationRootNode 构造注解领域根节点。如果该 handler 同时注册了路由，
@@ -453,7 +463,10 @@ func (b *treeBuilder) annotationsClaimedByOtherRoutes(route facts.RouteRegistrat
 func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
 	routes := b.routes.RoutesForHandler(annotation.HandlerSymbol)
 	if len(routes) == 0 {
-		return b.annotationNode(annotation, facts.RouteRegistrationFact{}, 0, "")
+		resolutions := b.endpointCatalog.ForAnnotation(annotation.ID)
+		if len(resolutions) > 0 {
+			return b.annotationNode(annotation, facts.RouteRegistrationFact{}, resolutions[0], 0, "")
+		}
 	}
 	root := Node{
 		ID:       annotation.ID,
@@ -467,8 +480,14 @@ func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
 		Path:     annotation.Path,
 		Children: []Node{},
 	}
+	if !b.track(0) {
+		return Node{}
+	}
 	for _, route := range routes {
 		root.Children = append(root.Children, b.routeNode(route, 1, "registered_route"))
+		if b.err != nil {
+			return root
+		}
 	}
 	root.Children = mergeAndSortChildren(root.Children)
 	return root
@@ -479,6 +498,9 @@ func (b *treeBuilder) annotationRootNode(annotation facts.AnnotationFact) Node {
 // 受影响路由通过 RouteGraph.RoutesAffectedByMiddleware 计算：同一 group 内、
 // 且 statement_index 严格大于该中间件的路由才会被纳入。
 func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, level int, relation string) Node {
+	if !b.track(level) {
+		return Node{}
+	}
 	node := Node{
 		ID:       middleware.ID,
 		Kind:     "middleware",
@@ -493,6 +515,9 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 	routes := b.routes.RoutesAffectedByMiddleware(middleware.ID)
 	for _, route := range routes {
 		node.Children = append(node.Children, b.routeNode(route, level+1, "middleware_applies_to"))
+		if b.err != nil {
+			return node
+		}
 	}
 	node.Children = mergeAndSortChildren(node.Children)
 	return node
@@ -501,21 +526,19 @@ func (b *treeBuilder) middlewareNode(middleware facts.MiddlewareBindingFact, lev
 // annotationNode 构造注解节点并补齐 endpoint。注解是正式 endpoint identity；只有注解缺少
 // method 或 path 时，才使用已解析 route 补齐对应字段。route 节点仍保留完整解析路径，供
 // review 与辅助校验，不得覆盖完整 annotation。
-func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, level int, relation string) Node {
-	method := strings.ToUpper(annotation.Method)
-	path := annotation.Path
+func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route facts.RouteRegistrationFact, resolution endpoint.Resolution, level int, relation string) Node {
+	if !b.track(level) {
+		return Node{}
+	}
+	method := resolution.Endpoint.Method
+	path := resolution.Endpoint.Path
 	endpointRelation := "annotation_endpoint"
 	endpointSpan := annotation.Span
-	if method == "" {
-		method = strings.ToUpper(route.Method)
+	if annotation.Method == "" {
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
 	}
-	if path == "" {
-		path = route.ResolvedPath
-		if path == "" {
-			path = route.LocalPath
-		}
+	if annotation.Path == "" {
 		endpointRelation = "route_endpoint"
 		endpointSpan = route.Span
 	}
@@ -536,15 +559,7 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 		Children: []Node{},
 	}
 	if method != "" && path != "" {
-		node.Children = append(node.Children, b.endpointNode(
-			method,
-			path,
-			annotation.ID,
-			annotation.HandlerSymbol,
-			endpointSpan,
-			level+1,
-			endpointRelation,
-		))
+		node.Children = append(node.Children, b.endpointNode(resolution, endpointSpan, level+1, endpointRelation))
 	}
 	return node
 }
@@ -554,22 +569,36 @@ func (b *treeBuilder) annotationNode(annotation facts.AnnotationFact, route fact
 // 端点按 "method\x00path" 去重；同一棵树中多次命中同一端点不会重复出现在摘要里。
 // relation 由调用方按端点来源（注解/路由/被删除路由）传入。
 func (b *treeBuilder) endpointNode(
-	method, path, annotationID string,
-	handler facts.SymbolID,
+	resolution endpoint.Resolution,
 	span facts.SourceSpan,
 	level int,
 	relation string,
 ) Node {
+	if !b.track(level) {
+		return Node{}
+	}
+	method := resolution.Endpoint.Method
+	path := resolution.Endpoint.Path
 	id := fmt.Sprintf("endpoint:%s:%s", method, path)
 	key := method + "\x00" + path
-	b.endpoints[key] = EndpointImpact{
+	candidate := EndpointImpact{
 		ID:            id,
 		Method:        method,
 		Path:          path,
-		AnnotationID:  annotationID,
-		HandlerSymbol: handler,
-		Routes:        b.resolvedRoutesForHandler(handler),
+		AnnotationID:  resolution.AnnotationID,
+		HandlerSymbol: resolution.Handler,
+		Routes:        impactRoutes(resolution.Routes),
 	}
+	if existing, ok := b.endpoints[key]; ok {
+		candidate.Routes = mergeEndpointRoutes(existing.Routes, candidate.Routes)
+		if candidate.AnnotationID == "" {
+			candidate.AnnotationID = existing.AnnotationID
+		}
+		if candidate.HandlerSymbol == "" {
+			candidate.HandlerSymbol = existing.HandlerSymbol
+		}
+	}
+	b.endpoints[key] = candidate
 	return Node{
 		ID:       id,
 		Kind:     "endpoint",
@@ -584,32 +613,29 @@ func (b *treeBuilder) endpointNode(
 	}
 }
 
-// resolvedRoutesForHandler 收集指定 handler 已静态解析出的路由候选，作为 endpoint
-// 的辅助证据（ARCHITECTURE 第 5 节）。优先取 resolved path，缺失时退回 local path；
-// 无 method 或无任何 path 的路由跳过。顺序去重以保证输出稳定。
-func (b *treeBuilder) resolvedRoutesForHandler(handler facts.SymbolID) []EndpointRoute {
-	if handler == "" {
-		return nil
-	}
-	var out []EndpointRoute
-	seen := map[string]bool{}
-	for _, route := range b.routes.RoutesForHandler(handler) {
-		path := route.ResolvedPath
-		if path == "" {
-			path = route.LocalPath
-		}
-		if route.Method == "" || path == "" {
-			continue
-		}
-		candidate := EndpointRoute{Method: strings.ToUpper(route.Method), Path: path}
-		key := candidate.Method + "\x00" + candidate.Path
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, candidate)
+func impactRoutes(routes []endpoint.Route) []EndpointRoute {
+	out := make([]EndpointRoute, 0, len(routes))
+	for _, route := range routes {
+		out = append(out, EndpointRoute{Method: route.Method, Path: route.Path})
 	}
 	return out
+}
+
+func mergeEndpointRoutes(left, right []EndpointRoute) []EndpointRoute {
+	out := append(append([]EndpointRoute(nil), left...), right...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Method != out[j].Method {
+			return out[i].Method < out[j].Method
+		}
+		return out[i].Path < out[j].Path
+	})
+	merged := out[:0]
+	for _, route := range out {
+		if len(merged) == 0 || merged[len(merged)-1] != route {
+			merged = append(merged, route)
+		}
+	}
+	return merged
 }
 
 // referenceRelation 把引用边 kind 转成树中展示的 relation 字符串。

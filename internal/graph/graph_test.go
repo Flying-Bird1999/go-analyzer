@@ -23,7 +23,7 @@ func TestReverseGraphLookupByTarget(t *testing.T) {
 		ToSymbol:   "func:example.com/project/service::WebApiForwardGray",
 	})
 
-	g := NewReverseGraph(store)
+	g := NewReverseGraph(facts.Freeze(store))
 	refs := g.ReferencesTo("func:example.com/project/service::WebApiForwardGray")
 	if len(refs) != 1 {
 		t.Fatalf("refs = %d", len(refs))
@@ -46,7 +46,7 @@ func TestRouteGraphMiddlewareAffectsOnlyLaterRoutes(t *testing.T) {
 		StatementIndex: 2,
 	})
 
-	g := NewRouteGraph(store)
+	g := NewRouteGraph(facts.Freeze(store))
 	affected := g.RoutesAffectedByMiddleware("middleware:auth")
 	if len(affected) != 1 {
 		t.Fatalf("affected routes = %d", len(affected))
@@ -81,7 +81,7 @@ func TestRouteGraphIndexesMiddlewareBySymbol(t *testing.T) {
 		},
 	)
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	authBindings := graph.MiddlewareBindingsForSymbol(auth)
 	gotIDs := middlewareBindingIDs(authBindings)
 	wantIDs := []string{"middleware:c", "middleware:a", "middleware:b"}
@@ -105,7 +105,7 @@ func TestRouteGraphIndexesMiddlewareBySymbol(t *testing.T) {
 // TestRouteGraphScopesGroupsByRouteFunction 场景：相同 groupVar 但不同路由函数的组不应串扰，中间件只命中同函数的组路由。
 func TestRouteGraphScopesGroupsByRouteFunction(t *testing.T) {
 	store := extractAndLinkFixture(t, "group-scope")
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 
 	var bindingID string
 	for _, binding := range store.Middleware {
@@ -136,7 +136,7 @@ func TestRouteGraphIncludesDescendantGroupRoutes(t *testing.T) {
 		GroupID: "group:child",
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	routes := graph.RoutesForGroup("group:parent")
 	if len(routes) != 1 || routes[0].ID != "route:child" {
 		t.Fatalf("descendant routes = %#v", routes)
@@ -162,7 +162,7 @@ func TestRouteGraphMiddlewareAffectsDescendantGroupRoutes(t *testing.T) {
 		StatementIndex: 11,
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	routes := graph.RoutesAffectedByMiddleware("middleware:auth")
 	if len(routes) != 1 || routes[0].ID != "route:child" {
 		t.Fatalf("middleware descendant routes = %#v", routes)
@@ -190,7 +190,7 @@ func TestRouteGraphMiddlewareAffectsCrossFunctionGroupFlowRoutes(t *testing.T) {
 		StatementIndex: 1,
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	routes := graph.RoutesAffectedByMiddleware("middleware:auth")
 	if len(routes) != 1 || routes[0].ID != "route:child" {
 		t.Fatalf("cross-function middleware routes = %#v", routes)
@@ -218,7 +218,7 @@ func TestRouteGraphChildGroupsByIDDedupesAcrossParentFieldAndFlow(t *testing.T) 
 		ChildGroupID:  "group:child",
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	children := graph.ChildGroupsByID["group:parent"]
 	if len(children) != 1 || children[0] != "group:child" {
 		t.Fatalf("ChildGroupsByID[parent] = %#v, want exactly one entry [\"group:child\"]", children)
@@ -249,7 +249,7 @@ func TestRouteGraphMapsRouteScopedDependenciesOnlyToContainingRoute(t *testing.T
 		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 20, StartCol: 2, EndLine: 20, EndCol: 10},
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	routes := graph.RoutesForDependency(guard)
 	if len(routes) != 1 || routes[0].ID != "route:guarded" {
 		t.Fatalf("dependency routes = %#v", routes)
@@ -292,7 +292,7 @@ func TestRouteGraphMapsAssignedGroupHelperDependencyToGroupRoutes(t *testing.T) 
 		Span:       facts.SourceSpan{File: "router/router.go", StartLine: 10, StartCol: 13, EndLine: 10, EndCol: 32},
 	})
 
-	graph := NewRouteGraph(store)
+	graph := NewRouteGraph(facts.Freeze(store))
 	routes := graph.RoutesForDependency(guard)
 	if len(routes) != 1 || routes[0].ID != "route:guarded" {
 		t.Fatalf("assigned group dependency routes = %#v", routes)

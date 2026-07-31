@@ -18,11 +18,13 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/dependency"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/annotation"
 	dubboextract "gopkg.inshopline.com/bff/go-analyzer/internal/extract/dubbo"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/extract/gomod"
@@ -51,34 +53,45 @@ func RunFacts(opts Options) ([]byte, error) {
 // RunFactsWithMetrics 是 facts 命令的入口，返回渲染后的 JSON 字节和各阶段耗时指标。
 // 流程：校验选项 -> 构建事实库 -> 渲染 JSON。
 func RunFactsWithMetrics(opts Options) (RunResult, error) {
+	return RunFactsWithMetricsContext(context.Background(), opts)
+}
+
+// RunFactsWithMetricsContext runs facts extraction with cancellation support.
+func RunFactsWithMetricsContext(ctx context.Context, opts Options) (result RunResult, err error) {
+	defer func() { err = classifyAnalysisError(err, ErrorAnalysisFailed) }()
+	limits, err := opts.Limits.Normalize()
+	if err != nil {
+		return RunResult{}, err
+	}
 	// project path 为必填，缺失直接失败。
 	if opts.ProjectPath == "" {
-		return RunResult{}, errors.New("project path is required")
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("project path is required"))
 	}
 	// format 缺省为 json；当前只支持 json，其它取值直接失败。
 	if opts.Format == "" {
 		opts.Format = "json"
 	}
 	if opts.Format != "json" {
-		return RunResult{}, fmt.Errorf("unsupported format %q", opts.Format)
+		return RunResult{}, analysisError(ErrorInvalidArgument, fmt.Errorf("unsupported format %q", opts.Format))
 	}
 	// pipelineRecorder 负责按阶段名累计耗时，最终填入 RunResult.Metrics。
 	recorder := &pipelineRecorder{}
 	// buildFactStore 复用 buildFacts 的完整事实构建链路，返回填充好的 facts.Store。
-	store, err := buildFactStore(opts.ProjectPath, opts.BuildContext, recorder)
+	store, err := buildFactStore(ctx, opts.ProjectPath, opts.BuildContext, limits, recorder)
 	if err != nil {
-		return RunResult{}, err
+		return RunResult{}, classifyAnalysisError(err, ErrorProjectLoadFailed)
 	}
 	var out []byte
 	// facts_render：将 Store 渲染为稳定排序的 facts JSON。
 	if err := recorder.measure("facts_render", func() error {
 		var renderErr error
-		out, renderErr = output.RenderJSON(store)
+		out, renderErr = output.RenderSnapshotJSON(facts.Freeze(store))
 		return renderErr
 	}); err != nil {
-		return RunResult{}, err
+		return RunResult{}, analysisError(ErrorOutputFailed, err)
 	}
-	return RunResult{Output: out, Metrics: recorder.metrics()}, nil
+	snapshot := facts.Freeze(store)
+	return RunResult{Output: out, Metrics: recorder.metrics(), Diagnostics: snapshot.Diagnostics()}, nil
 }
 
 // RunImpact 是 impact 命令的入口，返回从 diff root 到 endpoint / IM event 的影响链路 JSON。
@@ -95,64 +108,95 @@ func RunImpact(opts ImpactOptions) ([]byte, error) {
 //
 // diff 和 gRPC operation 都可以作为影响源并组合；两者共享一次 facts 构建。
 func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
-	if opts.ProjectPath == "" {
-		return RunResult{}, errors.New("project path is required")
-	}
-	grpcInputs, err := parseImpactGrpcMethods(opts.GrpcMethods)
+	return RunImpactWithMetricsContext(context.Background(), opts)
+}
+
+// RunImpactWithMetricsContext runs BFF impact analysis with cancellation and
+// resource budgets.
+func RunImpactWithMetricsContext(ctx context.Context, opts ImpactOptions) (runResult RunResult, err error) {
+	defer func() { err = classifyAnalysisError(err, ErrorAnalysisFailed) }()
+	limits, err := opts.Limits.Normalize()
 	if err != nil {
 		return RunResult{}, err
 	}
+	if opts.ProjectPath == "" {
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("project path is required"))
+	}
+	grpcInputs, err := parseImpactGrpcMethods(opts.GrpcMethods)
+	if err != nil {
+		return RunResult{}, analysisError(ErrorInvalidArgument, err)
+	}
 	hasDiff := opts.DiffPath != ""
 	if !hasDiff && len(grpcInputs) == 0 {
-		return RunResult{}, errors.New("at least one --diff or --grpc is required")
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("at least one --diff or --grpc is required"))
+	}
+	if !hasDiff && opts.ImpactConfigPath != "" {
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("--impact-config requires --diff"))
 	}
 	if opts.Format == "" {
 		opts.Format = "json"
 	}
 	if opts.Format != "json" {
-		return RunResult{}, fmt.Errorf("unsupported format %q", opts.Format)
+		return RunResult{}, analysisError(ErrorInvalidArgument, fmt.Errorf("unsupported format %q", opts.Format))
 	}
 	recorder := &pipelineRecorder{}
-	cfg, err := config.LoadImpactConfig(opts.ProjectPath, opts.ImpactConfigPath)
-	if err != nil {
-		return RunResult{}, err
-	}
+	cfg := config.Config{}
 	fileChanges := []diff.FileChange{}
 	if hasDiff {
+		cfg, err = config.LoadImpactConfig(opts.ProjectPath, opts.ImpactConfigPath)
+		if err != nil {
+			return RunResult{}, analysisError(ErrorConfigInvalid, err)
+		}
 		var diffBytes []byte
 		if err := recorder.measure("diff_read", func() error {
+			info, statErr := os.Stat(opts.DiffPath)
+			if statErr != nil {
+				return fmt.Errorf("stat diff: %w", statErr)
+			}
+			if budgetErr := analysis.CheckBytes("diff_bytes", info.Size(), limits.MaxDiffBytes); budgetErr != nil {
+				return budgetErr
+			}
 			var readErr error
 			diffBytes, readErr = os.ReadFile(opts.DiffPath)
 			if readErr != nil {
 				return fmt.Errorf("read diff: %w", readErr)
 			}
+			if budgetErr := analysis.CheckBytes("diff_bytes", int64(len(diffBytes)), limits.MaxDiffBytes); budgetErr != nil {
+				return budgetErr
+			}
+			if budgetErr := analysis.CheckMaxLine(diffBytes, limits.MaxDiffLineBytes); budgetErr != nil {
+				return budgetErr
+			}
 			return nil
 		}); err != nil {
-			return RunResult{}, err
+			return RunResult{}, classifyAnalysisError(err, ErrorDiffReadFailed)
 		}
 		if err := recorder.measure("diff_parse", func() error {
 			var parseErr error
 			fileChanges, parseErr = diff.ParseUnified(diffBytes)
 			return parseErr
 		}); err != nil {
+			return RunResult{}, classifyAnalysisError(err, ErrorDiffParseFailed)
+		}
+		if err := analysis.CheckCount("diff_files", len(fileChanges), limits.MaxDiffFiles); err != nil {
 			return RunResult{}, err
 		}
 		if err := recorder.measure("diff_validate", func() error {
 			return diff.ValidateApplied(opts.ProjectPath, fileChanges)
 		}); err != nil {
-			return RunResult{}, err
+			return RunResult{}, classifyAnalysisError(err, ErrorDiffValidationFailed)
 		}
 	}
 	grpcExtractionMode := grpcModeOff
 	if len(grpcInputs) > 0 {
 		grpcExtractionMode = grpcModeStrict
 	}
-	built, err := buildFacts(opts.ProjectPath, opts.BuildContext, recorder, buildFactsOptions{grpcMode: grpcExtractionMode})
+	built, err := buildFacts(ctx, opts.ProjectPath, opts.BuildContext, limits, recorder, buildFactsOptions{grpcMode: grpcExtractionMode})
 	if err != nil {
 		if grpcExtractionMode == grpcModeStrict {
 			return RunResult{}, strictAnalysisError(err)
 		}
-		return RunResult{}, err
+		return RunResult{}, classifyAnalysisError(err, ErrorProjectLoadFailed)
 	}
 	store := built.store
 	var moduleChanges []facts.ModuleChangeFact
@@ -200,8 +244,12 @@ func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
 		store.ModuleUsages = append(store.ModuleUsages, moduleUsages...)
 		store.Changes = append(store.Changes, moduleUsageChanges(moduleUsages, store, "go_mod_diff")...)
 		if err := recorder.measure("impact_analyze", func() error {
-			result = impact.AnalyzeTrees(store)
-			return nil
+			snapshot := facts.Freeze(store)
+			var analyzeErr error
+			impactCtx, cancel := analysis.StageContext(ctx, limits.ImpactWalkTimeout)
+			defer cancel()
+			result, analyzeErr = impact.AnalyzeSnapshotContext(impactCtx, snapshot, endpoint.Build(snapshot), limits)
+			return analyzeErr
 		}); err != nil {
 			return RunResult{}, err
 		}
@@ -221,11 +269,15 @@ func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
 	}
 	if len(grpcInputs) > 0 {
 		if err := recorder.measure("grpc_impact_source_query", func() error {
-			consumers, queryErr := dependency.FindGrpcImpactSources(store, grpcInputs)
+			snapshot := facts.Freeze(store)
+			catalog := endpoint.Build(snapshot)
+			queryCtx, cancel := analysis.StageContext(ctx, limits.ImpactWalkTimeout)
+			defer cancel()
+			consumers, queryErr := dependency.FindGrpcImpactSources(queryCtx, snapshot, catalog, limits, grpcInputs)
 			if queryErr != nil {
 				return strictAnalysisError(queryErr)
 			}
-			output.AddGrpcSources(&doc, store, consumers)
+			output.AddGrpcSourcesSnapshot(&doc, snapshot, consumers)
 			return nil
 		}); err != nil {
 			return RunResult{}, err
@@ -238,9 +290,10 @@ func RunImpactWithMetrics(opts ImpactOptions) (RunResult, error) {
 		out, renderErr = output.RenderImpactTreeJSON(doc)
 		return renderErr
 	}); err != nil {
-		return RunResult{}, err
+		return RunResult{}, analysisError(ErrorOutputFailed, err)
 	}
-	return RunResult{Output: out, Metrics: recorder.metrics()}, nil
+	finalSnapshot := facts.Freeze(store)
+	return RunResult{Output: out, Metrics: recorder.metrics(), Diagnostics: finalSnapshot.Diagnostics()}, nil
 }
 
 func parseImpactGrpcMethods(rawMethods []string) ([]dependency.GrpcMethod, error) {
@@ -248,7 +301,7 @@ func parseImpactGrpcMethods(rawMethods []string) ([]dependency.GrpcMethod, error
 	for _, raw := range rawMethods {
 		input, err := dependency.ParseGrpcMethod(raw)
 		if err != nil {
-			return nil, &AnalysisError{Code: "invalid_grpc_method", Err: err}
+			return nil, err
 		}
 		inputs = append(inputs, input)
 	}
@@ -259,6 +312,7 @@ type builtFacts struct {
 	project *project.Project
 	index   *astindex.Index
 	store   *facts.Store
+	builder *facts.Builder
 }
 
 // buildFactStore 是 facts 命令的事实构建入口。除 BFF 域事实外，它还额外抽取
@@ -268,8 +322,8 @@ type builtFacts struct {
 // impact 命令通过 buildFacts 直接调用（见 RunImpactWithMetrics），不设置该选项，
 // 行为与之前完全一致：这是纯粹的 facts 命令能力扩展，不影响 impact 的事实构建范围
 // 或性能特征。
-func buildFactStore(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (*facts.Store, error) {
-	built, err := buildFacts(projectPath, buildContext, recorder, buildFactsOptions{grpcMode: grpcModeDiagnostic, includeServiceEntry: true})
+func buildFactStore(ctx context.Context, projectPath string, buildContext project.BuildContextOptions, limits analysis.Limits, recorder *pipelineRecorder) (*facts.Store, error) {
+	built, err := buildFacts(ctx, projectPath, buildContext, limits, recorder, buildFactsOptions{grpcMode: grpcModeDiagnostic, includeServiceEntry: true})
 	if err != nil {
 		return nil, err
 	}
@@ -292,8 +346,8 @@ type buildFactsOptions struct {
 	includeServiceEntry bool
 }
 
-func buildFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder, options buildFactsOptions) (builtFacts, error) {
-	built, err := buildBaseFacts(projectPath, buildContext, recorder)
+func buildFacts(ctx context.Context, projectPath string, buildContext project.BuildContextOptions, limits analysis.Limits, recorder *pipelineRecorder, options buildFactsOptions) (builtFacts, error) {
+	built, err := buildBaseFacts(ctx, projectPath, buildContext, limits, recorder)
 	if err != nil {
 		return builtFacts{}, err
 	}
@@ -324,7 +378,7 @@ func buildFacts(projectPath string, buildContext project.BuildContextOptions, re
 		return builtFacts{}, err
 	}
 	if options.grpcMode != grpcModeOff {
-		dependencies, dependencyErr := discoverProjectDependencies(p, recorder)
+		dependencies, dependencyErr := discoverProjectDependencies(ctx, p, limits, recorder)
 		if dependencyErr != nil {
 			if options.grpcMode == grpcModeStrict {
 				return builtFacts{}, dependencyErr
@@ -358,9 +412,9 @@ func buildFacts(projectPath string, buildContext project.BuildContextOptions, re
 		}
 	}
 	if options.includeServiceEntry {
-		extractServiceEntryFacts(p, idx, store, recorder)
+		extractServiceEntryFacts(ctx, p, idx, store, limits, recorder)
 	}
-	return builtFacts{project: p, index: idx, store: store}, nil
+	return builtFacts{project: p, index: idx, store: store, builder: built.builder}, nil
 }
 
 // dedupeNewGrpcOperations 从 additions 中过滤掉已存在于 existing 中的 ID，
@@ -386,7 +440,7 @@ func dedupeNewGrpcOperations(existing, additions []facts.GrpcOperationFact) []fa
 // 事实。facts 是排障入口而非严格分析命令，因此始终按诊断模式运行：任一子步骤失败
 // 都记为诊断并继续，不中断 facts 输出，保持与 grpcMode=diagnostic 时既有 gRPC-client
 // 抽取失败处理方式一致的容错策略。
-func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *facts.Store, recorder *pipelineRecorder) {
+func extractServiceEntryFacts(ctx context.Context, p *project.Project, idx *astindex.Index, store *facts.Store, limits analysis.Limits, recorder *pipelineRecorder) {
 	_ = recorder.measure("job_extract", func() error {
 		return jobextract.Extract(p, idx, store)
 	})
@@ -394,7 +448,7 @@ func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *fa
 		return dubboextract.Extract(p, idx, store)
 	})
 	_ = recorder.measure("grpc_server_extract", func() error {
-		dependencies, dependencyErr := discoverGrpcServerDependencies(p, recorder)
+		dependencies, dependencyErr := discoverGrpcServerDependencies(ctx, p, limits, recorder)
 		if dependencyErr != nil {
 			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
 			return nil
@@ -423,14 +477,16 @@ func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *fa
 // buildBaseFacts is shared by BFF impact and gRPC service impact. It owns only
 // project loading, declaration indexing, module facts and symbol projection;
 // domain extractors are added by their command-specific pipelines.
-func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (builtFacts, error) {
+func buildBaseFacts(ctx context.Context, projectPath string, buildContext project.BuildContextOptions, limits analysis.Limits, recorder *pipelineRecorder) (builtFacts, error) {
 	var p *project.Project
 	if err := recorder.measure("project_load", func() error {
+		loadCtx, cancel := analysis.StageContext(ctx, limits.ProjectLoadTimeout)
+		defer cancel()
 		var loadErr error
-		p, loadErr = project.LoadWithOptions(projectPath, project.LoadOptions{BuildContext: buildContext})
+		p, loadErr = project.LoadWithContext(loadCtx, projectPath, project.LoadOptions{BuildContext: buildContext})
 		return loadErr
 	}); err != nil {
-		return builtFacts{}, err
+		return builtFacts{}, analysisError(ErrorProjectLoadFailed, err)
 	}
 	var idx *astindex.Index
 	if err := recorder.measure("ast_index", func() error {
@@ -438,14 +494,15 @@ func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions
 		idx, indexErr = astindex.Build(p)
 		return indexErr
 	}); err != nil {
-		return builtFacts{}, err
+		return builtFacts{}, analysisError(ErrorProjectLoadFailed, err)
 	}
-	store := facts.NewStore(p.Root, p.ModulePath, facts.BuildContextFact{
+	builder := facts.NewBuilder(p.Root, p.ModulePath, facts.BuildContextFact{
 		GOOS:       p.BuildContext.GOOS,
 		GOARCH:     p.BuildContext.GOARCH,
 		Tags:       append([]string(nil), p.BuildContext.Tags...),
 		CgoEnabled: p.BuildContext.CgoEnabled,
 	})
+	store := builder.MutableStore()
 	var modBytes []byte
 	if err := recorder.measure("gomod_read", func() error {
 		var readErr error
@@ -455,7 +512,7 @@ func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions
 		}
 		return nil
 	}); err != nil {
-		return builtFacts{}, err
+		return builtFacts{}, analysisError(ErrorProjectLoadFailed, err)
 	}
 	var modules []facts.ModuleDependencyFact
 	if err := recorder.measure("gomod_extract", func() error {
@@ -466,7 +523,7 @@ func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions
 		}
 		return nil
 	}); err != nil {
-		return builtFacts{}, err
+		return builtFacts{}, analysisError(ErrorProjectLoadFailed, err)
 	}
 	store.Modules = append(store.Modules, modules...)
 	for _, loadDiagnostic := range p.Diagnostics {
@@ -486,17 +543,19 @@ func buildBaseFacts(projectPath string, buildContext project.BuildContextOptions
 	for _, id := range symbolIDs {
 		store.AddSymbol(idx.Symbols[id])
 	}
-	return builtFacts{project: p, index: idx, store: store}, nil
+	return builtFacts{project: p, index: idx, store: store, builder: builder}, nil
 }
 
-func discoverProjectDependencies(p *project.Project, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
+func discoverProjectDependencies(ctx context.Context, p *project.Project, limits analysis.Limits, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
 	grpcBuildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
 	cgo := p.BuildContext.CgoEnabled
 	grpcBuildContext.CgoEnabled = &cgo
 	var dependencies []project.DependencyPackage
 	err := recorder.measure("dependency_list", func() error {
+		dependencyCtx, cancel := analysis.StageContext(ctx, limits.DependencyLoadTimeout)
+		defer cancel()
 		var dependencyErr error
-		dependencies, dependencyErr = project.DiscoverDependencies(context.Background(), p.Root, grpcBuildContext)
+		dependencies, dependencyErr = project.DiscoverDependencies(dependencyCtx, p.Root, grpcBuildContext)
 		return dependencyErr
 	})
 	return dependencies, err

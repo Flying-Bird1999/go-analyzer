@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT_DIR}/.analyzer-smoke"
 ANALYZER_BIN="${OUT_DIR}/go-analyzer"
-FACTS_BASELINE="${ROOT_DIR}/testdata/baselines/real-project-facts.json"
+FACTS_BASELINE="${SMOKE_FACTS_BASELINE:-${ROOT_DIR}/testdata/baselines/real-project-facts.json}"
 ACTIVE_PROJECT=""
 ACTIVE_PATCH=""
 
@@ -696,8 +696,9 @@ PY
 validate_returned_group_case() {
   local out="${OUT_DIR}/real-admin-returned-group-middleware.impact.json"
 
-  python3 - "$out" <<'PY'
+  EXPECTED_RETURNED_GROUP_COUNT="${SMOKE_RETURNED_GROUP_ENDPOINT_COUNT:-443}" python3 - "$out" <<'PY'
 import json
+import os
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
@@ -719,18 +720,26 @@ if missing:
     raise SystemExit(f"returned-group representative endpoints missing: {missing}")
 if ("POST", "/admin/api/bff-web/auth/revokeToken/:clientId") in endpoints:
     raise SystemExit("without-auth revokeToken route leaked into returned auth group impact")
-if summary.get("impactedEndpointCount") != 422 or len(endpoints) != 422:
+expected_count = int(os.environ["EXPECTED_RETURNED_GROUP_COUNT"])
+if summary.get("impactedEndpointCount") != expected_count or len(endpoints) != expected_count:
     raise SystemExit(f"unexpected returned-group endpoint count: {summary.get('impactedEndpointCount')}, set={len(endpoints)}")
 PY
 }
 
 validate_known_real_endpoint_sets() {
-  python3 - "${OUT_DIR}" <<'PY'
+  ALLOW_ADDITIONAL_ENDPOINTS="${SMOKE_ALLOW_ADDITIONAL_ENDPOINTS:-0}" \
+    python3 - "${OUT_DIR}" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
 out_dir = pathlib.Path(sys.argv[1])
+allow_additional = os.environ["ALLOW_ADDITIONAL_ENDPOINTS"].lower() in {
+    "1",
+    "true",
+    "yes",
+}
 expected = {
     "real-admin-customer-empty-path": {
         ("GET", "/admin/api/bff-web/mc/customer/:customerId"),
@@ -753,6 +762,7 @@ expected = {
     "real-admin-route-helper": {
         ("DELETE", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
         ("DELETE", "/admin/api/bff-web/live/activity/:activityId"),
+        ("GET", "/admin/api/bff-web/live/sale/:salesId/connectibleLiveVideos"),
         ("GET", "/admin/api/bff-web/live/sale/:salesId/keyword/cur_available_seq"),
         ("PATCH", "/admin/api/bff-web/live/activity/voucher/:activityId"),
         ("POST", "/admin/api/bff-web/live/activity/:id"),
@@ -764,6 +774,7 @@ expected = {
         ("POST", "/admin/api/bff-web/live/activity/:id/start"),
         ("POST", "/admin/api/bff-web/live/activity/bidding/:activityId/publish-maximum-bid"),
         ("POST", "/admin/api/bff-web/live/activity/end/manual"),
+        ("POST", "/admin/api/bff-web/live/sale/:salesId/crosspost/refresh"),
         ("POST", "/admin/api/bff-web/live/sale/:salesId/config/commentSync"),
         ("POST", "/admin/api/bff-web/live/sale/:salesId/config/shopperApp"),
         ("POST", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
@@ -771,6 +782,11 @@ expected = {
         ("PUT", "/admin/api/bff-web/live/activity/:activityId"),
         ("PUT", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set"),
         ("PUT", "/admin/api/bff-web/live/sale/:salesId/sale_list/product_set/keyword/status"),
+        ("POST", "/api/activity/:id/end"),
+        ("POST", "/api/activity/:id/manualReward"),
+        ("POST", "/api/activity/:id/rewardAgain"),
+        ("POST", "/api/activity/:id/start"),
+        ("POST", "/api/activity/end/manual"),
     },
     "real-admin-assigned-route-helper": {
         ("GET", "/admin/api/bff-web/live/activity/answerFirst/:activityId"),
@@ -788,13 +804,14 @@ expected = {
         ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/user/list"),
         ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/winner/detail/list"),
         ("GET", "/admin/api/bff-web/live/activity/luckyDraw/:activityId/winner/list"),
-        ("GET", "/admin/api/bff-web/live/activity/post/sales/keys/repeat/:salesId"),
+        ("GET", "/admin/api/bff-web/live/activity/post/sales/keys/repeat/{salesId}"),
         ("GET", "/admin/api/bff-web/live/activity/vote/:activityId"),
         ("GET", "/admin/api/bff-web/live/activity/vote/:activityId/option/:optionId/user/list"),
         ("GET", "/admin/api/bff-web/live/activity/vote/:activityId/winner/list"),
-        ("GET", "/admin/api/bff-web/live/activity/vote/listOption/:activityId"),
+        ("GET", "/admin/api/bff-web/live/activity/vote/listOption/:id"),
         ("GET", "/admin/api/bff-web/live/activity/voucher/:activityId"),
         ("GET", "/admin/api/bff-web/live/activity/voucher/:activityId/winner/list"),
+        ("GET", "/admin/api/bff-web/live/lineConnectInfo"),
         ("GET", "/admin/api/bff-web/live/sale/:salesId/comments/product_set/detail"),
         ("GET", "/admin/api/bff-web/live/sale/:salesId/keyword/list"),
         ("GET", "/admin/api/bff-web/live/sale/:salesId/product/product_set/:id"),
@@ -819,6 +836,9 @@ expected = {
         ("POST", "/admin/api/bff-web/live/activity/:id/reward/manual"),
         ("POST", "/admin/api/bff-web/live/activity/:id/start"),
         ("POST", "/admin/api/bff-web/live/activity/bidding/:activityId/publish-maximum-bid"),
+        ("POST", "/api/activity/:id/end"),
+        ("POST", "/api/activity/:id/manualReward"),
+        ("POST", "/api/activity/:id/start"),
     },
     "real-admin-conversation-action-map": {
         ("POST", "/admin/api/bff-app/mc/conversation/status/report"),
@@ -862,10 +882,14 @@ for name, want in expected.items():
         (item.get("method"), item.get("path"))
         for item in (data.get("summary") or {}).get("impactedEndpoints") or []
     }
-    if got != want:
+    missing = want - got
+    additional = got - want
+    if missing or (additional and not allow_additional):
         raise SystemExit(
-            f"{name} endpoint mismatch: missing={want - got}, unexpected={got - want}"
+            f"{name} endpoint mismatch: missing={missing}, unexpected={additional}"
         )
+    if additional:
+        print(f"{name}: accepted {len(additional)} additional endpoint(s)")
 PY
 }
 

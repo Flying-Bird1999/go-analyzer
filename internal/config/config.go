@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -54,6 +55,13 @@ func LoadImpactConfig(projectRoot, explicitPath string) (Config, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("parse impact config: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Config{}, fmt.Errorf("parse impact config: multiple JSON values are not allowed")
+		}
+		return Config{}, fmt.Errorf("parse impact config trailing data: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

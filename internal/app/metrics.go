@@ -3,7 +3,11 @@
 // 把指标写入 stderr。
 package app
 
-import "time"
+import (
+	"time"
+
+	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
+)
 
 // RunResult 是 RunFacts/RunImpact 的统一返回结构，包含 JSON 输出与可选的阶段指标。
 type RunResult struct {
@@ -11,6 +15,8 @@ type RunResult struct {
 	Output []byte
 	// Metrics 是各阶段耗时，仅在 WithMetrics 变体中填充。
 	Metrics PipelineMetrics
+	// Diagnostics contains stable, session-scoped recoverable findings.
+	Diagnostics []facts.DiagnosticFact
 }
 
 // PipelineMetrics 汇总一次 pipeline 运行的阶段耗时。

@@ -34,7 +34,7 @@ func ToFact(d Diagnostic) facts.DiagnosticFact {
 // 常见模式，如 reference/route 抽取遇到未解析引用时逐条上报）。这里改为用
 // Store.DiagnosticIndex()（去重 key -> 下标的增量索引）判断是否已存在：已存在直接
 // 跳过；不存在则纯追加，均摊 O(1) 每条，整体 O(N)。按 ID 排序不再由 AddFact 维护——
-// 唯一的公开渲染入口 output.RenderJSON 已经在渲染前统一按 ID 排序 Diagnostics，
+// 公开渲染入口 output.RenderSnapshotJSON 已经在渲染前统一按 ID 排序 Diagnostics，
 // AddFact 维护顺序纯属重复劳动，去掉后不改变任何对外可见行为。
 func AddFact(store *facts.Store, d Diagnostic) {
 	key := dedupeKey(d)

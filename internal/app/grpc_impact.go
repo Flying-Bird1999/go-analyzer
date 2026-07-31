@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/config"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diagnostics"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/diff"
@@ -34,33 +35,55 @@ func RunGrpcImpact(opts GrpcImpactOptions) ([]byte, error) {
 // RunGrpcImpactWithMetrics analyzes one already-applied diff in a Go service
 // project and returns affected registered entry contracts.
 func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
+	return RunGrpcImpactWithMetricsContext(context.Background(), opts)
+}
+
+func RunGrpcImpactWithMetricsContext(ctx context.Context, opts GrpcImpactOptions) (result RunResult, err error) {
+	defer func() { err = classifyAnalysisError(err, ErrorAnalysisFailed) }()
+	limits, err := opts.Limits.Normalize()
+	if err != nil {
+		return RunResult{}, err
+	}
 	if opts.ProjectPath == "" {
-		return RunResult{}, errors.New("project path is required")
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("project path is required"))
 	}
 	if opts.DiffPath == "" {
-		return RunResult{}, errors.New("diff path is required")
+		return RunResult{}, analysisError(ErrorInvalidArgument, errors.New("diff path is required"))
 	}
 	if opts.Format == "" {
 		opts.Format = "json"
 	}
 	if opts.Format != "json" {
-		return RunResult{}, fmt.Errorf("unsupported format %q", opts.Format)
+		return RunResult{}, analysisError(ErrorInvalidArgument, fmt.Errorf("unsupported format %q", opts.Format))
 	}
 	recorder := &pipelineRecorder{}
 	cfg, err := config.LoadImpactConfig(opts.ProjectPath, opts.ImpactConfigPath)
 	if err != nil {
-		return RunResult{}, err
+		return RunResult{}, analysisError(ErrorConfigInvalid, err)
 	}
 	var patch []byte
 	if err := recorder.measure("diff_read", func() error {
+		info, statErr := os.Stat(opts.DiffPath)
+		if statErr != nil {
+			return fmt.Errorf("stat diff: %w", statErr)
+		}
+		if budgetErr := analysis.CheckBytes("diff_bytes", info.Size(), limits.MaxDiffBytes); budgetErr != nil {
+			return budgetErr
+		}
 		var readErr error
 		patch, readErr = os.ReadFile(opts.DiffPath)
 		if readErr != nil {
 			return fmt.Errorf("read diff: %w", readErr)
 		}
+		if budgetErr := analysis.CheckBytes("diff_bytes", int64(len(patch)), limits.MaxDiffBytes); budgetErr != nil {
+			return budgetErr
+		}
+		if budgetErr := analysis.CheckMaxLine(patch, limits.MaxDiffLineBytes); budgetErr != nil {
+			return budgetErr
+		}
 		return nil
 	}); err != nil {
-		return RunResult{}, err
+		return RunResult{}, classifyAnalysisError(err, ErrorDiffReadFailed)
 	}
 	var fileChanges []diff.FileChange
 	if err := recorder.measure("diff_parse", func() error {
@@ -68,12 +91,15 @@ func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
 		fileChanges, parseErr = diff.ParseUnified(patch)
 		return parseErr
 	}); err != nil {
+		return RunResult{}, classifyAnalysisError(err, ErrorDiffParseFailed)
+	}
+	if err := analysis.CheckCount("diff_files", len(fileChanges), limits.MaxDiffFiles); err != nil {
 		return RunResult{}, err
 	}
 	if err := recorder.measure("diff_validate", func() error { return diff.ValidateApplied(opts.ProjectPath, fileChanges) }); err != nil {
-		return RunResult{}, err
+		return RunResult{}, classifyAnalysisError(err, ErrorDiffValidationFailed)
 	}
-	built, err := buildGrpcServiceFacts(opts.ProjectPath, opts.BuildContext, recorder)
+	built, err := buildGrpcServiceFacts(ctx, opts.ProjectPath, opts.BuildContext, limits, recorder)
 	if err != nil {
 		return RunResult{}, strictAnalysisError(err)
 	}
@@ -115,8 +141,11 @@ func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
 
 	var tree serviceimpact.TreeResult
 	if err := recorder.measure("grpc_impact_analyze", func() error {
-		tree = serviceimpact.AnalyzeTrees(store)
-		return nil
+		var analyzeErr error
+		impactCtx, cancel := analysis.StageContext(ctx, limits.ImpactWalkTimeout)
+		defer cancel()
+		tree, analyzeErr = serviceimpact.AnalyzeSnapshotContext(impactCtx, facts.Freeze(store), limits)
+		return analyzeErr
 	}); err != nil {
 		return RunResult{}, err
 	}
@@ -129,13 +158,13 @@ func RunGrpcImpactWithMetrics(opts GrpcImpactOptions) (RunResult, error) {
 		rendered, renderErr = output.RenderGrpcImpactJSON(doc)
 		return renderErr
 	}); err != nil {
-		return RunResult{}, err
+		return RunResult{}, analysisError(ErrorOutputFailed, err)
 	}
-	return RunResult{Output: rendered, Metrics: recorder.metrics()}, nil
+	return RunResult{Output: rendered, Metrics: recorder.metrics(), Diagnostics: facts.Freeze(store).Diagnostics()}, nil
 }
 
-func buildGrpcServiceFacts(projectPath string, buildContext project.BuildContextOptions, recorder *pipelineRecorder) (builtFacts, error) {
-	built, err := buildBaseFacts(projectPath, buildContext, recorder)
+func buildGrpcServiceFacts(ctx context.Context, projectPath string, buildContext project.BuildContextOptions, limits analysis.Limits, recorder *pipelineRecorder) (builtFacts, error) {
+	built, err := buildBaseFacts(ctx, projectPath, buildContext, limits, recorder)
 	if err != nil {
 		return builtFacts{}, err
 	}
@@ -164,7 +193,7 @@ func buildGrpcServiceFacts(projectPath string, buildContext project.BuildContext
 	}); err != nil {
 		return builtFacts{}, err
 	}
-	dependencies, err := discoverGrpcServerDependencies(built.project, recorder)
+	dependencies, err := discoverGrpcServerDependencies(ctx, built.project, limits, recorder)
 	if err != nil {
 		return builtFacts{}, err
 	}
@@ -186,7 +215,7 @@ func buildGrpcServiceFacts(projectPath string, buildContext project.BuildContext
 	return built, nil
 }
 
-func discoverGrpcServerDependencies(p *project.Project, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
+func discoverGrpcServerDependencies(ctx context.Context, p *project.Project, limits analysis.Limits, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
 	buildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
 	cgo := p.BuildContext.CgoEnabled
 	buildContext.CgoEnabled = &cgo
@@ -205,8 +234,10 @@ func discoverGrpcServerDependencies(p *project.Project, recorder *pipelineRecord
 	}
 	var dependencies []project.DependencyPackage
 	err := recorder.measure("grpc_server_dependency_list", func() error {
+		dependencyCtx, cancel := analysis.StageContext(ctx, limits.DependencyLoadTimeout)
+		defer cancel()
 		var dependencyErr error
-		dependencies, dependencyErr = project.DiscoverDependencyPackages(context.Background(), p.Root, buildContext, remoteImports)
+		dependencies, dependencyErr = project.DiscoverDependencyPackages(dependencyCtx, p.Root, buildContext, remoteImports)
 		return dependencyErr
 	})
 	return dependencies, err

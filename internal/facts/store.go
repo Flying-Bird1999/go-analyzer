@@ -9,6 +9,8 @@
 // 不写回业务事实。
 package facts
 
+import "reflect"
+
 // ProjectFact 描述被分析 Go 项目的基本信息，包括根目录、module path 和构建上下文。
 type ProjectFact struct {
 	// Root 是项目根目录，在内存中为绝对路径，进入 facts/output 后统一转为项目相对路径。
@@ -154,4 +156,174 @@ func NewStore(root, modulePath string, buildContext ...BuildContextFact) *Store 
 // AddSymbol 追加一个声明符号事实到 Store 的 Symbols 数组。
 func (s *Store) AddSymbol(symbol SymbolFact) {
 	s.Symbols = append(s.Symbols, symbol)
+}
+
+// Builder owns the mutable fact store while extractors and linkers are running.
+// Query packages must consume the Snapshot returned by Freeze instead of retaining
+// this mutable store.
+type Builder struct {
+	store *Store
+}
+
+// NewBuilder creates a mutable fact builder for one analysis session.
+func NewBuilder(root, modulePath string, buildContext ...BuildContextFact) *Builder {
+	return &Builder{store: NewStore(root, modulePath, buildContext...)}
+}
+
+// MutableStore exposes the mutable store only to the construction pipeline.
+func (b *Builder) MutableStore() *Store {
+	if b == nil {
+		return nil
+	}
+	return b.store
+}
+
+// Freeze returns an isolated, read-only fact snapshot. All slices, maps and
+// pointers are copied so later builder mutations cannot affect query results.
+func (b *Builder) Freeze() Snapshot {
+	if b == nil {
+		return Snapshot{}
+	}
+	return Freeze(b.store)
+}
+
+// Snapshot is an immutable view of all facts used by graph and query stages.
+// Its fields are intentionally private; readers obtain defensive copies through
+// Store or focused accessors.
+type Snapshot struct {
+	store Store
+}
+
+// Freeze creates an immutable snapshot from an existing store. It remains
+// available for focused package tests that construct Store literals directly.
+func Freeze(store *Store) Snapshot {
+	if store == nil {
+		return Snapshot{}
+	}
+	return Snapshot{store: cloneStore(*store)}
+}
+
+// Store returns a defensive copy of the snapshot contents. Mutating the result
+// never changes the frozen snapshot.
+func (s Snapshot) Store() Store {
+	return cloneStore(s.store)
+}
+
+// Project returns project metadata by value.
+func (s Snapshot) Project() ProjectFact {
+	return cloneValue(reflect.ValueOf(s.store.Project)).Interface().(ProjectFact)
+}
+
+// Diagnostics returns a defensive copy of session diagnostics.
+func (s Snapshot) Diagnostics() []DiagnosticFact {
+	return cloneValue(reflect.ValueOf(s.store.Diagnostics)).Interface().([]DiagnosticFact)
+}
+
+// References returns an isolated copy for graph construction.
+func (s Snapshot) References() []ReferenceFact {
+	return cloneSlice(s.store.References)
+}
+
+// RouteGroups returns an isolated copy for route graph construction.
+func (s Snapshot) RouteGroups() []RouteGroupFact {
+	return cloneSlice(s.store.RouteGroups)
+}
+
+// RouteGroupFlows returns an isolated copy for route graph construction.
+func (s Snapshot) RouteGroupFlows() []RouteGroupFlowFact {
+	return cloneSlice(s.store.RouteGroupFlows)
+}
+
+// Routes returns an isolated copy for route graph construction.
+func (s Snapshot) Routes() []RouteRegistrationFact {
+	return cloneSlice(s.store.Routes)
+}
+
+// MiddlewareBindings returns an isolated copy for route graph construction.
+func (s Snapshot) MiddlewareBindings() []MiddlewareBindingFact {
+	return cloneSlice(s.store.Middleware)
+}
+
+// Annotations returns an isolated copy for endpoint and route graph construction.
+func (s Snapshot) Annotations() []AnnotationFact {
+	return cloneSlice(s.store.Annotations)
+}
+
+// IMEvents returns an isolated copy for IM graph construction.
+func (s Snapshot) IMEvents() []IMEventFact {
+	return cloneSlice(s.store.IMEvents)
+}
+
+// GrpcCalls returns an isolated copy for executable call graph construction.
+func (s Snapshot) GrpcCalls() []GrpcCallFact {
+	return cloneSlice(s.store.GrpcCalls)
+}
+
+func cloneSlice[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return cloneValue(reflect.ValueOf(values)).Interface().([]T)
+}
+
+// cloneStore recursively copies all exported fact fields. diagnosticIndex is a
+// builder-only cache and is deliberately rebuilt lazily if a copied Store is
+// ever used by compatibility code.
+func cloneStore(store Store) Store {
+	cloned := cloneValue(reflect.ValueOf(store)).Interface().(Store)
+	cloned.diagnosticIndex = nil
+	return cloned
+}
+
+func cloneValue(value reflect.Value) reflect.Value {
+	if !value.IsValid() {
+		return value
+	}
+	switch value.Kind() {
+	case reflect.Pointer:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		cloned := reflect.New(value.Type().Elem())
+		cloned.Elem().Set(cloneValue(value.Elem()))
+		return cloned
+	case reflect.Interface:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		cloned := cloneValue(value.Elem())
+		out := reflect.New(value.Type()).Elem()
+		out.Set(cloned)
+		return out
+	case reflect.Slice:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		cloned := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			cloned.Index(i).Set(cloneValue(value.Index(i)))
+		}
+		return cloned
+	case reflect.Map:
+		if value.IsNil() {
+			return reflect.Zero(value.Type())
+		}
+		cloned := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			cloned.SetMapIndex(cloneValue(iter.Key()), cloneValue(iter.Value()))
+		}
+		return cloned
+	case reflect.Struct:
+		cloned := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.NumField(); i++ {
+			if !cloned.Field(i).CanSet() || value.Type().Field(i).PkgPath != "" {
+				continue
+			}
+			cloned.Field(i).Set(cloneValue(value.Field(i)))
+		}
+		return cloned
+	default:
+		return value
+	}
 }

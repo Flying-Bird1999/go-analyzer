@@ -69,6 +69,19 @@ var schemaDocuments = map[string]map[string]any{
 		},
 		"$defs": grpcImpactDefinitions(),
 	},
+	"endpoint-assets": {
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"$id":                  "https://gopkg.inshopline.com/bff/go-analyzer/schemas/endpoint-assets.v1alpha1.schema.json",
+		"title":                "go-analyzer endpoint dependency assets",
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"project", "endpointAssets"},
+		"properties": map[string]any{
+			"project":        ref("dependency_project"),
+			"endpointAssets": arrayOf(ref("endpoint_asset")),
+		},
+		"$defs": endpointAssetDefinitions(),
+	},
 }
 
 // SchemaJSON 返回指定名称（facts / impact）的 JSON Schema 文档。
@@ -149,6 +162,20 @@ func grpcImpactDefinitions() map[string]any {
 		"service_entry_impact_source",
 		"impact_node",
 		"module_replacement",
+	)
+}
+
+func endpointAssetDefinitions() map[string]any {
+	return selectDefinitions(
+		"dependency_call_site",
+		"dependency_chain",
+		"dependency_client",
+		"dependency_endpoint",
+		"dependency_grpc",
+		"dependency_project",
+		"dependency_symbol",
+		"endpoint_asset",
+		"endpoint_asset_dependencies",
 	)
 }
 
@@ -255,6 +282,26 @@ func commonDefinitions() map[string]any {
 			"name": stringType(),
 			"file": stringType(),
 		}, "id", "kind", "name", "file"),
+		"dependency_project": object(map[string]any{
+			"module": stringType(),
+		}, "module"),
+		"dependency_grpc": object(map[string]any{
+			"fullMethod":   stringType(),
+			"protoPackage": stringType(),
+			"service":      stringType(),
+			"method":       stringType(),
+			"clients":      arrayOf(ref("dependency_client")),
+			"chains":       arrayOf(ref("dependency_chain")),
+		}, "fullMethod", "protoPackage", "service", "method", "clients", "chains"),
+		"endpoint_asset_dependencies": object(map[string]any{
+			"grpc": arrayOf(ref("dependency_grpc")),
+		}, "grpc"),
+		"endpoint_asset": object(map[string]any{
+			"endpoint":     ref("dependency_endpoint"),
+			"routes":       arrayOf(ref("dependency_endpoint")),
+			"handlers":     arrayOf(ref("dependency_symbol")),
+			"dependencies": ref("endpoint_asset_dependencies"),
+		}, "endpoint", "routes", "handlers", "dependencies"),
 		"grpc_consumer_impact": object(map[string]any{
 			"endpoint": ref("dependency_endpoint"),
 			"routes":   arrayOf(ref("dependency_endpoint")),
@@ -377,17 +424,17 @@ func commonDefinitions() map[string]any {
 		}, "id", "name", "handler_symbol", "registration_symbol", "span"),
 		// impact_node 是 impact 传播树的递归节点定义；children 自引用 impact_node，实现完整传播链路。
 		"impact_node": object(map[string]any{
-			"id":       stringType(),
-			"kind":     stringType(),
-			"name":     stringType(),
-			"file":     stringType(),
-			"package":  stringType(),
-			"relation": stringType(),
-			"raw":      stringType(),
-			"level":    numberType(),
-			"cycle":    boolType(),
-			"children": arrayOf(ref("impact_node")),
-			"method":   stringType(),
+			"id":         stringType(),
+			"kind":       stringType(),
+			"name":       stringType(),
+			"file":       stringType(),
+			"package":    stringType(),
+			"relation":   stringType(),
+			"raw":        stringType(),
+			"level":      numberType(),
+			"cycle":      boolType(),
+			"children":   arrayOf(ref("impact_node")),
+			"method":     stringType(),
 			"path":       stringType(),
 			"fullMethod": stringType(),
 		}, "id", "kind", "level", "children"),
@@ -494,7 +541,7 @@ func commonDefinitions() map[string]any {
 			"replace_version": stringType(),
 		}, "id", "path", "version", "indirect"),
 		"project": object(map[string]any{
-			"root":          stringType(),
+			"root":          map[string]any{"type": "string", "const": "."},
 			"module_path":   stringType(),
 			"build_context": ref("build_context"),
 		}, "root", "module_path", "build_context"),

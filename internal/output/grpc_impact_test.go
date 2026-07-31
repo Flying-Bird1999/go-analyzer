@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/dependency"
@@ -70,6 +71,78 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	}
 	if len(rendered.EndpointSourcesSummary) != 1 || rendered.EndpointSourcesSummary[0].Sources[0].GrpcFullMethod != operation.FullMethod {
 		t.Fatalf("endpoint sources = %#v", rendered.EndpointSourcesSummary)
+	}
+	grpcEvidence := rendered.EndpointSourcesSummary[0].Sources[0]
+	if len(grpcEvidence.RootSymbols) != 0 {
+		t.Fatalf("grpc rootSymbols = %#v, want empty", grpcEvidence.RootSymbols)
+	}
+	if len(grpcEvidence.Chains) != 1 {
+		t.Fatalf("grpc chains = %#v", grpcEvidence.Chains)
+	}
+	chain := grpcEvidence.Chains[0]
+	if chain[0] != "grpc "+operation.FullMethod || chain[len(chain)-1] != "GET /orders/:id" {
+		t.Fatalf("grpc chain direction = %#v", chain)
+	}
+}
+
+func TestGrpcEndpointSourceChainsKeepTheirOwnClientBinding(t *testing.T) {
+	store := facts.NewStore("/tmp/project", "example.com/project")
+	handler := facts.SymbolID("func:example.com/project/controller::Get")
+	firstCaller := facts.SymbolID("func:example.com/project/remote::First")
+	secondCaller := facts.SymbolID("func:example.com/project/remote::Second")
+	store.Symbols = []facts.SymbolFact{
+		{ID: handler, Kind: "func", Name: "Get"},
+		{ID: firstCaller, Kind: "func", Name: "First"},
+		{ID: secondCaller, Kind: "func", Name: "Second"},
+	}
+	firstClient := facts.GrpcClientBinding{GoPackage: "example.com/first", ClientType: "FirstClient", GoMethod: "Get"}
+	secondClient := facts.GrpcClientBinding{GoPackage: "example.com/second", ClientType: "SecondClient", GoMethod: "Get"}
+	method := dependency.GrpcMethod{FullMethod: "/shop.order.v1.OrderService/Get"}
+	doc := BuildImpactDocument(nil, impact.TreeResult{}, ImpactDocumentOptions{})
+	AddGrpcSources(&doc, store, []dependency.GrpcImpactSource{{
+		Grpc: method,
+		Consumers: []dependency.GrpcImpactConsumer{{
+			Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
+			Handlers: []facts.SymbolID{handler},
+			Clients:  []facts.GrpcClientBinding{firstClient, secondClient},
+			Chains: []dependency.Chain{
+				{
+					Symbols: []facts.SymbolID{handler, firstCaller},
+					Call: facts.GrpcCallFact{
+						ClientBinding: firstClient,
+						Span:          facts.SourceSpan{File: "remote/first.go", StartLine: 10},
+					},
+				},
+				{
+					Symbols: []facts.SymbolID{handler, secondCaller},
+					Call: facts.GrpcCallFact{
+						ClientBinding: secondClient,
+						Span:          facts.SourceSpan{File: "remote/second.go", StartLine: 20},
+					},
+				},
+			},
+		}},
+	}})
+
+	sources := doc.EndpointSourcesSummary[0].Sources
+	if len(sources) != 1 || len(sources[0].Chains) != 2 {
+		t.Fatalf("endpoint sources = %#v", sources)
+	}
+	got := map[string]bool{}
+	for _, chain := range sources[0].Chains {
+		for _, label := range chain {
+			if strings.HasPrefix(label, "generated_client ") {
+				got[label] = true
+			}
+		}
+	}
+	for _, want := range []string{
+		"generated_client example.com/first FirstClient.Get",
+		"generated_client example.com/second SecondClient.Get",
+	} {
+		if !got[want] {
+			t.Fatalf("missing %q in chains: %#v", want, sources[0].Chains)
+		}
 	}
 }
 

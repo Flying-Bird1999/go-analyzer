@@ -1,7 +1,10 @@
 // options.go 定义 CLI 参数到 app pipeline 的转换结构。
 package app
 
-import "gopkg.inshopline.com/bff/go-analyzer/internal/project"
+import (
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
+)
 
 // Options 是 facts 命令的运行选项，由 CLI 层填充后传入 RunFacts。
 type Options struct {
@@ -11,6 +14,8 @@ type Options struct {
 	Format string
 	// BuildContext 是 Go 构建上下文（GOOS/GOARCH/tags/cgo），影响源码加载与 build constraint 过滤。
 	BuildContext project.BuildContextOptions
+	// Limits bounds input and graph traversal work. Zero fields use defaults.
+	Limits analysis.Limits
 }
 
 // ImpactOptions 是 impact 命令的运行选项，由 CLI 层填充后传入 RunImpact。
@@ -28,6 +33,7 @@ type ImpactOptions struct {
 	Format string
 	// BuildContext 是 Go 构建上下文（GOOS/GOARCH/tags/cgo）。
 	BuildContext project.BuildContextOptions
+	Limits       analysis.Limits
 }
 
 // GrpcImpactOptions configures service entry impact analysis for one Go service project.
@@ -37,4 +43,5 @@ type GrpcImpactOptions struct {
 	ImpactConfigPath string
 	Format           string
 	BuildContext     project.BuildContextOptions
+	Limits           analysis.Limits
 }

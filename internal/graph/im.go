@@ -33,11 +33,11 @@ var imRelationPriority = []facts.IMEventRelation{
 	facts.IMRelationControl,
 }
 
-// NewIMGraph 扫描 store 中全部 IM 事件，按 sender 聚合并排序后构造 IM 图。
+// NewIMGraph 扫描只读快照中的全部 IM 事件，按 sender 聚合并排序后构造 IM 图。
 // 没有 sender symbol 的事件会被跳过。
-func NewIMGraph(store *facts.Store) *IMGraph {
+func NewIMGraph(snapshot facts.Snapshot) *IMGraph {
 	graph := &IMGraph{bySender: map[facts.SymbolID][]facts.IMEventFact{}}
-	for _, event := range store.IMEvents {
+	for _, event := range snapshot.IMEvents() {
 		if event.SenderSymbol == "" {
 			continue
 		}

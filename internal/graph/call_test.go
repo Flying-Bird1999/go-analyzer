@@ -13,7 +13,7 @@ func TestCallGraphOnlyIncludesExecutableReferences(t *testing.T) {
 		{Kind: facts.ReferenceKindValue, FromSymbol: "func:a", ToSymbol: "func:d"},
 	}
 	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:a", CallerSymbol: "func:a"}}
-	g := NewCallGraph(store)
+	g := NewCallGraph(facts.Freeze(store))
 	if got := g.Callees("func:a"); len(got) != 1 || got[0] != "func:b" {
 		t.Fatalf("callees=%#v", got)
 	}
@@ -37,7 +37,7 @@ func TestCallGraphDedupesGrpcCallsByID(t *testing.T) {
 		{ID: "grpc_call:a", CallerSymbol: "func:a"},
 		{ID: "grpc_call:a", CallerSymbol: "func:a"},
 	}
-	g := NewCallGraph(store)
+	g := NewCallGraph(facts.Freeze(store))
 	if got := g.GrpcCalls("func:a"); len(got) != 1 {
 		t.Fatalf("grpc calls = %#v, want exactly 1 deduped entry", got)
 	}

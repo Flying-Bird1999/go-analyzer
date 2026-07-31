@@ -94,6 +94,25 @@ func TestLoadImpactConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadImpactConfigRejectsTrailingJSONValues(t *testing.T) {
+	for _, content := range []string{
+		`{} {}`,
+		`{} []`,
+		"{}\ntrailing",
+	} {
+		t.Run(content, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "impact.json")
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadImpactConfig(root, path); err == nil {
+				t.Fatalf("LoadImpactConfig(%q) succeeded, want error", content)
+			}
+		})
+	}
+}
+
 // 测试场景：拼错的字段名应被严格校验拒绝，避免配置被静默忽略。
 func TestLoadImpactConfigRejectsMisspelledFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "go-impact.config.json")

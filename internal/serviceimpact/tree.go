@@ -2,9 +2,11 @@
 package serviceimpact
 
 import (
+	"context"
 	"sort"
 	"strings"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/graph"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/impact"
@@ -63,17 +65,35 @@ type analyzer struct {
 	contractsByFactID    map[string][]Contract
 	dubboServiceByFactID map[string]string
 	dubboServices        map[string][]Contract
+	ctx                  context.Context
+	limits               analysis.Limits
+	guard                *analysis.Guard
+	err                  error
 }
 
-func AnalyzeTrees(store *facts.Store) TreeResult {
+// AnalyzeSnapshotContext propagates service changes from a frozen fact snapshot
+// with cancellation and graph budgets.
+func AnalyzeSnapshotContext(ctx context.Context, snapshot facts.Snapshot, limits analysis.Limits) (TreeResult, error) {
+	var err error
+	limits, err = limits.Normalize()
+	if err != nil {
+		return TreeResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	storeValue := snapshot.Store()
+	store := &storeValue
 	a := &analyzer{
-		reverse:              graph.NewReverseGraph(store),
-		routes:               graph.NewRouteGraph(store),
+		reverse:              graph.NewReverseGraph(snapshot),
+		routes:               graph.NewRouteGraph(snapshot),
 		symbols:              map[facts.SymbolID]facts.SymbolFact{},
 		contractsBySymbol:    map[facts.SymbolID][]Contract{},
 		contractsByFactID:    map[string][]Contract{},
 		dubboServiceByFactID: map[string]string{},
 		dubboServices:        map[string][]Contract{},
+		ctx:                  ctx,
+		limits:               limits,
 	}
 	for _, symbol := range store.Symbols {
 		a.symbols[symbol.ID] = symbol
@@ -84,13 +104,25 @@ func AnalyzeTrees(store *facts.Store) TreeResult {
 	a.indexJobContracts(store)
 
 	changes := append([]facts.ChangeFact(nil), store.Changes...)
+	if err := analysis.CheckCount("change_roots", len(changes), limits.MaxRoots); err != nil {
+		return TreeResult{}, err
+	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].ID < changes[j].ID })
 	result := TreeResult{Roots: []RootImpact{}}
+	guard := analysis.NewGuard(ctx, limits)
+	a.guard = guard
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return TreeResult{}, err
+		}
+		guard.BeginRoot()
 		root, contracts := a.buildRoot(change)
+		if a.err != nil {
+			return TreeResult{}, a.err
+		}
 		result.Roots = append(result.Roots, RootImpact{Change: change, Root: root, Contracts: contracts})
 	}
-	return result
+	return result, nil
 }
 
 func (a *analyzer) indexDubboContracts(store *facts.Store) {
@@ -194,11 +226,17 @@ func (a *analyzer) registrationIsLive(symbol facts.SymbolID) bool {
 func (a *analyzer) buildRoot(change facts.ChangeFact) (impact.Node, []ContractImpact) {
 	direct := a.contractsForChange(change)
 	if change.SymbolID == "" {
+		if !a.track(0) {
+			return impact.Node{}, nil
+		}
 		root := impact.Node{ID: change.File, Kind: "file", Name: change.File, File: change.File, Children: []impact.Node{}}
 		contracts := map[string]ContractImpact{}
 		for _, contract := range direct {
 			recordContract(contracts, contract)
-			root.Children = append(root.Children, contractNode(contract, 1))
+			root.Children = append(root.Children, a.contractNode(contract, 1))
+			if a.err != nil {
+				return root, nil
+			}
 		}
 		return root, sortedContractImpacts(contracts)
 	}
@@ -206,7 +244,10 @@ func (a *analyzer) buildRoot(change facts.ChangeFact) (impact.Node, []ContractIm
 	contracts := map[string]ContractImpact{}
 	for _, contract := range direct {
 		recordContract(contracts, contract)
-		root.Children = append(root.Children, contractNode(contract, 1))
+		root.Children = append(root.Children, a.contractNode(contract, 1))
+		if a.err != nil {
+			return root, nil
+		}
 	}
 	if change.Kind == facts.ChangeKindDubboProviderChanged || change.Kind == facts.ChangeKindDubboServiceChanged {
 		root.Children = mergeChildren(root.Children)
@@ -258,13 +299,26 @@ func sortedContractImpacts(contracts map[string]ContractImpact) []ContractImpact
 }
 
 func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool, contracts map[string]ContractImpact) {
+	if a.err != nil {
+		return
+	}
+	if err := a.ctx.Err(); err != nil {
+		a.err = err
+		return
+	}
 	symbolID := facts.SymbolID(node.ID)
 	for _, contract := range a.contractsBySymbol[symbolID] {
 		recordContract(contracts, contract)
-		node.Children = append(node.Children, contractNode(contract, node.Level+1))
+		node.Children = append(node.Children, a.contractNode(contract, node.Level+1))
+		if a.err != nil {
+			return
+		}
 	}
 	for _, ref := range a.reverse.ReferencesTo(symbolID) {
 		child := a.symbolNode(ref.FromSymbol, node.Level+1)
+		if a.err != nil {
+			return
+		}
 		if isGeneratedGrpcGlue(child.File) {
 			continue
 		}
@@ -284,7 +338,10 @@ func (a *analyzer) expandSymbol(node *impact.Node, path map[facts.SymbolID]bool,
 }
 
 // contractNode 构造一个契约终节点。
-func contractNode(contract Contract, level int) impact.Node {
+func (a *analyzer) contractNode(contract Contract, level int) impact.Node {
+	if !a.track(level) {
+		return impact.Node{}
+	}
 	node := impact.Node{
 		ID: contract.ID, Kind: string(contract.Kind), Name: contract.Identity, File: contract.Registration.File,
 		Relation: contract.Relation, Span: contract.Registration, Level: level, Children: []impact.Node{},
@@ -310,10 +367,24 @@ func contractNode(contract Contract, level int) impact.Node {
 }
 
 func (a *analyzer) symbolNode(id facts.SymbolID, level int) impact.Node {
+	if !a.track(level) {
+		return impact.Node{}
+	}
 	if symbol, ok := a.symbols[id]; ok {
 		return impact.Node{ID: string(id), Kind: symbol.Kind, Name: symbol.Name, File: symbol.Span.File, Package: symbol.PackagePath, Span: symbol.Span, Level: level, Children: []impact.Node{}}
 	}
 	return impact.Node{ID: string(id), Kind: symbolKind(id), Name: symbolName(id), Level: level, Children: []impact.Node{}}
+}
+
+func (a *analyzer) track(level int) bool {
+	if a.err != nil {
+		return false
+	}
+	if err := a.guard.Visit(level); err != nil {
+		a.err = err
+		return false
+	}
+	return true
 }
 
 func appendContractOnce(items []Contract, item Contract) []Contract {

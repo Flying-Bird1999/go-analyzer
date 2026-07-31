@@ -2,10 +2,51 @@
 package impact
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"gopkg.inshopline.com/bff/go-analyzer/internal/analysis"
+	"gopkg.inshopline.com/bff/go-analyzer/internal/endpoint"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 )
+
+func TestAnalyzeSnapshotContextEnforcesBudgetAndCancellation(t *testing.T) {
+	store := facts.NewStore("/project", "example.com/project")
+	changed := facts.SymbolID("func:example.com/project::Changed")
+	caller := facts.SymbolID("func:example.com/project::Caller")
+	handler := facts.SymbolID("func:example.com/project::Handler")
+	store.Changes = []facts.ChangeFact{{ID: "change:one", SymbolID: changed, File: "changed.go"}}
+	store.References = []facts.ReferenceFact{
+		{ID: "ref:caller", Kind: facts.ReferenceKindCall, FromSymbol: caller, ToSymbol: changed},
+		{ID: "ref:handler", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: caller},
+	}
+	store.Routes = []facts.RouteRegistrationFact{{ID: "route:handler", Method: "GET", ResolvedPath: "/orders", HandlerSymbol: handler}}
+	snapshot := facts.Freeze(store)
+	catalog := endpoint.Build(snapshot)
+
+	limits := analysis.DefaultLimits()
+	limits.MaxDepth = 1
+	_, err := AnalyzeSnapshotContext(context.Background(), snapshot, catalog, limits)
+	var budgetErr *analysis.BudgetError
+	if !errors.As(err, &budgetErr) {
+		t.Fatalf("depth error = %v, want BudgetError", err)
+	}
+
+	limits = analysis.DefaultLimits()
+	limits.MaxNodesPerRoot = 2
+	_, err = AnalyzeSnapshotContext(context.Background(), snapshot, catalog, limits)
+	if !errors.As(err, &budgetErr) || budgetErr.Resource != "nodes_per_root" {
+		t.Fatalf("node error = %v, want nodes_per_root BudgetError", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = AnalyzeSnapshotContext(ctx, snapshot, catalog, analysis.DefaultLimits())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error = %v", err)
+	}
+}
 
 // TestAnalyzeBuildsCompleteSymbolToEndpointTree 验证从 service 符号反向传播到 controller、
 // 再到路由与注解，最终命中完整 HTTP endpoint 的标准链路。

@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.inshopline.com/bff/go-analyzer/internal/app"
 )
 
 func TestFactsRejectsRelativeProjectPath(t *testing.T) {
@@ -17,6 +20,75 @@ func TestFactsRejectsRelativeProjectPath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "absolute path") {
 		t.Fatalf("error = %q", err.Error())
+	}
+	var analysisErr *app.AnalysisError
+	if !errors.As(err, &analysisErr) || analysisErr.Code != app.ErrorInvalidArgument {
+		t.Fatalf("error = %v, want %s", err, app.ErrorInvalidArgument)
+	}
+}
+
+func TestFactsWritesDiagnosticSidecarWithoutPollutingStdout(t *testing.T) {
+	root := t.TempDir()
+	writeMainTestFile(t, root, "go.mod", "module example.com/diagnostics\n\ngo 1.24\n")
+	writeMainTestFile(t, root, "broken.go", "package diagnostics\n\nfunc Broken( {\n")
+	sidecar := filepath.Join(t.TempDir(), "diagnostics.json")
+
+	stdout, err := runWithCapturedStdoutBytes(t, []string{
+		"facts", "--project", root, "--diagnostics-output", sidecar,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var factsDoc map[string]any
+	if err := json.Unmarshal(stdout, &factsDoc); err != nil {
+		t.Fatalf("stdout is not facts JSON: %v", err)
+	}
+	if _, exists := factsDoc["diagnosticsOutput"]; exists {
+		t.Fatalf("stdout polluted by diagnostics sidecar metadata: %s", stdout)
+	}
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sidecarDoc struct {
+		Diagnostics []map[string]any `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(data, &sidecarDoc); err != nil {
+		t.Fatal(err)
+	}
+	if len(sidecarDoc.Diagnostics) == 0 {
+		t.Fatalf("diagnostic sidecar is empty: %s", data)
+	}
+}
+
+func TestDiagnosticSidecarFailureDoesNotWriteStdout(t *testing.T) {
+	root := t.TempDir()
+	writeMainTestFile(t, root, "go.mod", "module example.com/diagnostics\n\ngo 1.24\n")
+	writeMainTestFile(t, root, "main.go", "package diagnostics\n")
+	sidecar := filepath.Join(t.TempDir(), "missing", "diagnostics.json")
+
+	stdout, err := runWithCapturedStdoutBytes(t, []string{
+		"facts", "--project", root, "--diagnostics-output", sidecar,
+	})
+	if err == nil {
+		t.Fatal("expected sidecar write failure")
+	}
+	if len(stdout) != 0 {
+		t.Fatalf("stdout must remain empty on sidecar failure: %s", stdout)
+	}
+	var analysisErr *app.AnalysisError
+	if !errors.As(err, &analysisErr) || analysisErr.Code != app.ErrorOutputFailed {
+		t.Fatalf("error = %v, want %s", err, app.ErrorOutputFailed)
+	}
+}
+
+func TestSchemaSupportsEndpointAssets(t *testing.T) {
+	out, err := runWithCapturedStdoutBytes(t, []string{"schema", "--type", "endpoint-assets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"endpointAssets"`)) {
+		t.Fatalf("endpoint-assets schema missing property: %s", out)
 	}
 }
 

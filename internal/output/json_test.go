@@ -49,6 +49,9 @@ func TestRenderJSONIsDeterministicAndSorted(t *testing.T) {
 	if doc.Project.ModulePath != "example.com/mini-bff" {
 		t.Fatalf("module path = %q", doc.Project.ModulePath)
 	}
+	if doc.Project.Root != "." {
+		t.Fatalf("project root = %q, want redacted dot", doc.Project.Root)
+	}
 	if len(doc.Symbols) == 0 {
 		t.Fatal("expected symbols in json output")
 	}

@@ -4,11 +4,60 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLoadRejectsGoFileSymlinkOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	writeLoaderTestFile(t, root, "go.mod", "module example.com/project\n\ngo 1.22\n")
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	if err := os.WriteFile(outside, []byte("package outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escaped.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, err := Load(root)
+	var securityErr *PathSecurityError
+	if !errors.As(err, &securityErr) {
+		t.Fatalf("Load error = %v, want PathSecurityError", err)
+	}
+}
+
+func TestLoadRejectsDirectorySymlinkOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	writeLoaderTestFile(t, root, "go.mod", "module example.com/project\n\ngo 1.22\n")
+	outside := t.TempDir()
+	writeLoaderTestFile(t, outside, "source.go", "package outside\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	_, err := Load(root)
+	var securityErr *PathSecurityError
+	if !errors.As(err, &securityErr) {
+		t.Fatalf("Load error = %v, want PathSecurityError", err)
+	}
+}
+
+func TestLoadAllowsGoFileSymlinkInsideProject(t *testing.T) {
+	root := t.TempDir()
+	writeLoaderTestFile(t, root, "go.mod", "module example.com/project\n\ngo 1.22\n")
+	writeLoaderTestFile(t, root, "internal/a.go", "package internal\n\nfunc A() {}\n")
+	if err := os.Symlink(filepath.Join(root, "internal", "a.go"), filepath.Join(root, "internal", "alias.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	project, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load internal symlink: %v", err)
+	}
+	if len(project.Packages["example.com/project/internal"].Files) != 2 {
+		t.Fatalf("loaded files = %d, want 2", len(project.Packages["example.com/project/internal"].Files))
+	}
+}
 
 // 测试场景：加载 mini-bff fixture，应正确扫描 .go 文件、解析 alias import，并跳过 _test.go。
 func TestLoadProjectScansGoFilesAndImports(t *testing.T) {
