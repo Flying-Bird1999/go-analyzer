@@ -207,6 +207,17 @@ func (s *functionScope) resolve(expr ast.Expr, pos token.Pos) []astindex.ValueTy
 		}
 	case *ast.SelectorExpr:
 		parents := s.resolve(value.X, pos)
+		if len(parents) == 0 {
+			// X 解析不出值类型时，它可能根本不是值而是 import 别名
+			// （如 live.ActivityUserClient），此时 Sel 是被导入包的包级变量。
+			// ident.Obj == nil 排除被局部声明遮蔽的同名标识符。
+			if ident, ok := value.X.(*ast.Ident); ok && ident.Obj == nil {
+				if typ, ok := s.idx.ResolvePackageQualifiedValueType(s.file, ident.Name, value.Sel.Name); ok {
+					return []astindex.ValueType{typ}
+				}
+			}
+			return nil
+		}
 		var out []astindex.ValueType
 		for _, parent := range parents {
 			fields := s.idx.StructFieldTypes[astindex.TypeSymbolID(parent.PackagePath, parent.TypeName)]

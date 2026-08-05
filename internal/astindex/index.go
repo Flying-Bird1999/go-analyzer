@@ -613,6 +613,29 @@ func (idx *Index) ResolveSelectorMethod(file *project.File, parts []string) (Res
 	return ResolvedSymbol{ID: methodID}, ok
 }
 
+// ResolvePackageQualifiedValueType 解析 `pkgAlias.Name` 形式的包级 var/const 声明类型，
+// 例如业务代码里跨包持有 generated client 的 `live.ActivityUserClient`。
+// pkgAlias 必须是 file 中真实存在的 import 别名，否则返回 false。
+//
+// 与 ResolveSelectorReceiverType 不同，这里返回声明处写明的类型且**不做接口收窄**：
+// gRPC catalog 以生成代码里的 client 接口类型为键，收窄到具体实现反而会匹配不上。
+// 调用方若需要具体类型，应自行收窄。
+func (idx *Index) ResolvePackageQualifiedValueType(file *project.File, pkgAlias, name string) (ValueType, bool) {
+	if file == nil || pkgAlias == "" || name == "" {
+		return ValueType{}, false
+	}
+	importPath := file.Imports[pkgAlias]
+	if importPath == "" {
+		return ValueType{}, false
+	}
+	for _, kind := range []string{"var", "const"} {
+		if typ, ok := idx.ValueReceiverTypes[string(ValueSymbolID(kind, importPath, name))]; ok && typ.TypeName != "" {
+			return typ, true
+		}
+	}
+	return ValueType{}, false
+}
+
 // ResolveSelectorReceiverType 返回 selector 链最终方法所属的 receiver 类型。
 // 链的首段可能是 import 包名（跨包 selector）或当前包名（同包 selector）；
 // 起点变量按 var/const 两种符号空间查询，对 var 还会尝试唯一接口绑定收窄。
