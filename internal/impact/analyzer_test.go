@@ -185,7 +185,10 @@ func TestAnalyzeAnnotationRootKeepsAnnotationEndpoint(t *testing.T) {
 	}
 }
 
-func TestAnalyzeKeepsAliasRouteSeparateFromAnnotatedEndpoint(t *testing.T) {
+// TestAnalyzeFoldsUncoveredRouteIntoTheAnnotatedEndpoint 锁定传播结论的接口口径：
+// 同一个 handler 上的多条路由，只要有一条注释，就只产出注释这一个接口；没被注释覆盖
+// 的注册路径（这里是 /uc/customers/:customerId）作为 Routes 证据保留，不单独计一个接口。
+func TestAnalyzeFoldsUncoveredRouteIntoTheAnnotatedEndpoint(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	handler := facts.SymbolID("func:example.com/project/controller::GetCustomer")
 	service := facts.SymbolID("func:example.com/project/service::GetCustomer")
@@ -202,15 +205,20 @@ func TestAnalyzeKeepsAliasRouteSeparateFromAnnotatedEndpoint(t *testing.T) {
 	store.Changes = append(store.Changes, facts.ChangeFact{ID: "change:customer-service", Kind: facts.ChangeKindSymbolChanged, SymbolID: service})
 
 	root := mustTreeRoot(t, AnalyzeTrees(store), "change:customer-service")
-	if len(root.Endpoints) != 2 {
-		t.Fatalf("endpoints = %#v", root.Endpoints)
+	if len(root.Endpoints) != 1 {
+		t.Fatalf("endpoints = %#v, want only the annotated identity", root.Endpoints)
 	}
-	got := map[string]string{}
-	for _, endpoint := range root.Endpoints {
-		got[endpoint.Path] = endpoint.AnnotationID
+	got := root.Endpoints[0]
+	if got.Path != "/api/customers/:id" || got.AnnotationID != "annotation:customer" {
+		t.Fatalf("endpoint identity = %#v", got)
 	}
-	if got["/api/customers/:id"] != "annotation:customer" || got["/uc/customers/:customerId"] != "" {
-		t.Fatalf("endpoint identities = %#v", got)
+	// 未被注释覆盖的注册路径必须作为证据保留，否则回归时会漏掉这条真实可调用的 URL。
+	routes := map[string]bool{}
+	for _, route := range got.Routes {
+		routes[route.Path] = true
+	}
+	if !routes["/api/customers/:id"] || !routes["/uc/customers/:customerId"] {
+		t.Fatalf("routes = %#v, want both registrations", got.Routes)
 	}
 }
 

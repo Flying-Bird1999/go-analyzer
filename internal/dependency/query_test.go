@@ -58,7 +58,14 @@ func TestEndpointQueryRejectsUnknownEndpoint(t *testing.T) {
 	}
 }
 
-func TestEndpointAliasKeepsGrpcBidirectionalInvariant(t *testing.T) {
+// TestUncoveredRouteKeepsGrpcBidirectionalInvariant 守住双向不变量在“注释没覆盖到
+// 的注册路径”上仍然成立。这类路径不是接口身份（身份以注释为准），但它是真实可调用的
+// URL，调用方常常只有它。因此要求：
+//   - 正查：用该路径查得到，且回报的是它所属的那个正式接口，而不是把入参原样回显；
+//   - 反查：该正式接口出现在 consumer 里，且这条路径作为注册证据没有丢。
+//
+// 两个方向必须落在同一个接口身份上，否则同一份代码关系会因查询方向不同而分叉。
+func TestUncoveredRouteKeepsGrpcBidirectionalInvariant(t *testing.T) {
 	store := queryStore()
 	handler := store.Routes[0].HandlerSymbol
 	store.Annotations[0].Path = "/orders/:id"
@@ -66,14 +73,20 @@ func TestEndpointAliasKeepsGrpcBidirectionalInvariant(t *testing.T) {
 		ID: "route:legacy", Method: "GET", ResolvedPath: "/legacy/orders/:id", HandlerSymbol: handler,
 	})
 
-	alias := Endpoint{Method: "GET", Path: "/legacy/orders/:id"}
-	assets, err := findEndpointAssetsForTest(store, []Endpoint{alias})
+	uncovered := Endpoint{Method: "GET", Path: "/legacy/orders/:id"}
+	canonical := Endpoint{Method: "GET", Path: "/orders/:id"}
+
+	assets, err := findEndpointAssetsForTest(store, []Endpoint{uncovered})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(assets) != 1 || len(assets[0].Grpc) != 1 {
-		t.Fatalf("alias assets = %#v", assets)
+		t.Fatalf("uncovered route assets = %#v", assets)
 	}
+	if assets[0].Endpoint != canonical {
+		t.Errorf("forward endpoint = %#v, want canonical %#v", assets[0].Endpoint, canonical)
+	}
+
 	method, err := ParseGrpcMethod("/shop.order.v1.OrderService/Get")
 	if err != nil {
 		t.Fatal(err)
@@ -82,12 +95,24 @@ func TestEndpointAliasKeepsGrpcBidirectionalInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foundAlias := false
-	for _, consumer := range sources[0].Consumers {
-		foundAlias = foundAlias || consumer.Endpoint == alias
+	var matched *GrpcImpactConsumer
+	for i, consumer := range sources[0].Consumers {
+		if consumer.Endpoint == canonical {
+			matched = &sources[0].Consumers[i]
+		}
+		if consumer.Endpoint == uncovered {
+			t.Errorf("uncovered route must not surface as its own endpoint: %#v", consumer)
+		}
 	}
-	if !foundAlias {
-		t.Fatalf("grpc reverse query omitted alias: %#v", sources)
+	if matched == nil {
+		t.Fatalf("grpc reverse query omitted the canonical endpoint: %#v", sources)
+	}
+	foundEvidence := false
+	for _, route := range matched.Routes {
+		foundEvidence = foundEvidence || route == uncovered
+	}
+	if !foundEvidence {
+		t.Errorf("reverse query lost the uncovered route evidence: %#v", matched.Routes)
 	}
 }
 

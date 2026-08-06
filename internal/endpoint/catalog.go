@@ -23,7 +23,8 @@ type Route struct {
 }
 
 // Resolution records why a handler, route or annotation resolves to an
-// endpoint. AnnotationID is empty for route fallback and route aliases.
+// endpoint. AnnotationID is empty only for route fallback, i.e. handlers that
+// carry no annotation at all.
 type Resolution struct {
 	Endpoint     Key
 	AnnotationID string
@@ -83,7 +84,10 @@ func Build(snapshot facts.Snapshot) *Catalog {
 			continue
 		}
 		for _, route := range registered {
-			if len(annotations) == 0 || isRouteAlias(route, registered, annotations) {
+			// 接口身份以接口注释为准：handler 上但凡有一条注释，注释就是它唯一的对外身份
+			// 来源，注释没覆盖到的路由不自成接口，只作为注册证据进入 Routes。
+			// 只有完全没有注释时才按路由兜底。
+			if len(annotations) == 0 {
 				if resolution, ok := routeResolution(route, candidates); ok {
 					catalog.addResolution(resolution, route.ID, "")
 				}
@@ -129,12 +133,27 @@ func (c *Catalog) Entries() []Entry {
 }
 
 // Lookup returns one endpoint entry.
+//
+// 查询 key 先按接口身份匹配；匹配不到时按注册证据回退，返回该路由所属的正式接口。
+// 回退存在的原因：接口身份以注释为准，注释没覆盖到的注册路径不是接口身份，但调用方
+// 手上往往只有真实 URL（取自前端代码或网关日志），仍需要查得到它属于哪个接口。
 func (c *Catalog) Lookup(key Key) (Entry, bool) {
 	if c == nil {
 		return Entry{}, false
 	}
-	entry, ok := c.entries[normalizeKey(key)]
-	return cloneEntry(entry), ok
+	normalized := normalizeKey(key)
+	if entry, ok := c.entries[normalized]; ok {
+		return cloneEntry(entry), true
+	}
+	// 按 Entries() 的稳定顺序遍历，保证同一条路由被多个接口列为证据时回退结果确定。
+	for _, entry := range c.Entries() {
+		for _, route := range entry.Routes {
+			if Key(route) == normalized {
+				return entry, true
+			}
+		}
+	}
+	return Entry{}, false
 }
 
 // ForHandler returns all endpoint resolutions for a handler.
@@ -212,41 +231,6 @@ func annotationResolution(annotation facts.AnnotationFact, route facts.RouteRegi
 	}
 	key := normalizeKey(Key{Method: method, Path: path})
 	return Resolution{Endpoint: key, AnnotationID: annotation.ID, Handler: annotation.HandlerSymbol, Routes: candidates}, key.Method != "" && key.Path != ""
-}
-
-func isRouteAlias(route facts.RouteRegistrationFact, siblings []facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
-	if routeMatchesAnyAnnotation(route, annotations) {
-		return false
-	}
-	for _, annotation := range annotations {
-		claimed := false
-		for _, sibling := range siblings {
-			if sibling.ID != route.ID && routeMatchesAnnotation(sibling, annotation) {
-				claimed = true
-				break
-			}
-		}
-		if !claimed {
-			return false
-		}
-	}
-	return true
-}
-
-func routeMatchesAnyAnnotation(route facts.RouteRegistrationFact, annotations []facts.AnnotationFact) bool {
-	for _, annotation := range annotations {
-		if routeMatchesAnnotation(route, annotation) {
-			return true
-		}
-	}
-	return false
-}
-
-func routeMatchesAnnotation(route facts.RouteRegistrationFact, annotation facts.AnnotationFact) bool {
-	if annotation.Path == "" || !strings.EqualFold(route.Method, annotation.Method) {
-		return false
-	}
-	return annotation.Path == route.ResolvedPath || route.LocalPath != "" && annotation.Path == route.LocalPath
 }
 
 func resolvedRoutes(routes []facts.RouteRegistrationFact) []Route {

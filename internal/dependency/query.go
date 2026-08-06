@@ -95,7 +95,9 @@ func FindEndpointAssets(ctx context.Context, snapshot facts.Snapshot, catalog *e
 			return nil, fmt.Errorf("endpoint not found: %s %s", input.Method, input.Path)
 		}
 		asset := EndpointAsset{
-			Endpoint: input,
+			// 用目录里的正式接口身份而不是查询入参：按注册路径回退查到时，
+			// 输出必须回报它所属的那个接口，否则正查与反查会给出两个不同的身份。
+			Endpoint: entry.Endpoint,
 			Routes:   dependencyRoutes(entry.Routes),
 			Handlers: append([]facts.SymbolID(nil), entry.Handlers...),
 		}
