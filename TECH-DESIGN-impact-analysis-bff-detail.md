@@ -611,10 +611,16 @@ flowchart LR
 | 没有接口注释                                     | 每条能解析出的路由各算一个接口   | 能解析出的路由            |
 | 注释和路由对得上                                 | 注释                             | 该方法能解析出的路由      |
 | 注释和路由不一致                                 | 注释，不用路由悄悄覆盖           | 不一致的那条路由，如实展示 |
-| 同一个方法注册了多条别名路由，注释只对上其中一条 | 对不上的那些路由各自算独立接口   | 全部路由                  |
+| 同一个方法注册了多条路由，注释只对上其中一条     | 注释；对不上的那些路由**不另算接口** | 全部路由                  |
 | Diff 直接改了接口注释                            | 注释本身即为影响终点             | 附上能解析到的路由        |
 
-需要说明的是，Annotation-first 是本方案约定的业务口径，不代表注释一定比实际注册正确。并列输出两类证据，本身就是为了让漂移暴露出来。
+归纳成两条：**只要方法上有接口注释，注释就是它唯一的对外身份来源**，注释没覆盖到的注册路径只作为 `routes` 证据；只有方法完全没有注释时，才按路由兜底、每条路由各成一个接口。
+
+这样定的理由是注释没覆盖到的路由绝大多数并不是"另一个接口"：真实项目里它们是同一个接口的另一种写法或历史遗留——路径参数写法不同（`{id}` 与 `:id`）、前缀没拼全、老 Java 转发路径、注释相对注册漂移。各自算一个接口等于把这些噪音当结论报出去。
+
+需要说明的是，Annotation-first 是本方案约定的业务口径，不代表注释一定比实际注册正确。并列输出两类证据，本身就是为了让漂移暴露出来——漂移落在同一个接口条目的 `routes` 里，而不是被拆成两个看起来无关的接口。
+
+注册路径虽然不构成接口身份，但仍可直接用于查询：接口身份目录在按身份查不到时会按注册证据回退，返回该路由所属的正式接口。调用方手上往往只有从前端代码或网关日志拿到的真实 URL，这条回退保证它们查得到。
 
 **这条规则只允许有一个实现。** 由 `internal/endpoint` 统一根据接口注释、路由、关联关系和 Controller 方法算出一份只读的“接口身份目录”，其它模块都从这份目录里读，不允许各自再写一套判断：
 
@@ -636,7 +642,7 @@ flowchart LR
     CATALOG --> REVERSE
 ```
 
-为什么必须强制唯一实现？因为影响分析、正向 gRPC 查询、反向 gRPC 查询是三条独立代码路径，如果各自实现一遍“注释优先、没注释就用路由、别名怎么算”，三者迟早给出不同的接口集合，同一个接口在一处叫 A、在另一处叫 B，输出之间就对不上了。收敛到一份目录后可以保证：
+为什么必须强制唯一实现？因为影响分析、正向 gRPC 查询、反向 gRPC 查询是三条独立代码路径，如果各自实现一遍“注释优先、没注释才按路由兜底、拿注册路径怎么回退”，三者迟早给出不同的接口集合，同一个接口在一处叫 A、在另一处叫 B，输出之间就对不上了。收敛到一份目录后可以保证：
 
 ```text
 接口身份目录里有接口 A
@@ -1680,7 +1686,7 @@ endpoint-assets(A) 包含 gRPC B
 
 合法的 gRPC Full Method 在当前 BFF 中没有 Consumer 时，`impact --grpc` 仍成功返回该 gRPC Source，`consumers` 和 `impactedEndpoints` 为空。
 
-输入 Endpoint 不存在时，`endpoint-assets` 整体失败，不返回部分查询结果。
+输入 Endpoint 先按正式接口身份匹配；匹配不到时按注册证据回退，即输入若是某个接口的注册路径（含注释没覆盖到的那些），仍能查到，返回它所属的那个正式接口。两者都匹配不到才判定为不存在，此时 `endpoint-assets` 整体失败，不返回部分查询结果。
 
 ### 10.4 `endpoint-assets` 输出
 
@@ -1722,7 +1728,7 @@ endpoint-assets(A) 包含 gRPC B
 
 其中：
 
-- `endpoint` 是查询使用的正式 Endpoint 身份。
+- `endpoint` 是该接口的正式身份，**取自接口身份目录而非查询入参**：用注册路径回退查到时，这里回报的是它所属的正式接口。否则同一份关系会因查询方向不同而给出两个身份，双向不变量就不成立。
 - `routes` 是该接口对应 Controller 方法的静态注册证据。
 - `handlers` 是与 Endpoint 关联的项目内 Symbol。
 - `clients` 是 Generated Client Binding。
@@ -1882,7 +1888,7 @@ timing impact_render=...
 | `internal/link`       | 路由、Controller 方法、接口注释和中间件之间的关联                          | 重新扫描项目           |
 | `internal/diff`       | Unified Diff 解析、校验和 Change 映射                                     | 业务 Endpoint 汇总     |
 | `internal/graph`      | Reverse、Route、Call、IM 查询视图                                         | 修改 Store             |
-| `internal/endpoint`   | 统一的接口身份目录：注释优先、路由兜底、别名与 Controller 方法的对应       | Diff 或 gRPC 专属传播  |
+| `internal/endpoint`   | 统一的接口身份目录：注释优先、无注释才路由兜底、注册路径回退查询           | Diff 或 gRPC 专属传播  |
 | `internal/dependency` | 基于接口身份目录和调用索引执行接口与 gRPC 的双向查询                       | 重复实现接口身份规则   |
 | `internal/impact`     | Change 传播树和删除 Route 恢复                                            | CLI 和 JSON Schema     |
 | `internal/output`     | JSON 投影、排序、去重和 Schema                                            | 生产业务 Fact          |
@@ -1944,13 +1950,13 @@ flowchart TB
 - Package Alias、局部变量遮蔽和 Receiver 解析。
 - Annotation Method/Path。
 - Route、Group、Wrapper、Middleware 和跨函数 Group Flow。
-- 接口注释与路由漂移、同一 Controller 方法多条注释、路由别名。
+- 接口注释与路由漂移、同一 Controller 方法多条注释、多条路由汇聚到同一条注释。
 - 动态路由路径、无法解析的 Controller 方法。
 - Diff 新增、修改、删除、EOF 删除和非法输入。
 - Module require/replace、Import Usage 和忽略配置。
 - IM SDK、Broadcast 双锚点、Payload/Event/Control。
 - Generated gRPC Unary、Streaming、Receiver Binding 和歧义拒绝。
-- 循环、菱形依赖、别名 Route、稳定排序和去重。
+- 循环、菱形依赖、同一方法多条路由、稳定排序和去重。
 
 ### 13.3 Pipeline 与契约测试
 
@@ -1962,21 +1968,22 @@ flowchart TB
 4. `summary` 等于所有 Source 摘要的去重并集。
 5. `endpointSourcesSummary` 能反查每个正式 Endpoint。
 6. Endpoint 到 gRPC 与 gRPC 到 Endpoint 满足同一 Call Graph 关系。
-7. Diff 传播、接口到 gRPC、gRPC 到接口三条路径共用同一份接口身份目录，别名集合完全一致。
+7. Diff 传播、接口到 gRPC、gRPC 到接口三条路径共用同一份接口身份目录，产出的接口集合完全一致。
 8. `endpointSourcesSummary` 的 File、Module 和 gRPC Chain 都从来源指向 Endpoint。
 9. 同一接口的路由候选在跨 Controller 方法、变更根和来源合并后不丢失。
 10. Go Struct、JSON Tag、Schema Required 和 Render 字段保持一致。
 11. `endpoint-assets` 有独立 Schema，输出顺序可重复。
-12. 瞬态 Change、Module Usage 和 Route Group Flow 不泄漏到 `facts` JSON。
-13. 空集合使用 `[]`，可选 `moduleSources` 无内容时省略。
-14. Golden Sample 能完整展示传播树和来源摘要。
-15. 符号链接逃逸、超预算和取消都以稳定错误码失败，不产生部分 JSON。
+12. 用注册路径（含注释没覆盖到的那些）查 `endpoint-assets` 能命中，且 `endpoint` 回报的是所属的正式接口身份而非查询入参；完全未注册的路径仍以 `endpoint_not_found` 失败。
+13. 瞬态 Change、Module Usage 和 Route Group Flow 不泄漏到 `facts` JSON。
+14. 空集合使用 `[]`，可选 `moduleSources` 无内容时省略。
+15. Golden Sample 能完整展示传播树和来源摘要。
+16. 符号链接逃逸、超预算和取消都以稳定错误码失败，不产生部分 JSON。
 
 ### 13.4 真实 BFF 验证
 
 | 项目                   | 重点                                                   |
 | ---------------------- | ------------------------------------------------------ |
-| `sl-sc1-admin-bff`   | Annotation、Route Alias、Middleware、IM、Module Change |
+| `sl-sc1-admin-bff`   | Annotation、同方法多路由、Middleware、IM、Module Change |
 | `sl-sc1-bff-service` | 跨函数 Group Flow、BFF gRPC Client、IM                 |
 | `sl-sc2-admin-bff`   | 项目差异和零配置兼容性                                 |
 
@@ -2171,7 +2178,7 @@ Impact JSON 为了保持业务契约精简，不内嵌 Analyzer Version、Build 
 | Route Graph              | 路由索引           | 从 Controller 方法、Group 或中间件查到路由与接口注释的索引                     |
 | Call Graph               | 调用索引           | Caller 与 Callee 之间的可执行调用索引                                         |
 | IM Graph                 | IM 索引            | 从 Sender 查到 IM Event 及其依赖的索引                                        |
-| EndpointCatalog          | 接口身份目录       | 统一注释优先、路由兜底、别名、Controller 方法与路由候选的只读视图              |
+| EndpointCatalog          | 接口身份目录       | 统一注释优先、无注释才路由兜底、Controller 方法与路由候选的只读视图            |
 | Handler                  | Controller 方法    | 被路由注册、真正处理请求的那个函数或方法。正文统一称“Controller 方法”；`handler` 只作为 JSON 输出字段名和关系名保留，两者指同一个对象 |
 | Annotation               | 接口注释           | Controller 方法注释中声明的 HTTP 请求方法和路径                                |
 | Route                    | 路由注册           | `GET`、`POST` 等静态路由注册                                              |
