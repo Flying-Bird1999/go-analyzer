@@ -99,10 +99,6 @@ func strictAnalysisError(err error) error {
 			return classified
 		}
 	}
-	var dependencyErr *project.DependencyDiscoveryError
-	if errors.As(err, &dependencyErr) {
-		return &AnalysisError{Code: ErrorDependencyLoadFailed, Err: err}
-	}
 	var ambiguity *grpcextract.CallAmbiguityError
 	if errors.As(err, &ambiguity) {
 		return &AnalysisError{Code: ErrorGrpcCallAmbiguous, Err: err}

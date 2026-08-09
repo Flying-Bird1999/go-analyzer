@@ -41,7 +41,6 @@ type ServiceContractSummary struct {
 	Kind               serviceimpact.ContractKind       `json:"kind"`
 	Identity           string                           `json:"identity"`
 	IdentityResolution serviceimpact.IdentityResolution `json:"identityResolution"`
-	FullMethod         string                           `json:"fullMethod,omitempty"`
 	Method             string                           `json:"method,omitempty"`
 	Path               string                           `json:"path,omitempty"`
 	LocalPath          string                           `json:"localPath,omitempty"`
@@ -176,7 +175,7 @@ func serviceContractSummary(contract serviceimpact.Contract) ServiceContractSumm
 	}
 	switch contract.Kind {
 	case serviceimpact.ContractGrpcOperation:
-		out.FullMethod = contract.GrpcOperation.FullMethod
+		// Identity 已经是 gRPC 的完整规范身份，不需要再单独存一份。
 	case serviceimpact.ContractHTTPEndpoint:
 		out.Method = contract.Route.Method
 		out.Path = contract.Route.ResolvedPath

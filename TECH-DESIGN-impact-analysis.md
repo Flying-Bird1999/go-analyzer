@@ -4,22 +4,22 @@
 >
 > **两条独立链路**：分析器支持两类 Go 项目。它们回答不同的问题、走不同的命令、产出不同的契约，**互不依赖**：
 >
-> | 链路 | 问题 | 命令 | 专属章节 |
-> | --- | --- | --- | --- |
-> | BFF | 改动影响哪些 HTTP 接口？会不会触发出站 IM 事件、影响到上游 gRPC 依赖？ | `impact`、`endpoint-assets` | 第 1–3 节 |
-> | 后端服务 | 改动影响哪些注册出去的服务契约（gRPC / HTTP / Dubbo / Job）？ | `grpc-impact` | 第 6 节 |
+> | 链路     | 问题                                                                   | 命令                            | 专属章节   |
+> | -------- | ---------------------------------------------------------------------- | ------------------------------- | ---------- |
+> | BFF      | 改动影响哪些 HTTP 接口？会不会触发出站 IM 事件、影响到上游 gRPC 依赖？ | `impact`、`endpoint-assets` | 第 1–3 节 |
+> | 后端服务 | 改动影响哪些注册出去的服务契约（gRPC / HTTP / Dubbo / Job）？          | `grpc-impact`                 | 第 6 节    |
 >
 > 两条链路的业务规则完全分开：终点不同、身份规则不同、输出契约不同。它们共用的是底座——项目加载、声明索引、Diff 映射和影响传播机制，对应第 4–5 节。跨仓串联（后端 → BFF → 前端）由上层系统按接口身份完成，不在分析器内部。
 >
 > **怎么读**：
 >
-> | 章节 | 范围 |
-> | --- | --- |
-> | 第 1–3 节 | BFF 链路的能力、协议和一个贯穿全文的真实例子 |
+> | 章节       | 范围                                                   |
+> | ---------- | ------------------------------------------------------ |
+> | 第 1–3 节 | BFF 链路的能力、协议和一个贯穿全文的真实例子           |
 > | 第 4–5 节 | 架构与影响传播——两条链路共用，BFF 专有之处会就地标出 |
-> | 第 6 节 | 后端服务链路，自包含 |
-> | 第 7 节 | 错误语义，两条链路共用 |
-> | 第 8 节 | 这套能力在 Nexus 里怎么落地：目录与最终命令 |
+> | 第 6 节    | 后端服务链路，自包含                                   |
+> | 第 7 节    | 错误语义，两条链路共用                                 |
+> | 第 8 节    | 这套能力在 Nexus 里怎么落地：目录与最终命令            |
 >
 > 想快速了解全貌，读第 1、3、6 节。
 
@@ -48,11 +48,11 @@
 
 ### 1.2 BFF 链路的三条能力
 
-| 命令 | 回答的问题 | 输入 |
-| --- | --- | --- |
-| `impact --diff` | 这次代码改动影响哪些 HTTP 接口和 IM 事件？ | Diff |
-| `impact --grpc` | 上游某个 gRPC 接口变了，本 BFF 哪些接口会受影响？ | 完整 gRPC 接口名 |
-| `endpoint-assets` | 某个 BFF 接口依赖哪些上游 gRPC 接口？ | `METHOD /path` |
+| 命令                | 回答的问题                                        | 输入             |
+| ------------------- | ------------------------------------------------- | ---------------- |
+| `impact --diff`   | 这次代码改动影响哪些 HTTP 接口和 IM 事件？        | Diff             |
+| `impact --grpc`   | 上游某个 gRPC 方法变了，本 BFF 哪些接口会受影响？ | gRPC 方法身份    |
+| `endpoint-assets` | 某个 BFF 接口依赖哪些上游 gRPC 接口？             | `METHOD /path` |
 
 `impact` 的两种输入可以同时给，合并成一份 JSON 输出。
 
@@ -87,12 +87,12 @@ impact --grpc B 的结果包含接口 A
 
 ### 2.1 输入
 
-| 输入 | 说明 | 必需性 |
-| --- | --- | --- |
-| BFF 项目目录 | 含 `go.mod`、**且已应用本次改动**的源码；要求绝对路径 | 必需 |
-| Unified Diff | 描述改了哪些文件哪些行；要求绝对路径 | Diff 分析时必需 |
-| 完整 gRPC 接口名 | 形如 `/proto包名.服务名/方法名`，可重复传 | gRPC 反查时必需 |
-| 配置文件 | 过滤 go.mod 依赖的版本变化，见下 | 可选 |
+| 输入          | 说明                                                         | 必需性          |
+| ------------- | ------------------------------------------------------------ | --------------- |
+| BFF 项目目录  | 含`go.mod`、**且已应用本次改动**的源码；要求绝对路径 | 必需            |
+| Unified Diff  | 描述改了哪些文件哪些行；要求绝对路径                         | Diff 分析时必需 |
+| gRPC 方法身份 | 形如`<生成包 import 路径>.<Service>/<GoMethod>`，可重复传  | gRPC 反查时必需 |
+| 配置文件      | 过滤 go.mod 依赖的版本变化，见下                             | 可选            |
 
 **配置文件**默认读项目内的 `.analyzer/go-impact.config.json`，不存在就按默认行为跑；也可以用 `--impact-config <绝对路径>` 显式指定。目前支持的是 go.mod 依赖变化的降级策略，后续可以按需扩展更多配置项：
 
@@ -171,12 +171,12 @@ func (c *conversationApi) SyncConversation(...) (bool, error)
 
 于是 `impactedEndpoints` 的每个条目同时给两组信息：
 
-| 字段 | 是什么 | 本例的值 |
-| --- | --- | --- |
-| `method` / `path` | 对外正式身份，来自接口注释 | `POST /admin/api/bff-web/mc/syncConversation` |
-| `routes` | 同一个 Controller 方法的**全部**注册证据 | 两条：Web 的 `/mc/syncConversation`、App 的 `/mc/conversation/status/report` |
+| 字段                  | 是什么                                         | 本例的值                                                                        |
+| --------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------- |
+| `method` / `path` | 对外正式身份，来自接口注释                     | `POST /admin/api/bff-web/mc/syncConversation`                                 |
+| `routes`            | 同一个 Controller 方法的**全部**注册证据 | 两条：Web 的`/mc/syncConversation`、App 的 `/mc/conversation/status/report` |
 
-这样拆的原因是两组信息回答的问题不同：`method/path` 回答"这次改动破坏了哪个对外契约"，`routes` 回答"实际有哪些 URL 能打到这段代码"。两组信息都对外提供，具体回归到哪一层由业务方按自己的诉求取舍——只关心契约就看 `method/path`，要覆盖全部可调用路径就看 `routes`。完整理由见 4.3 第②条，这个例子的推导过程见 3.5。
+这样拆的原因是两组信息回答的问题不同：`method/path` 回答"这次改动破坏了哪个对外契约"，`routes` 回答"实际有哪些 URL 能打到这段代码"。两组信息都对外提供，具体回归到哪一层由业务方按自己的诉求取舍——只关心契约就看 `method/path`，要覆盖全部可调用路径就看 `routes`。完整理由见 4.3 第②条，这个例子的推导过程见 3.4。
 
 注册路径虽然不是接口身份，但仍然可以直接用来查询——拿 App 那条真实 URL 查 `endpoint-assets`，会回报它所属的那个正式接口：
 
@@ -211,14 +211,11 @@ $ nexus go-analyzer endpoint-assets --project <绝对路径> \
     }],
     "dependencies": {
       "grpc": [{
-        "fullMethod": "/gopkg.inshopline.com.sc1.app.modules.medium.activity_user.proto.ActivityUserService/listWinnerBySalesId",
-        "protoPackage": "gopkg.inshopline.com.sc1.app.modules.medium.activity_user.proto",
-        "service": "ActivityUserService",
-        "method": "listWinnerBySalesId",
-        "clients": [{"clientType": "ActivityUserServiceClient", "goMethod": "ListWinnerBySalesId"}],
+        "identity": "gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/activity_user_api.ActivityUserService/ListWinnerBySalesId",
+        "goMethod": "ListWinnerBySalesId",
         "chains": [{
           "symbols": [{"name": "ListWinner"}, {"name": "ListWinnerBySalesId"}],
-          "callSite": {"file": "remote/grpc/post/activity.go", "line": 42, "column": 19}
+          "callSite": {"file": "remote/grpc/post/activity.go", "line": 42, "column": 9}
         }]
       }]
     }
@@ -226,42 +223,47 @@ $ nexus go-analyzer endpoint-assets --project <绝对路径> \
 }
 ```
 
-这段是真实输出。注意 `clients[].goMethod` 是 `ListWinnerBySalesId`（大写开头），而 `method` 是 `listWinnerBySalesId`（小写开头）——两者不是同一个字符串，靠猜测拼不出对应关系。
-
-真正的接口身份（`fullMethod`）来自 protoc 生成的 gRPC client 代码里一段固定形状的写法。分析器加载项目的依赖包源码，**按文件头部的 `Code generated ... DO NOT EDIT.` 标记**筛出生成文件（不认文件名，所以 `_grpc.pb.go`、`.grpc.pb.go` 等命名都能覆盖），再从里面找 `cc.Invoke` / `NewStream` 这类传输调用，取出它使用的方法名常量：
+这段是真实输出。`identity` 是这条 gRPC 依赖的唯一身份，形如 `<生成包 import 路径>.<Service>/<GoMethod>`
 
 ```go
-// activity_user_grpc.pb.go —— protoc-gen-go-grpc 生成，不是手写
-const ActivityUserService_ListWinnerBySalesId_FullMethodName = "/gopkg.inshopline.com.sc1.app.modules.medium.activity_user.proto.ActivityUserService/listWinnerBySalesId"
-
-func (c *activityUserServiceClient) ListWinnerBySalesId(ctx context.Context, in *ListWinnerReq, opts ...grpc.CallOption) (*ListWinnerResp, error) {
-	return c.cc.Invoke(ctx, ActivityUserService_ListWinnerBySalesId_FullMethodName, in, out, opts...)
+// remote/grpc/post/activity.go —— 本项目的业务代码，不是生成代码
+func ListWinnerBySalesId(ctx context.Context, req *activityUser.ListWinnerBySalesIdReq) (*activityUser.PageActivityWinnerWithAvatarResp, error) {
+	return live.ActivityUserClient.ListWinnerBySalesId(ctx, req)
 }
 ```
 
-分析器直接读这个字符串常量（或 `cc.Invoke` 调用里的字面量），而不是从 Go 方法名 `ListWinnerBySalesId` 或业务代码里给 client 起的变量名/目录名去推——业务代码里这三处命名习惯和 proto 定义经常不一致：
+调用点 `live.ActivityUserClient.ListWinnerBySalesId(...)` 里，`live.ActivityUserClient` 是一个包级变量，分析器判断的不是这个变量名，而是它声明时的**静态类型**——`remote/grpc/live/activity.go` 里这行声明：
 
-| 对不上的地方 | Go 侧（业务代码怎么叫它） | proto 侧（生成代码里的真实身份） |
-| --- | --- | --- |
-| 方法名 | `ListWinnerBySalesId` | `listWinnerBySalesId` |
-| 服务名 | 变量叫 `ActivityUserClient` | `ActivityUserService` |
-| 包名 | 目录叫 `activity_user_api` | `gopkg.inshopline.com.sc1.app.modules.medium.activity_user.proto` |
+```go
+var ActivityUserClient activityUser.ActivityUserServiceClient
+```
 
-`impact --grpc` 走反查方向，用的是这份 endpoint-assets 数据里同一套 `chains`/`clients` 关系，只是从"gRPC 方法"出发找"依赖它的 HTTP 接口"。这个方向查出来的 consumer 关系固定标记为 `may_call`，表示源码里存在一条从该接口走到这个 gRPC 方法的调用路径。
+真正满足命名契约的是类型名 `ActivityUserServiceClient`，不是变量名 `ActivityUserClient`（两者恰好长得像，纯属巧合）。哪怕把这个变量改名成任意名字，只要静态类型不变，识别结果不受影响——这一点已经用最小复现验证过。
+
+分析器要求同时满足四个条件才判定为一次 gRPC 调用：
+
+1. **类型来自调用方所在包之外的另一个包**——generated client 接口从不与消费它的业务代码同包声明；
+2. **类型名以 `Client` 结尾**——protoc-gen-go-grpc 生成的 client 接口永远命名为 `<Service>Client`，去掉这个后缀就是 `Service`（这里是 `ActivityUserService`）；
+3. **类型所在包的 import 路径以公司内网域名 `gopkg.inshopline.com/` 开头**——真实项目验证过，所有生成包（含跨团队的 `ai/chatbot`、`sc/background`、`armor`、`member`、`product`、`billing` 等，不限于本项目所属团队）无一例外落在这个域名下；
+4. **类型所在包不属于被分析项目自己的 module**——排除项目自己手写的包装类型恰好落在该域名下的情况
+
+四段信息（第一段是满足条件 1/3/4 的类型 import 路径,第二段是条件 2 去掉后缀得到的 Service,第三段是调用的方法名）全部能从调用点本身 + 项目自己的 `go.mod` 证明，不需要去读 `live.ActivityUserClient` 声明在哪个包、那个包里的生成代码长什么样。
+
+`impact --grpc` 走反查方向，用的是这份 endpoint-assets 数据里同一套 `chains` 关系，只是从"gRPC 方法"出发找"依赖它的 HTTP 接口"。这个方向查出来的 consumer 关系固定标记为 `may_call`，表示源码里存在一条从该接口走到这个 gRPC 方法的调用路径。
 
 ### 2.4 CLI 与 CI 集成
 
 ```bash
 nexus go-analyzer impact --project <绝对路径> --diff <绝对路径> --format json
 nexus go-analyzer endpoint-assets --project <绝对路径> --endpoint "GET /admin/api/..."
-nexus go-analyzer impact --project <绝对路径> --grpc "/proto包.Service/method"
+nexus go-analyzer impact --project <绝对路径> --grpc "example.com/gen/pkg.Service/GoMethod"
 ```
 
 集成约定：
 
 - JSON 写 stdout，错误和 `--timings` 写 stderr，两者不混。
 - 成功退出码 0；"没有受影响接口"是**成功**结果（空数组 + 计数 0），不用错误表达。
-- 失败时不输出半份 JSON，只给稳定错误码（`invalid_argument`、`diff_snapshot_mismatch`、`dependency_load_failed` 等），调用方按码分类，不解析自然语言。
+- 失败时不输出半份 JSON，只给稳定错误码（`invalid_argument`、`diff_snapshot_mismatch`、`grpc_call_ambiguous` 等），调用方按码分类，不解析自然语言。
 - 可选 `--diagnostics-output <绝对路径>` 把本次分析的诊断单独写一个文件，不污染正式 JSON。
 - 影响 JSON 不内嵌分析器版本和构建条件。需要跨环境复现时，CI 侧要把「分析器版本 + 项目 commit + Diff 摘要 + 配置摘要」和 JSON 一起存档。
 
@@ -364,11 +366,9 @@ timing route_extract=20ms       timing impact_analyze=110ms
 ]
 ```
 
-### 3.5 从这份输出能读出四件事
+三行改动、完全没碰路由和 Controller，全靠类型引用链推到了一个 HTTP 接口加一个 IM 事件。
 
-**① 三行改动同时命中了两类终点。** 一个 HTTP 接口，加一个 IM 事件 `MC/CONVERSATION_UPDATE`。改动本身完全没有碰路由和 Controller，全靠类型引用链推出来。
-
-**② 链路尾部的 `route` 和 `annotation` 不是同一条路径，这正是接口身份规则在起作用。**
+这条 `chains` 的尾部值得注意——`route` 和 `annotation` 不是同一条路径：
 
 ```text
 ... -> route POST /admin/api/bff-app/mc/conversation/status/report   ← 注册证据（App 那条）
@@ -376,17 +376,13 @@ timing route_extract=20ms       timing impact_analyze=110ms
     -> POST /admin/api/bff-web/mc/syncConversation                   ← 结论
 ```
 
-传播是从 App 那条路由走上来的，但落地的接口身份取自注释。看起来"对不上"，其实是规则的正常表现：注释是这个 Controller 方法唯一的对外身份来源，两条注册路由都汇聚到它。两条路由都完整保留在该接口的 `routes` 字段里，所以从证据到结论没有任何断点。
-
-**③ 链路里看不到 `ConversationUpdateMsg`。** 因为 `chains` 对每个来源根只保留**一条最短路径**，而 `Staff → readySendIm` 比绕经消息体那条更短。经消息体的那条（也是 IM 事件的由来）完整保留在 `fileSources` 的传播树里，5.3 会展示它。
-
-**④ 链路里出现了两个同名的 `method SyncConversation`。** 它们是 service 层和 controller 层两个不同的方法，恰好同名。这是 `chains` 这个精简视图的已知局限：它只保留 `kind + name` 便于人读，不带包名。需要区分时看 `fileSources` 里的完整传播树，那里每个节点都有唯一 ID 和文件路径。
+传播是从 App 那条路由走上来的，落地的接口身份却取自注释。看起来"对不上"，其实正是接口身份规则在起作用：注释是这个 Controller 方法唯一的对外身份来源，两条注册路由都汇聚到它，而两条路由又都完整保留在该接口的 `routes` 字段里，所以从证据到结论没有断点。
 
 ---
 
 ## 4. 架构设计
 
-> 本节的分层对两条链路都适用。4.2 的执行顺序以 BFF 为例，其中第 7、9 步（接口身份目录、gRPC 反查）是 BFF 专有的。4.3 三条决策中第②条也只属于 BFF，后端服务用注册证据定身份，见 6.2。
+> 本节的分层对两条链路都适用。4.2 的执行顺序以 BFF 为例，其中第 7、9 步（接口身份目录、gRPC 反查）是 BFF 专有的。4.3 两条决策中第②条只属于 BFF，后端服务用注册证据定身份，见 6.2。
 
 ### 4.1 分层
 
@@ -404,14 +400,14 @@ flowchart TB
     OUT --> APP
 ```
 
-| 层 | 负责 | 不负责 |
-| --- | --- | --- |
-| 命令接入 | 参数、绝对路径校验、stdout/stderr 分离 | 任何分析规则 |
-| 流程编排 | 按顺序驱动各阶段、错误归一化、耗时统计 | 具体语法识别 |
-| 基础能力 | 加载项目、建声明索引、解析校验 Diff | 判断业务影响 |
-| 事实与关联 | 从语法树提取原子事实，连接稳定身份 | 产出最终结论 |
-| 查询与传播 | 建只读索引、双向查询、生成传播树 | 修改事实 |
-| 输出 | 排序、去重、渲染 JSON | 补造代码关系 |
+| 层         | 负责                                   | 不负责       |
+| ---------- | -------------------------------------- | ------------ |
+| 命令接入   | 参数、绝对路径校验、stdout/stderr 分离 | 任何分析规则 |
+| 流程编排   | 按顺序驱动各阶段、错误归一化、耗时统计 | 具体语法识别 |
+| 基础能力   | 加载项目、建声明索引、解析校验 Diff    | 判断业务影响 |
+| 事实与关联 | 从语法树提取原子事实，连接稳定身份     | 产出最终结论 |
+| 查询与传播 | 建只读索引、双向查询、生成传播树       | 修改事实     |
+| 输出       | 排序、去重、渲染 JSON                  | 补造代码关系 |
 
 依赖方向单向向下，禁止反向：输出层不能回头调提取器，提取器不能调传播层，CLI 里不写分析逻辑。
 
@@ -430,9 +426,9 @@ flowchart TB
 10. 渲染稳定 JSON
 ```
 
-只有 `--grpc` 和 `endpoint-assets` 需要加载 gRPC 生成代码依赖；纯 Diff 分析跳过这一步，避免拖慢主路径、也避免引入依赖拉取失败面。
+`--grpc` 和 `endpoint-assets` 与纯 Diff 分析走的是同一套源码加载——gRPC 身份不依赖生成代码，不需要额外加载依赖包，见 4.3。
 
-### 4.3 三条关键决策
+### 4.3 两条关键决策
 
 **① 先抽事实，再做查询。** 分析器不是读一遍源码直接回答"哪些接口受影响"，而是先把源码翻译成一堆原子事实（"某个类型被某个方法当返回值用了"、"某条路由注册了某个方法"），之后所有查询只读这些事实。
 
@@ -446,15 +442,13 @@ Controller 方法有接口注释 -> 注释就是它唯一的对外身份来源�
 Controller 方法无接口注释 -> 才按路由兜底，每条路由各自成为一个接口
 ```
 
-为什么以注释为准：真实 BFF 的路由前缀往往分散在多层 Group、跨多个函数传递——3.5 例子里 App 端那条 `/status/report` 的完整路径 `/admin/api/bff-app/mc/conversation/status/report` 就是逐层拼出来的，静态拼接随时可能残缺；而接口注释是给下游系统看的对外契约，本身写全了。
+为什么以注释为准：真实 BFF 的路由前缀往往分散在多层 Group、跨多个函数传递——3.4 例子里 App 端那条 `/status/report` 的完整路径 `/admin/api/bff-app/mc/conversation/status/report` 就是逐层拼出来的，静态拼接随时可能残缺；而接口注释是给下游系统看的对外契约，本身写全了。
 
 为什么注释没覆盖到的路由不单独算接口：它们没有对外契约背书。真实项目里这类路由绝大多数并不是"另一个接口"，而是同一个接口的另一种写法或历史遗留——路径参数写法不同（`{id}` 与 `:id`）、前缀没拼全、注释相对注册漂移。把它们各自算一个接口，等于把这些噪音当成结论报出去。
 
 但也不能只输出注释——注释可能和实际注册漂移，所以两者并列：`routes` 完整列出全部注册证据，漂移就暴露在同一个条目里，而不是被拆成两个看起来无关的接口。回归要覆盖的 URL 也在 `routes` 里，一个都不少。
 
 这条规则只允许有一个实现入口（`internal/endpoint` 产出的只读接口身份目录）。影响传播、gRPC 正查、gRPC 反查是三条独立代码路径，如果各自实现一遍"注释优先、没注释才用路由兜底"，三者迟早给出不同的接口集合，1.2 节那条双向不变量就守不住了。同理，"拿注册路径也要查得到"这条回退也做在目录里，三条路径自动共享。
-
-**③ 正式结论与诊断分开放。** 路径是拼出来的、接口有多个实现分不清、删除块只能恢复一半证据——这些既不是错误（分析能继续），也不能当结论报出去。它们进独立的诊断文件，正式影响 JSON 里只放能证明的东西。
 
 ---
 
@@ -498,41 +492,37 @@ flowchart LR
 
 为此建四种只读索引，它们都只读第 4 节那些提取出来的事实，不复制第二套数据：
 
-| 索引 | 作用 | 在本例中 |
-| --- | --- | --- |
-| 反向引用索引 | 从被用的声明反查所有使用者 | 从 `Staff` 找到 `ConversationUpdateMsg`、`readySendIm` |
-| 路由索引 | 从代码声明落到路由与接口注释 | 从 `SyncConversation` 找到两条路由 |
-| 调用索引 | 沿可执行调用关系正反查 | 本例未用到——它只服务 gRPC 双向查询 |
-| IM 索引 | 判断当前路径是否命中某个 IM 事件 | 命中 `MC/CONVERSATION_UPDATE` |
+| 索引         | 作用                             | 在本例中                                                    |
+| ------------ | -------------------------------- | ----------------------------------------------------------- |
+| 反向引用索引 | 从被用的声明反查所有使用者       | 从`Staff` 找到 `ConversationUpdateMsg`、`readySendIm` |
+| 路由索引     | 从代码声明落到路由与接口注释     | 从`SyncConversation` 找到两条路由                         |
+| 调用索引     | 沿可执行调用关系正反查           | 本例未用到——它只服务 gRPC 双向查询                        |
+| IM 索引      | 判断当前路径是否命中某个 IM 事件 | 命中`MC/CONVERSATION_UPDATE`                              |
 
 ### 5.2 从 Diff 行到变更起点
 
-Diff 只说"某文件第几行变了"，映射阶段要回答"这一行属于谁"。规则是**取最具体的目标**：按下表从上往下匹配，命中即止。
+Diff 给的是"某文件第几行变了"，但传播需要的是"从哪个声明开始往上找"。这一步就是把行号翻译成声明，翻译结果叫**变更起点**。
 
-拿同一个仓库里一段真实的路由注册函数当尺子，改动落在不同行会得到不同粒度的起点：
+第 3 节的例子最直观：Diff 里变的是 `service/im/im.go` 的一行 struct Tag，翻译出的起点是 `Staff` 这个类型——不是整个 `im.go` 文件。这个差别很关键：如果起点是文件，`im.go` 里其它类型（`LockInventoryUpdateMsg` 等）的下游也会被算进来，结论直接变成一堆无关接口。
+
+所以规则是**尽量往细里定位**：一行代码如果同时落在多个东西里面，取最里面那个。
 
 ```go
 func InitPostSaleRouter(adminWebGroup *lego.RouterGroup) {
-	saleGroup := adminWebGroup.Group("/post/sale/:salesId")
+	saleGroup := adminWebGroup.Group("/post/sale/:salesId")   // 改这行 -> 起点是这个 Group
 	readGuard := AddPostReadGuard(saleGroup)
-	readGuard.Use(newFlowControlMid())
-	readGuard.GET("/activity/winners", listWinner)
-	log.Info("router ready")
+	readGuard.Use(newFlowControlMid())                        // 改这行 -> 起点是这条中间件绑定
+	readGuard.GET("/activity/winners", listWinner)            // 改这行 -> 起点是这条路由
+	log.Info("router ready")                                  // 这行不属于以上任何一种
+	                                                          //   -> 退回一级，起点是整个函数
 }
 ```
 
-| 优先级 | 改了什么 | 起点是 |
-| --- | --- | --- |
-| 1 | Controller 上方的 `// @Post /xxx` | 那条接口注释 |
-| 2 | `adminWebGroup.Group("/post/sale/:salesId")` | 那个路由 Group |
-| 3 | `readGuard.GET("/activity/winners", listWinner)` | 那条路由注册 |
-| 4 | `readGuard.Use(newFlowControlMid())` | 那条中间件绑定 |
-| 5 | `log.Info("router ready")`，即函数内没有更具体目标的行 | 最小的那个函数 / 方法 / 类型 / 变量 / 常量 |
-| 6 | 以上都不命中 | 只能定位到文件 |
+这四行都在同一个函数体里。如果不做区分、一律算作"改了 `InitPostSaleRouter`"，那么改任何一行都等于说"这个函数注册的路由全都可能受影响"——而它注册了十几条，回归范围凭空放大十倍。
 
-如果不分优先级、一律归到最外层函数，改任意一行都等价于"这个文件里所有路由都可能受影响"——而这个函数注册了十几条路由，回归范围会被放大十倍。
+从细到粗的完整顺序是：接口注释 → 路由 Group → 路由注册 → 中间件绑定 → 包住这行的最小函数/方法/类型/变量/常量 → 实在定位不到就只能算到文件。前面四种是路由相关的特殊结构，需要单独识别，否则它们会被笼统算成"改了外层函数"。
 
-两条补充规则：改结构体字段或 Tag 时，起点是所在的类型（第 3 节就是这样从一行 Tag 走到 `Staff`）；同一目标上的相邻改动行会合并成一个起点，不会因为改了三行就产生三个重复起点。
+补充两点：改 struct 字段或 Tag 时起点是所在的类型（第 3 节就是这么从一行 Tag 走到 `Staff` 的）；同一个目标上的相邻改动行会合并，改三行不会产生三个重复起点。
 
 ### 5.3 遍历与终点
 
@@ -564,16 +554,28 @@ func InitPostSaleRouter(adminWebGroup *lego.RouterGroup) {
 
 对着这棵树，遍历规则就是四条：
 
-| 规则 | 在这棵树上的表现 |
-| --- | --- |
-| 从当前声明反查所有直接使用它的上层声明，逐层递归 | `Staff`（level 0）查到用它的 `ConversationUpdateMsg`（level 1），再查到用消息体的 `SendConversationUpdateMessage`（level 2），一路向上 |
-| 每层顺带查这个声明关联的路由、中间件和 IM 事件，命中就产出终点 | level 2 的 `SendConversationUpdateMessage` 关联到 IM 事件，于是 level 3 挂出 `im_event:MC/CONVERSATION_UPDATE` |
-| 上层声明若已经在当前这条路径上，标记成环、不再往下 | 本例无环；有环时该节点只保留标记，不会无限展开 |
-| 同一父节点下 ID 与 `relation` 都相同的子节点合并 | 避免同一条关系在同一层重复挂两次 |
+| 规则                                                           | 在这棵树上的表现                                                                                                                             |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 从当前声明反查所有直接使用它的上层声明，逐层递归               | `Staff`（level 0）查到用它的 `ConversationUpdateMsg`（level 1），再查到用消息体的 `SendConversationUpdateMessage`（level 2），一路向上 |
+| 每层顺带查这个声明关联的路由、中间件和 IM 事件，命中就产出终点 | level 2 的`SendConversationUpdateMessage` 关联到 IM 事件，于是 level 3 挂出 `im_event:MC/CONVERSATION_UPDATE`                            |
+| 上层声明若已经在当前这条路径上，标记成环、不再往下             | 本例无环；有环时该节点只保留标记，不会无限展开                                                                                               |
+| 同一父节点下 ID 与`relation` 都相同的子节点合并              | 避免同一条关系在同一层重复挂两次                                                                                                             |
 
-`relation` 字段（`type_ref`、`call`、`im_payload` 等）说明每个节点是被父节点以什么关系带出来的，是读这棵树的关键：level 1 是 `type_ref`（`ConversationUpdateMsg` 的字段引用了 `Staff`），level 3 的 `readySendIm` 是 `call`（它调用了发送函数）。
+树里每个节点都带一个 `relation`，回答"我为什么会出现在父节点下面"。对着上面这棵树读：
 
-两条约束：路径集合只用于识别环，同一个声明可以出现在不同的有效分支里；接口和已解析的 IM 事件在 `summary` 里全局去重，但每个来源各自保留自己的证据。另外遍历必须有节点预算、深度预算和超时保护，任何超限都返回明确错误——**不允许静默截断后输出一份看起来完整的 JSON**。
+| 节点                              | `relation`   | 读作                                            |
+| --------------------------------- | -------------- | ----------------------------------------------- |
+| `ConversationUpdateMsg`         | `type_ref`   | 它的字段里用到了父节点`Staff`                 |
+| `SendConversationUpdateMessage` | `type_ref`   | 它的参数里用到了父节点`ConversationUpdateMsg` |
+| `MC/CONVERSATION_UPDATE`        | `im_payload` | 父节点这个函数发出了这个 IM 事件                |
+| `readySendIm`                   | `call`       | 它调用了父节点这个函数                          |
+
+没有 `relation`，这棵树就只是一堆 ID 的嵌套，看不出"凭什么说改 `Staff` 会影响到这个接口"。
+
+最后是两条运行约束：
+
+- **环只标记不展开。** 记录路径只为了判断有没有绕回来；同一个声明出现在不同分支里是正常的，不算环。
+- **终点全局去重，证据各自保留。** 同一个接口被两个变更起点影响时，`summary` 里只出现一次，但两个起点各自的 `fileSources` 都保留完整链路。
 
 ---
 
@@ -602,22 +604,23 @@ nexus go-analyzer grpc-impact --project <绝对路径> --diff <绝对路径> --f
 
 正式终点只有四种，都要求有**真实注册证据**才进结论：
 
-| 入口类型 | 身份 | 注册证据要求 |
-| --- | --- | --- |
-| `grpc_operation` | 完整 gRPC 接口名 | 生成代码里的 `ServiceDesc` + 实际的 `RegisterXxxServer` 调用 |
-| `http_endpoint` | 请求方法 + 完整路径 | 静态路由注册语句 |
-| `dubbo_method` | Dubbo 接口名 + 方法名 | `ServiceConfig`、`SetProviderService`、`MethodMapper` 三类证据齐备 |
-| `job` | 任务名 | 静态任务名 + 唯一 handler |
+| 入口类型           | 身份                                          | 注册证据要求                                                             |
+| ------------------ | --------------------------------------------- | ------------------------------------------------------------------------ |
+| `grpc_operation` | `<生成包 import 路径>.<Service>/<GoMethod>` | 实际的`RegisterXxxServer` 调用 + 已解析的实现类型上一个形状匹配的方法  |
+| `http_endpoint`  | 请求方法 + 完整路径                           | 静态路由注册语句                                                         |
+| `dubbo_method`   | Dubbo 接口名 + 方法名                         | `ServiceConfig`、`SetProviderService`、`MethodMapper` 三类证据齐备 |
+| `job`            | 任务名                                        | 静态任务名 + 唯一 handler                                                |
+
+gRPC 身份的推导方式与 BFF 侧对称，同样不读生成代码：`RegisterXxxServer` 这个函数名本身就是证据——去掉 `Register` 前缀、`Server` 后缀就是 `Service`，import 路径来自调用点，方法名来自已解析出的实现类型自身的方法（要求签名形如 `func(ctx context.Context, req T) (R, error)`，即 gRPC unary handler 的标准形状）。
 
 真实入口条目（`sc1-server` 实际输出）：
 
 ```json
 {
-  "id": "grpc:/gopkg.inshopline.com.sc1.app.modules.inbox.biz.proto.BizInboxService/GetMessageList",
+  "id": "grpc:gopkg.inshopline.com/sc1/app/modules/inbox/proto/inbox_biz.BizInboxService/GetMessageList",
   "kind": "grpc_operation",
-  "identity": "/gopkg.inshopline.com.sc1.app.modules.inbox.biz.proto.BizInboxService/GetMessageList",
+  "identity": "gopkg.inshopline.com/sc1/app/modules/inbox/proto/inbox_biz.BizInboxService/GetMessageList",
   "identityResolution": "static",
-  "fullMethod": "/gopkg.inshopline.com.sc1.app.modules.inbox.biz.proto.BizInboxService/GetMessageList",
   "registration": {"file": "modules/inbox/internal/grpc/wire_set.go", "line": 35, "column": 2}
 }
 ```
@@ -672,7 +675,7 @@ nexus go-analyzer grpc-impact --project <绝对路径> --diff <绝对路径> --f
  	ConversationId string `json:"conversation_id"`
 ```
 
-真实结果：**6 个 gRPC 入口 + 3 个 HTTP 入口**，dubbo 和 job 未命中。全程 3.9 秒，输出 250 KB。
+真实结果：**6 个 gRPC 入口 + 3 个 HTTP 入口**，dubbo 和 job 未命中。全程 3.6 秒，输出 237 KB。
 
 入口反查里的真实链路：
 
@@ -682,20 +685,20 @@ type GetMessageItem
   -> method SendConversationImWithType
   -> method DeleteMessage          （biz 层）
   -> method DeleteMessage          （provider 层，实现 gRPC server 接口）
-  -> grpc_operation /gopkg.inshopline.com...BizInboxService/DeleteMessage
+  -> grpc_operation gopkg.inshopline.com/sc1/app/modules/inbox/proto/inbox_biz.BizInboxService/DeleteMessage
 ```
 
 这条链路说明了两件事：一是同一个 DTO 会同时被 gRPC provider 和内部 HTTP 路由用到，所以一次改动跨越了两类入口；二是链路终点是**注册出去的契约**，而不是 provider 方法本身——只有该实现确实被 `RegisterXxxServer` 注册过，才会形成正式结论。
 
 ### 6.5 与 BFF 链路的关键差异
 
-| 维度 | BFF 链路 | 后端服务链路 |
-| --- | --- | --- |
-| 终点范围 | 对外 HTTP 接口 + 额外一层出站（IM 事件、上游 gRPC 调用） | 只有注册出去的入口契约，没有额外一层 |
-| 终点类型 | HTTP 接口、IM 事件、上游 gRPC | gRPC / HTTP / Dubbo / Job 入口契约 |
-| 接口身份来源 | Controller 注释优先，路由兜底 | 注册证据本身，没有注释优先的概念 |
-| 双向查询 | 有（接口 ↔ gRPC） | 无，只有 Diff → 入口一个方向 |
-| 结论分组 | 扁平列表 | 固定按四种协议分组 |
+| 维度         | BFF 链路                                                 | 后端服务链路                         |
+| ------------ | -------------------------------------------------------- | ------------------------------------ |
+| 终点范围     | 对外 HTTP 接口 + 额外一层出站（IM 事件、上游 gRPC 调用） | 只有注册出去的入口契约，没有额外一层 |
+| 终点类型     | HTTP 接口、IM 事件、上游 gRPC                            | gRPC / HTTP / Dubbo / Job 入口契约   |
+| 接口身份来源 | Controller 注释优先，路由兜底                            | 注册证据本身，没有注释优先的概念     |
+| 双向查询     | 有（接口 ↔ gRPC）                                       | 无，只有 Diff → 入口一个方向        |
+| 结论分组     | 扁平列表                                                 | 固定按四种协议分组                   |
 
 差异只在这张表列出的几项。两条链路**共用同一套传播机制**——第 5 节讲的反向引用方向、变更起点优先级、DFS 遍历和预算保护全部适用，所以本节不重复，读第 5 节即可。
 
@@ -705,7 +708,7 @@ type GetMessageItem
 
 > 本节对两条链路都适用。
 
-**直接失败**（不输出任何正式 JSON）：路径不是绝对路径；项目缺少或无法解析 `go.mod`；Diff 为空、格式非法或是合并提交的多父格式；Diff 路径逃逸项目根；Diff 与源码快照不一致；本次改动命中的 Go 文件无法解析；严格 gRPC 查询建不起对照表；输出无法按契约渲染。
+**直接失败**（不输出任何正式 JSON）：路径不是绝对路径；项目缺少或无法解析 `go.mod`；Diff 为空、格式非法或是合并提交的多父格式；Diff 路径逃逸项目根；Diff 与源码快照不一致；本次改动命中的 Go 文件无法解析；输出无法按契约渲染。
 
 **记录诊断并继续**：未改动的文件局部解析失败；Controller 或接收者无法唯一解析；路由路径或 IM 事件名是动态表达式；删除块只能恢复局部证据；依赖变化在本项目没有真实引用点。
 
@@ -753,11 +756,11 @@ go-analyzer 是独立的 Go module（`gopkg.inshopline.com/bff/go-analyzer`）�
 
 搬进来之后为什么不复用 Nexus 已有的 `internal/bff`、`internal/transform`？因为它们解决的问题不同：
 
-| Nexus 已有能力 | 做什么 | 为什么不能复用 |
-| --- | --- | --- |
-| `internal/bff/controller` | 从 OpenAPI schema 生成 Controller 模板代码 | 代码生成，吃 schema 吐 `.go` 文件；影响分析吃的是**源码 + Diff**，吐的是 JSON 结论 |
-| `internal/transform/*` | schema → 代码/文档的格式转换 | 单向转换器；影响分析需要的是反向引用图和传播树，没有对应的转换器可复用 |
-| `internal/openapi` | OpenAPI 3.0 解析 | 解析的是 schema 文档；影响分析解析的是 Go AST，两套输入 |
+| Nexus 已有能力              | 做什么                                     | 为什么不能复用                                                                            |
+| --------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `internal/bff/controller` | 从 OpenAPI schema 生成 Controller 模板代码 | 代码生成，吃 schema 吐`.go` 文件；影响分析吃的是**源码 + Diff**，吐的是 JSON 结论 |
+| `internal/transform/*`    | schema → 代码/文档的格式转换              | 单向转换器；影响分析需要的是反向引用图和传播树，没有对应的转换器可复用                    |
+| `internal/openapi`        | OpenAPI 3.0 解析                           | 解析的是 schema 文档；影响分析解析的是 Go AST，两套输入                                   |
 
 因此 `internal/goanalyzer/` 是一个**自包含的新增包**：自己加载项目源码、自己建声明索引、自己跑传播算法。它只通过 Cobra 命令（`cmd/go_analyzer_*.go`）这一层薄壳接入 Nexus 的命令树，之下不碰任何 Nexus 已有包。
 
@@ -775,7 +778,7 @@ nexus go-analyzer impact \
 # 上游 gRPC 接口变了，反查本 BFF 受影响的接口
 nexus go-analyzer impact \
   --project /absolute/path/to/bff \
-  --grpc /proto.Package.Service/Method
+  --grpc example.com/gen/pkg.Service/GoMethod
 
 # 正向查询：某个 BFF 接口依赖哪些上游 gRPC
 nexus go-analyzer endpoint-assets \
@@ -799,25 +802,25 @@ nexus go-analyzer grpc-impact \
 
 括号里是代码和 JSON 输出中使用的标识符。
 
-| 名词 | 是什么 |
-| --- | --- |
-| Controller 方法 | 真正处理一个 HTTP 请求的 Go 函数或方法（输出里写作 `handler`） |
-| 接口注释 | 写在 Controller 方法上方、声明它对外是哪个接口的注释（`annotation`） |
-| 路由注册 | 把 Controller 方法挂到路由上的那行代码（`route`） |
-| HTTP 接口 | 归一化后的「请求方法 + 路径」，本方案对外的正式结论单位（`endpoint`）；身份以接口注释为准，方法上完全没有注释时才按路由兜底 |
-| 注册路径 | 路由实际注册出的完整 URL。同一个 Controller 方法的全部注册路径都列在该接口的 `routes` 里；注释没覆盖到的那些不构成接口身份，但保留为证据，也仍可用于查询 |
-| 完整 gRPC 接口名 | `/proto包名.服务名/方法名`，来自生成代码里的字符串常量，不是 Go 方法名 |
-| 出站 IM 事件 | BFF 主动发给前端或消息通道的事件名（`im_event`） |
-| 静态事实 | 从源码读出的一条原子数据（`fact`） |
-| 变更起点 | Diff 定位到的那个具体声明，传播从它开始 |
-| 诊断 | 某处写法静态上无法唯一确定时留下的记录；不阻断分析，也不进正式结论（`diagnostic`） |
-| 可能调用 | 源码中存在一条能走到某处的调用路径，但不保证每次请求都走到（`may_call`） |
+| 名词            | 是什么                                                                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Controller 方法 | 真正处理一个 HTTP 请求的 Go 函数或方法（输出里写作`handler`）                                                                                           |
+| 接口注释        | 写在 Controller 方法上方、声明它对外是哪个接口的注释（`annotation`）                                                                                    |
+| 路由注册        | 把 Controller 方法挂到路由上的那行代码（`route`）                                                                                                       |
+| HTTP 接口       | 归一化后的「请求方法 + 路径」，本方案对外的正式结论单位（`endpoint`）；身份以接口注释为准，方法上完全没有注释时才按路由兜底                             |
+| 注册路径        | 路由实际注册出的完整 URL。同一个 Controller 方法的全部注册路径都列在该接口的`routes` 里；注释没覆盖到的那些不构成接口身份，但保留为证据，也仍可用于查询 |
+| gRPC 方法身份   | `<生成包 import 路径>.<Service>/<GoMethod>`，全部来自本项目自己的源码，不读生成代码                                                                     |
+| 出站 IM 事件    | BFF 主动发给前端或消息通道的事件名（`im_event`）                                                                                                        |
+| 静态事实        | 从源码读出的一条原子数据（`fact`）                                                                                                                      |
+| 变更起点        | Diff 定位到的那个具体声明，传播从它开始                                                                                                                   |
+| 诊断            | 某处写法静态上无法唯一确定时留下的记录；不阻断分析，也不进正式结论（`diagnostic`）                                                                      |
+| 可能调用        | 源码中存在一条能走到某处的调用路径，但不保证每次请求都走到（`may_call`）                                                                                |
 
 后端服务链路专有：
 
-| 名词 | 是什么 |
-| --- | --- |
-| 入口契约 | 后端服务对外暴露的一个可被调用的入口，是该链路的正式结论单位 |
-| 注册证据 | 证明某段实现真的被挂到对外入口上的那行代码（如 `RegisterXxxServer` 调用） |
-| 静态身份 | 入口身份能从源码唯一确定（`identityResolution: static`） |
+| 名词       | 是什么                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------- |
+| 入口契约   | 后端服务对外暴露的一个可被调用的入口，是该链路的正式结论单位                           |
+| 注册证据   | 证明某段实现真的被挂到对外入口上的那行代码（如`RegisterXxxServer` 调用）             |
+| 静态身份   | 入口身份能从源码唯一确定（`identityResolution: static`）                             |
 | 符号化身份 | 入口身份含运行时才确定的部分，保留原始表达式不伪造（`identityResolution: symbolic`） |

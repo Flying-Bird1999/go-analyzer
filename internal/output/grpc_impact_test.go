@@ -19,7 +19,7 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 		{ID: handler, Kind: "func", Name: "Get", Span: facts.SourceSpan{File: "controller/order.go"}},
 		{ID: remote, Kind: "func", Name: "Get", Span: facts.SourceSpan{File: "remote/order.go"}},
 	}
-	operation := dependency.GrpcMethod{FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}
+	operation := dependency.GrpcMethod{Identity: "example.com/proto.OrderService/Get", GoPackage: "example.com/proto", Service: "OrderService", GoMethod: "Get"}
 	doc := BuildImpactDocument(nil, impact.TreeResult{}, ImpactDocumentOptions{})
 	AddGrpcSources(&doc, store, []dependency.GrpcImpactSource{{
 		Grpc: operation,
@@ -27,7 +27,6 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 			Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
 			Routes:   []dependency.Endpoint{{Method: "GET", Path: "/router/orders/:id"}},
 			Handlers: []facts.SymbolID{handler},
-			Clients:  []facts.GrpcClientBinding{{GoPackage: "example.com/proto", ClientType: "OrderServiceClient", GoMethod: "Get"}},
 			Chains: []dependency.Chain{{
 				Symbols: []facts.SymbolID{handler, remote},
 				Call:    facts.GrpcCallFact{Span: facts.SourceSpan{File: "remote/order.go", StartLine: 18, StartCol: 9}},
@@ -45,7 +44,7 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 		} `json:"summary"`
 		GrpcSources []struct {
 			Grpc struct {
-				FullMethod string `json:"fullMethod"`
+				Identity string `json:"identity"`
 			} `json:"grpc"`
 			Consumers []struct {
 				Relation string               `json:"relation"`
@@ -57,7 +56,7 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	if err := json.Unmarshal(out, &rendered); err != nil {
 		t.Fatal(err)
 	}
-	if len(rendered.GrpcSources) != 1 || rendered.GrpcSources[0].Grpc.FullMethod != operation.FullMethod {
+	if len(rendered.GrpcSources) != 1 || rendered.GrpcSources[0].Grpc.Identity != operation.Identity {
 		t.Fatalf("grpc sources = %#v", rendered.GrpcSources)
 	}
 	if len(rendered.GrpcSources[0].Consumers) != 1 || rendered.GrpcSources[0].Consumers[0].Relation != "may_call" {
@@ -69,7 +68,7 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 	if len(rendered.Summary.ImpactedEndpoints) != 1 || rendered.Summary.ImpactedEndpoints[0].Path != "/orders/:id" {
 		t.Fatalf("summary endpoints = %#v", rendered.Summary.ImpactedEndpoints)
 	}
-	if len(rendered.EndpointSourcesSummary) != 1 || rendered.EndpointSourcesSummary[0].Sources[0].GrpcFullMethod != operation.FullMethod {
+	if len(rendered.EndpointSourcesSummary) != 1 || rendered.EndpointSourcesSummary[0].Sources[0].GrpcIdentity != operation.Identity {
 		t.Fatalf("endpoint sources = %#v", rendered.EndpointSourcesSummary)
 	}
 	grpcEvidence := rendered.EndpointSourcesSummary[0].Sources[0]
@@ -80,12 +79,16 @@ func TestAddGrpcSourcesMergesConsumersIntoImpactDocument(t *testing.T) {
 		t.Fatalf("grpc chains = %#v", grpcEvidence.Chains)
 	}
 	chain := grpcEvidence.Chains[0]
-	if chain[0] != "grpc "+operation.FullMethod || chain[len(chain)-1] != "GET /orders/:id" {
+	if chain[0] != "grpc "+operation.Identity || chain[len(chain)-1] != "GET /orders/:id" {
 		t.Fatalf("grpc chain direction = %#v", chain)
 	}
 }
 
-func TestGrpcEndpointSourceChainsKeepTheirOwnClientBinding(t *testing.T) {
+// TestGrpcEndpointSourceChainsShareTheSameIdentity 覆盖同一个 operation 被两条不同
+// 路径（两个不同调用点）消费的场景：identity 现在完全由 GoPackage+Service+GoMethod
+// 决定，不再有“每条调用各自的 client binding”这回事——两条链路共用同一个 "grpc
+// <identity>" 标签，各自只在 call_site 上区分。
+func TestGrpcEndpointSourceChainsShareTheSameIdentity(t *testing.T) {
 	store := facts.NewStore("/tmp/project", "example.com/project")
 	handler := facts.SymbolID("func:example.com/project/controller::Get")
 	firstCaller := facts.SymbolID("func:example.com/project/remote::First")
@@ -95,30 +98,21 @@ func TestGrpcEndpointSourceChainsKeepTheirOwnClientBinding(t *testing.T) {
 		{ID: firstCaller, Kind: "func", Name: "First"},
 		{ID: secondCaller, Kind: "func", Name: "Second"},
 	}
-	firstClient := facts.GrpcClientBinding{GoPackage: "example.com/first", ClientType: "FirstClient", GoMethod: "Get"}
-	secondClient := facts.GrpcClientBinding{GoPackage: "example.com/second", ClientType: "SecondClient", GoMethod: "Get"}
-	method := dependency.GrpcMethod{FullMethod: "/shop.order.v1.OrderService/Get"}
+	method := dependency.GrpcMethod{Identity: "example.com/proto.OrderService/Get", GoPackage: "example.com/proto", Service: "OrderService", GoMethod: "Get"}
 	doc := BuildImpactDocument(nil, impact.TreeResult{}, ImpactDocumentOptions{})
 	AddGrpcSources(&doc, store, []dependency.GrpcImpactSource{{
 		Grpc: method,
 		Consumers: []dependency.GrpcImpactConsumer{{
 			Endpoint: dependency.Endpoint{Method: "GET", Path: "/orders/:id"},
 			Handlers: []facts.SymbolID{handler},
-			Clients:  []facts.GrpcClientBinding{firstClient, secondClient},
 			Chains: []dependency.Chain{
 				{
 					Symbols: []facts.SymbolID{handler, firstCaller},
-					Call: facts.GrpcCallFact{
-						ClientBinding: firstClient,
-						Span:          facts.SourceSpan{File: "remote/first.go", StartLine: 10},
-					},
+					Call:    facts.GrpcCallFact{Span: facts.SourceSpan{File: "remote/first.go", StartLine: 10}},
 				},
 				{
 					Symbols: []facts.SymbolID{handler, secondCaller},
-					Call: facts.GrpcCallFact{
-						ClientBinding: secondClient,
-						Span:          facts.SourceSpan{File: "remote/second.go", StartLine: 20},
-					},
+					Call:    facts.GrpcCallFact{Span: facts.SourceSpan{File: "remote/second.go", StartLine: 20}},
 				},
 			},
 		}},
@@ -128,21 +122,26 @@ func TestGrpcEndpointSourceChainsKeepTheirOwnClientBinding(t *testing.T) {
 	if len(sources) != 1 || len(sources[0].Chains) != 2 {
 		t.Fatalf("endpoint sources = %#v", sources)
 	}
-	got := map[string]bool{}
 	for _, chain := range sources[0].Chains {
+		if chain[0] != "grpc "+method.Identity {
+			t.Fatalf("chain must lead with the shared identity label: %#v", chain)
+		}
 		for _, label := range chain {
 			if strings.HasPrefix(label, "generated_client ") {
-				got[label] = true
+				t.Fatalf("generated_client label must not appear — identity already encodes go_package/service/go_method: %#v", chain)
 			}
 		}
 	}
-	for _, want := range []string{
-		"generated_client example.com/first FirstClient.Get",
-		"generated_client example.com/second SecondClient.Get",
-	} {
-		if !got[want] {
-			t.Fatalf("missing %q in chains: %#v", want, sources[0].Chains)
-		}
+	firstHasCallSite := false
+	secondHasCallSite := false
+	for _, label := range sources[0].Chains[0] {
+		firstHasCallSite = firstHasCallSite || strings.Contains(label, "remote/first.go:10")
+	}
+	for _, label := range sources[0].Chains[1] {
+		secondHasCallSite = secondHasCallSite || strings.Contains(label, "remote/second.go:20")
+	}
+	if !firstHasCallSite || !secondHasCallSite {
+		t.Fatalf("each chain must keep its own call_site: %#v", sources[0].Chains)
 	}
 }
 

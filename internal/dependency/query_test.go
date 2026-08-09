@@ -18,7 +18,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(assets) != 1 || len(assets[0].Grpc) != 1 || assets[0].Grpc[0].Operation.FullMethod != "/shop.order.v1.OrderService/Get" {
+	if len(assets) != 1 || len(assets[0].Grpc) != 1 || assets[0].Grpc[0].Operation.Identity != "example.com/proto.OrderService/Get" {
 		t.Fatalf("assets=%#v", assets)
 	}
 	if len(assets[0].Grpc[0].Chains) != 1 || len(assets[0].Grpc[0].Chains[0].Symbols) != 2 {
@@ -27,7 +27,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if len(assets[0].Routes) != 1 || assets[0].Routes[0] != registeredEndpoint {
 		t.Fatalf("routes=%#v", assets[0].Routes)
 	}
-	method, err := ParseGrpcMethod("/shop.order.v1.OrderService/Get")
+	method, err := ParseGrpcMethod("example.com/proto.OrderService/Get")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestEndpointAndGrpcQueriesShareFormalRelations(t *testing.T) {
 	if len(consumers[0].Consumers[0].Routes) != 1 || consumers[0].Consumers[0].Routes[0] != registeredEndpoint {
 		t.Fatalf("consumer routes=%#v", consumers[0].Consumers[0].Routes)
 	}
-	missing, err := ParseGrpcMethod("/shop.order.v1.OrderService/Missing")
+	missing, err := ParseGrpcMethod("example.com/proto.OrderService/Missing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestUncoveredRouteKeepsGrpcBidirectionalInvariant(t *testing.T) {
 		t.Errorf("forward endpoint = %#v, want canonical %#v", assets[0].Endpoint, canonical)
 	}
 
-	method, err := ParseGrpcMethod("/shop.order.v1.OrderService/Get")
+	method, err := ParseGrpcMethod("example.com/proto.OrderService/Get")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,9 +153,9 @@ func TestForwardChainsRecordsAllPathsToSharedGrpcHelper(t *testing.T) {
 		{ID: "call:a_helper", Kind: facts.ReferenceKindCall, FromSymbol: pathA, ToSymbol: helper},
 		{ID: "call:b_helper", Kind: facts.ReferenceKindCall, FromSymbol: pathB, ToSymbol: helper},
 	}
-	operation := facts.GrpcOperationFact{ID: facts.GrpcOperationID("/shop.order.v1.OrderService/Get"), FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}
+	operation := facts.GrpcOperationFact{ID: facts.GrpcOperationID("example.com/proto.OrderService/Get"), Identity: "example.com/proto.OrderService/Get", GoPackage: "example.com/proto", Service: "OrderService", GoMethod: "Get"}
 	store.GrpcOperations = []facts.GrpcOperationFact{operation}
-	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: helper, OperationID: operation.ID, ClientBinding: facts.GrpcClientBinding{GoPackage: "example.com/proto", ClientType: "OrderClient", GoMethod: "Get"}}}
+	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: helper, OperationID: operation.ID}}
 
 	assets, err := findEndpointAssetsForTest(store, []Endpoint{{Method: "GET", Path: "/orders/:id"}})
 	if err != nil {
@@ -187,9 +187,9 @@ func queryStore() *facts.Store {
 	store.Routes = []facts.RouteRegistrationFact{{ID: "route:get", Method: "GET", ResolvedPath: "/orders/:id", HandlerSymbol: handler}}
 	store.Annotations = []facts.AnnotationFact{{ID: "annotation:get", Method: "GET", Path: "/stale/orders/:id", HandlerSymbol: handler}}
 	store.References = []facts.ReferenceFact{{ID: "call:handler", Kind: facts.ReferenceKindCall, FromSymbol: handler, ToSymbol: service}, {ID: "type:ignored", Kind: facts.ReferenceKindType, FromSymbol: handler, ToSymbol: "func:example.com/project/other::Ignored"}}
-	operation := facts.GrpcOperationFact{ID: facts.GrpcOperationID("/shop.order.v1.OrderService/Get"), FullMethod: "/shop.order.v1.OrderService/Get", ProtoPackage: "shop.order.v1", Service: "OrderService", Method: "Get"}
+	operation := facts.GrpcOperationFact{ID: facts.GrpcOperationID("example.com/proto.OrderService/Get"), Identity: "example.com/proto.OrderService/Get", GoPackage: "example.com/proto", Service: "OrderService", GoMethod: "Get"}
 	store.GrpcOperations = []facts.GrpcOperationFact{operation}
-	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: service, OperationID: operation.ID, ClientBinding: facts.GrpcClientBinding{GoPackage: "example.com/proto", ClientType: "OrderClient", GoMethod: "Get"}}}
+	store.GrpcCalls = []facts.GrpcCallFact{{ID: "grpc_call:get", CallerSymbol: service, OperationID: operation.ID}}
 	return store
 }
 
@@ -201,4 +201,38 @@ func findEndpointAssetsForTest(store *facts.Store, inputs []Endpoint) ([]Endpoin
 func findGrpcImpactSourcesForTest(store *facts.Store, inputs []GrpcMethod) ([]GrpcImpactSource, error) {
 	snapshot := facts.Freeze(store)
 	return FindGrpcImpactSources(context.Background(), snapshot, endpointcatalog.Build(snapshot), analysis.DefaultLimits(), inputs)
+}
+
+// TestParseGrpcMethodSplitsOnLastSlashThenLastDot 锁定新身份格式的解析规则：
+// <生成包 import 路径>.<Service>/<GoMethod>。import 路径本身可以含多段 "/"，
+// 所以必须先按最后一个 "/" 切出 GoMethod，再在剩下的前缀里按最后一个 "." 切出
+// Service——顺序反了会把 import 路径错误地切碎。
+func TestParseGrpcMethodSplitsOnLastSlashThenLastDot(t *testing.T) {
+	got, err := ParseGrpcMethod("gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/sales_config.SalesConfigService/GetSlLiveCommentSync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := GrpcMethod{
+		Identity:  "gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/sales_config.SalesConfigService/GetSlLiveCommentSync",
+		GoPackage: "gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/sales_config",
+		Service:   "SalesConfigService",
+		GoMethod:  "GetSlLiveCommentSync",
+	}
+	if got != want {
+		t.Fatalf("ParseGrpcMethod() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseGrpcMethodRejectsMalformedInput(t *testing.T) {
+	for _, raw := range []string{
+		"",
+		"NoSlashAtAll",
+		"trailing/slash/",
+		"onlypath/Method",                 // 前缀里没有 "." 分隔 Service
+		"/shop.order.v1.OrderService/Get", // 旧的 wire full-method 格式：goPackage 会以 "/" 开头，不再合法
+	} {
+		if _, err := ParseGrpcMethod(raw); err == nil {
+			t.Errorf("ParseGrpcMethod(%q) = nil error, want error", raw)
+		}
+	}
 }

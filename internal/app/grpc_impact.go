@@ -193,17 +193,9 @@ func buildGrpcServiceFacts(ctx context.Context, projectPath string, buildContext
 	}); err != nil {
 		return builtFacts{}, err
 	}
-	dependencies, err := discoverGrpcServerDependencies(ctx, built.project, limits, recorder)
-	if err != nil {
-		return builtFacts{}, err
-	}
 	if err := recorder.measure("grpc_server_extract", func() error {
-		catalog, catalogErr := grpcextract.BuildServerCatalog(built.project, dependencies)
-		if catalogErr != nil {
-			return catalogErr
-		}
-		providers, issues := grpcextract.ExtractServerProviders(built.project, built.index, catalog)
-		built.store.GrpcOperations = append(built.store.GrpcOperations, catalog.Operations...)
+		operations, providers, issues := grpcextract.ExtractServerProviders(built.project, built.index)
+		built.store.GrpcOperations = append(built.store.GrpcOperations, operations...)
 		built.store.GrpcProviders = append(built.store.GrpcProviders, providers...)
 		for _, issue := range issues {
 			addServerBindingIssueDiagnostic(built.store, issue)
@@ -213,34 +205,6 @@ func buildGrpcServiceFacts(ctx context.Context, projectPath string, buildContext
 		return builtFacts{}, err
 	}
 	return built, nil
-}
-
-func discoverGrpcServerDependencies(ctx context.Context, p *project.Project, limits analysis.Limits, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
-	buildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
-	cgo := p.BuildContext.CgoEnabled
-	buildContext.CgoEnabled = &cgo
-	imports := grpcextract.ServerRegistrationImportPaths(p)
-	localImports := map[string]bool{}
-	for _, path := range grpcextract.ProjectGeneratedServerImportPaths(p) {
-		localImports[path] = true
-	}
-	// 用独立切片收集，不复用 imports 的底层数组（imports[:0] 原地覆写在
-	// ServerRegistrationImportPaths 返回缓存/共享切片时会静默损坏上游数据）。
-	remoteImports := make([]string, 0, len(imports))
-	for _, path := range imports {
-		if !localImports[path] {
-			remoteImports = append(remoteImports, path)
-		}
-	}
-	var dependencies []project.DependencyPackage
-	err := recorder.measure("grpc_server_dependency_list", func() error {
-		dependencyCtx, cancel := analysis.StageContext(ctx, limits.DependencyLoadTimeout)
-		defer cancel()
-		var dependencyErr error
-		dependencies, dependencyErr = project.DiscoverDependencyPackages(dependencyCtx, p.Root, buildContext, remoteImports)
-		return dependencyErr
-	})
-	return dependencies, err
 }
 
 // addServerBindingIssueDiagnostic records why a gRPC server registration's

@@ -378,47 +378,31 @@ func buildFacts(ctx context.Context, projectPath string, buildContext project.Bu
 		return builtFacts{}, err
 	}
 	if options.grpcMode != grpcModeOff {
-		dependencies, dependencyErr := discoverProjectDependencies(ctx, p, limits, recorder)
-		if dependencyErr != nil {
-			if options.grpcMode == grpcModeStrict {
-				return builtFacts{}, dependencyErr
+		if err := recorder.measure("grpc_extract", func() error {
+			operations, calls, extractErr := grpcextract.Extract(p, idx)
+			if extractErr != nil {
+				return extractErr
 			}
-			// 诊断模式：记录失败并继续（不 early return），使下方 includeServiceEntry
-			// 抽取（facts 命令专属）在纯服务端项目（没有 gRPC client 依赖、
-			// discoverProjectDependencies 因此失败）上仍然执行。
-			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:grpc_dependency_load", Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
-		} else if err := recorder.measure("grpc_extract", func() error {
-			catalog, catalogErr := grpcextract.BuildCatalog(dependencies)
-			if catalogErr != nil {
-				return catalogErr
-			}
-			calls, callErr := grpcextract.Extract(p, idx, catalog)
-			if callErr != nil {
-				return callErr
-			}
-			store.GrpcOperations = append(store.GrpcOperations, catalog.Operations...)
+			store.GrpcOperations = append(store.GrpcOperations, operations...)
 			store.GrpcCalls = append(store.GrpcCalls, calls...)
 			return nil
 		}); err != nil {
 			if options.grpcMode == grpcModeStrict {
 				return builtFacts{}, err
 			}
-			code := diagnostics.CodeGrpcCatalogFailed
-			var ambiguity *grpcextract.CallAmbiguityError
-			if errors.As(err, &ambiguity) {
-				code = diagnostics.CodeGrpcCallAmbiguous
-			}
-			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:" + string(code), Code: code, Severity: diagnostics.SeverityWarning, Message: err.Error()})
+			// 诊断模式：调用点接收者无法唯一收敛到一个 gRPC client 时记录诊断并继续，
+			// 不阻断纯 Diff 分析。Extract 不读依赖代码，唯一可能的失败就是歧义。
+			diagnostics.AddFact(store, diagnostics.Diagnostic{ID: "diagnostic:" + string(diagnostics.CodeGrpcCallAmbiguous), Code: diagnostics.CodeGrpcCallAmbiguous, Severity: diagnostics.SeverityWarning, Message: err.Error()})
 		}
 	}
 	if options.includeServiceEntry {
-		extractServiceEntryFacts(ctx, p, idx, store, limits, recorder)
+		extractServiceEntryFacts(p, idx, store, recorder)
 	}
 	return builtFacts{project: p, index: idx, store: store, builder: built.builder}, nil
 }
 
 // dedupeNewGrpcOperations 从 additions 中过滤掉已存在于 existing 中的 ID，
-// 避免 client catalog 与 server catalog 各自产出同一 canonical operation 时
+// 避免 client 与 server 两条提取路径各自产出同一 canonical operation 时
 // 在 store.GrpcOperations 里重复。
 func dedupeNewGrpcOperations(existing, additions []facts.GrpcOperationFact) []facts.GrpcOperationFact {
 	seen := make(map[string]bool, len(existing))
@@ -438,9 +422,8 @@ func dedupeNewGrpcOperations(existing, additions []facts.GrpcOperationFact) []fa
 
 // extractServiceEntryFacts 为 facts 命令额外抽取 job/dubbo/gRPC-server 三类服务入口
 // 事实。facts 是排障入口而非严格分析命令，因此始终按诊断模式运行：任一子步骤失败
-// 都记为诊断并继续，不中断 facts 输出，保持与 grpcMode=diagnostic 时既有 gRPC-client
-// 抽取失败处理方式一致的容错策略。
-func extractServiceEntryFacts(ctx context.Context, p *project.Project, idx *astindex.Index, store *facts.Store, limits analysis.Limits, recorder *pipelineRecorder) {
+// 都记为诊断并继续，不中断 facts 输出。
+func extractServiceEntryFacts(p *project.Project, idx *astindex.Index, store *facts.Store, recorder *pipelineRecorder) {
 	_ = recorder.measure("job_extract", func() error {
 		return jobextract.Extract(p, idx, store)
 	})
@@ -448,24 +431,14 @@ func extractServiceEntryFacts(ctx context.Context, p *project.Project, idx *asti
 		return dubboextract.Extract(p, idx, store)
 	})
 	_ = recorder.measure("grpc_server_extract", func() error {
-		dependencies, dependencyErr := discoverGrpcServerDependencies(ctx, p, limits, recorder)
-		if dependencyErr != nil {
-			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcDependencyLoadFailed, Severity: diagnostics.SeverityWarning, Message: dependencyErr.Error()})
-			return nil
-		}
-		catalog, catalogErr := grpcextract.BuildServerCatalog(p, dependencies)
-		if catalogErr != nil {
-			diagnostics.AddFact(store, diagnostics.Diagnostic{Code: diagnostics.CodeGrpcServerCatalogFailed, Severity: diagnostics.SeverityWarning, Message: catalogErr.Error()})
-			return nil
-		}
-		providers, issues := grpcextract.ExtractServerProviders(p, idx, catalog)
-		// facts 命令在 includeServiceEntry 模式下同时运行 gRPC client catalog（诊断模式
-		// gRPC 抽取，见上方 grpcMode != grpcModeOff 分支）与 server catalog：若同一个
-		// generated package 既被本项目作为 client 调用、又被注册为 server（服务网格中
-		// 自调用/双向 RPC 的常见形态），两条 catalog 会各自产出同一 canonical full method
-		// 的 GrpcOperationFact，ID 相同。RenderJSON 只排序不去重，直接 append 会让 facts
-		// JSON 出现重复的 grpc_operations 条目。按 ID 去重后再合并。
-		store.GrpcOperations = append(store.GrpcOperations, dedupeNewGrpcOperations(store.GrpcOperations, catalog.Operations)...)
+		operations, providers, issues := grpcextract.ExtractServerProviders(p, idx)
+		// facts 命令在 includeServiceEntry 模式下同时运行 gRPC client 抽取（诊断模式，
+		// 见上方 grpcMode != grpcModeOff 分支）与 server 抽取：若同一个生成包既被本项目
+		// 作为 client 调用、又被注册为 server（服务网格中自调用/双向 RPC 的常见形态），
+		// 两条路径会各自产出同一 canonical identity 的 GrpcOperationFact，ID 相同。
+		// RenderJSON 只排序不去重，直接 append 会让 facts JSON 出现重复的 grpc_operations
+		// 条目。按 ID 去重后再合并。
+		store.GrpcOperations = append(store.GrpcOperations, dedupeNewGrpcOperations(store.GrpcOperations, operations)...)
 		store.GrpcProviders = append(store.GrpcProviders, providers...)
 		for _, issue := range issues {
 			addServerBindingIssueDiagnostic(store, issue)
@@ -544,21 +517,6 @@ func buildBaseFacts(ctx context.Context, projectPath string, buildContext projec
 		store.AddSymbol(idx.Symbols[id])
 	}
 	return builtFacts{project: p, index: idx, store: store, builder: builder}, nil
-}
-
-func discoverProjectDependencies(ctx context.Context, p *project.Project, limits analysis.Limits, recorder *pipelineRecorder) ([]project.DependencyPackage, error) {
-	grpcBuildContext := project.BuildContextOptions{GOOS: p.BuildContext.GOOS, GOARCH: p.BuildContext.GOARCH, Tags: append([]string(nil), p.BuildContext.Tags...)}
-	cgo := p.BuildContext.CgoEnabled
-	grpcBuildContext.CgoEnabled = &cgo
-	var dependencies []project.DependencyPackage
-	err := recorder.measure("dependency_list", func() error {
-		dependencyCtx, cancel := analysis.StageContext(ctx, limits.DependencyLoadTimeout)
-		defer cancel()
-		var dependencyErr error
-		dependencies, dependencyErr = project.DiscoverDependencies(dependencyCtx, p.Root, grpcBuildContext)
-		return dependencyErr
-	})
-	return dependencies, err
 }
 
 // moduleUsageChanges 把模块 usage 事实转换为可传播的 ChangeFact 列表。

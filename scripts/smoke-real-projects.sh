@@ -252,7 +252,7 @@ for case in cases:
     assets = forward.get("endpointAssets") or []
     if len(assets) != 1:
         raise SystemExit(f"{name} endpoint-assets returned {len(assets)} assets for {endpoint}")
-    methods = {item.get("fullMethod") for item in ((assets[0].get("dependencies") or {}).get("grpc") or [])}
+    methods = {item.get("identity") for item in ((assets[0].get("dependencies") or {}).get("grpc") or [])}
     if grpc not in methods:
         raise SystemExit(f"{name} forward relation missing {endpoint} -> {grpc}: {methods}")
 

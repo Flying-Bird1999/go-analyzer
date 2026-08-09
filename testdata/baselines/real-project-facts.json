@@ -4,12 +4,12 @@
     "annotations": 35,
     "routes": 35,
     "route_links": 35,
-    "grpc_operations": 121,
-    "grpc_calls": 11,
+    "grpc_operations": 26,
+    "grpc_calls": 33,
     "grpc_cases": [
       {
         "endpoint": "GET /api/bff-web/mc/form/:shortLinkId/user/generateId",
-        "grpc": "/gopkg.inshopline.com.sc1.app.modules.mc.mc_form.proto.McFormClientService/GenerateUserId"
+        "grpc": "gopkg.inshopline.com/sc1/app/modules/mc/proto/gen/mc_form.McFormClientService/GenerateUserId"
       }
     ],
     "diagnostics": {}
@@ -19,8 +19,8 @@
     "annotations": 483,
     "routes": 581,
     "route_links": 581,
-    "grpc_operations": 426,
-    "grpc_calls": 266,
+    "grpc_operations": 322,
+    "grpc_calls": 372,
     "diagnostics": {
       "route_wrapper_guessed": 12,
       "symbol_reference_ambiguous_interface": 5
@@ -28,7 +28,7 @@
     "grpc_cases": [
       {
         "endpoint": "GET /admin/api/bff-web/live/sale/:salesId/comments/product_set/detail",
-        "grpc": "/gopkg.inshopline.com.sc1.app.modules.medium.comment.CommentService/getCombineProductBaseSnapshot"
+        "grpc": "gopkg.inshopline.com/sc1/app/modules/medium/proto/gen/comment.CommentService/GetCombineProductBaseSnapshot"
       }
     ]
   },
@@ -37,12 +37,12 @@
     "annotations": 98,
     "routes": 136,
     "route_links": 136,
-    "grpc_operations": 270,
-    "grpc_calls": 43,
+    "grpc_operations": 93,
+    "grpc_calls": 93,
     "grpc_cases": [
       {
         "endpoint": "POST /admin/api/bff-web/sc/channel/config",
-        "grpc": "/com.shopline.sc.api.channel.StoreChannelConfigService/Bind"
+        "grpc": "gopkg.inshopline.com/sc2/app/sc2-server/modules/channel/proto/storechannel.StoreChannelConfigService/Bind"
       }
     ],
     "diagnostics": {}
@@ -52,10 +52,9 @@
     "annotations": 5,
     "routes": 99,
     "route_links": 77,
-    "grpc_operations": 445,
-    "grpc_calls": 0,
+    "grpc_operations": 494,
+    "grpc_calls": 57,
     "diagnostics": {
-      "grpc_dependency_load_failed": 1,
       "route_dynamic_path": 2,
       "route_unresolved_handler": 3,
       "route_wrapper_guessed": 22,
@@ -69,10 +68,9 @@
     "annotations": 43,
     "routes": 46,
     "route_links": 45,
-    "grpc_operations": 134,
-    "grpc_calls": 0,
+    "grpc_operations": 199,
+    "grpc_calls": 99,
     "diagnostics": {
-      "grpc_dependency_load_failed": 1,
       "route_dynamic_path": 34,
       "route_unresolved_handler": 1,
       "route_wrapper_guessed": 20,

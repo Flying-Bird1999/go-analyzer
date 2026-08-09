@@ -9,32 +9,30 @@ import (
 
 // Limits bounds untrusted input and graph traversal work.
 type Limits struct {
-	MaxDiffBytes          int64
-	MaxDiffLineBytes      int
-	MaxDiffFiles          int
-	MaxRoots              int
-	MaxNodesPerRoot       int
-	MaxTotalNodes         int
-	MaxDepth              int
-	ProjectLoadTimeout    time.Duration
-	DependencyLoadTimeout time.Duration
-	ImpactWalkTimeout     time.Duration
+	MaxDiffBytes       int64
+	MaxDiffLineBytes   int
+	MaxDiffFiles       int
+	MaxRoots           int
+	MaxNodesPerRoot    int
+	MaxTotalNodes      int
+	MaxDepth           int
+	ProjectLoadTimeout time.Duration
+	ImpactWalkTimeout  time.Duration
 }
 
 // DefaultLimits are deliberately generous for real BFF repositories while
 // preventing accidental path explosion or unbounded input.
 func DefaultLimits() Limits {
 	return Limits{
-		MaxDiffBytes:          32 << 20,
-		MaxDiffLineBytes:      4 << 20,
-		MaxDiffFiles:          5000,
-		MaxRoots:              20000,
-		MaxNodesPerRoot:       200000,
-		MaxTotalNodes:         1000000,
-		MaxDepth:              256,
-		ProjectLoadTimeout:    2 * time.Minute,
-		DependencyLoadTimeout: 5 * time.Minute,
-		ImpactWalkTimeout:     2 * time.Minute,
+		MaxDiffBytes:       32 << 20,
+		MaxDiffLineBytes:   4 << 20,
+		MaxDiffFiles:       5000,
+		MaxRoots:           20000,
+		MaxNodesPerRoot:    200000,
+		MaxTotalNodes:      1000000,
+		MaxDepth:           256,
+		ProjectLoadTimeout: 2 * time.Minute,
+		ImpactWalkTimeout:  2 * time.Minute,
 	}
 }
 
@@ -43,7 +41,7 @@ func DefaultLimits() Limits {
 func (l Limits) Normalize() (Limits, error) {
 	defaults := DefaultLimits()
 	if l.MaxDiffBytes < 0 || l.MaxDiffLineBytes < 0 || l.MaxDiffFiles < 0 || l.MaxRoots < 0 || l.MaxNodesPerRoot < 0 || l.MaxTotalNodes < 0 || l.MaxDepth < 0 ||
-		l.ProjectLoadTimeout < 0 || l.DependencyLoadTimeout < 0 || l.ImpactWalkTimeout < 0 {
+		l.ProjectLoadTimeout < 0 || l.ImpactWalkTimeout < 0 {
 		return Limits{}, &BudgetError{Resource: "configuration", Limit: 0, Actual: -1}
 	}
 	if l.MaxDiffBytes == 0 {
@@ -69,9 +67,6 @@ func (l Limits) Normalize() (Limits, error) {
 	}
 	if l.ProjectLoadTimeout == 0 {
 		l.ProjectLoadTimeout = defaults.ProjectLoadTimeout
-	}
-	if l.DependencyLoadTimeout == 0 {
-		l.DependencyLoadTimeout = defaults.DependencyLoadTimeout
 	}
 	if l.ImpactWalkTimeout == 0 {
 		l.ImpactWalkTimeout = defaults.ImpactWalkTimeout

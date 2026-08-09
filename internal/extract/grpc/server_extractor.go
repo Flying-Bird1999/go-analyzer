@@ -25,10 +25,12 @@ const (
 
 // ServerBindingIssue records a known registration whose concrete
 // implementation cannot be proven (unresolved) or is not provably unique
-// (ambiguous). Either way the registration itself still produces provider
-// facts — without a resolved ImplementationType/HandlerSymbol — so the
-// contract stays analyzable and unrelated registrations in the same project
-// are never affected by one problematic registration.
+// (ambiguous). Either way is a diagnostic, not an error: unrelated
+// registrations in the same project are never affected by one problematic
+// registration. Unlike before, such a registration now produces zero
+// provider facts — without a resolved implementation type there is no
+// repo-local evidence of which methods it actually serves, and this
+// analyzer no longer reads a generated method list independent of that.
 type ServerBindingIssue struct {
 	Kind             ServerBindingIssueKind
 	RegisterFunction string
@@ -36,45 +38,42 @@ type ServerBindingIssue struct {
 	Span             facts.SourceSpan
 }
 
-// ServerRegistrationImportPaths returns packages that are actually used by
-// RegisterXxxServer calls in project source.
-func ServerRegistrationImportPaths(p *project.Project) []string {
-	seen := map[string]bool{}
-	for _, pkg := range p.Packages {
-		for _, file := range pkg.Files {
-			ast.Inspect(file.AST, func(node ast.Node) bool {
-				call, ok := node.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				selector, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || !strings.HasPrefix(selector.Sel.Name, "Register") || !strings.HasSuffix(selector.Sel.Name, "Server") {
-					return true
-				}
-				alias, ok := selector.X.(*ast.Ident)
-				if ok && file.Imports[alias.Name] != "" {
-					seen[file.Imports[alias.Name]] = true
-				}
-				return true
-			})
-		}
+// serverService is one RegisterXxxServer call's derived identity. Every
+// field comes from the call site's own AST — the import path resolved at
+// the call, and a string transform of the register function's own name —
+// never from reading the generated package's source.
+type serverService struct {
+	GoPackage        string
+	RegisterFunction string
+	ServerInterface  string
+	Service          string
+}
+
+// deriveServerService recognizes the protoc-gen-go-grpc registration
+// contract: RegisterXxxServer always wraps an XxxServer interface for a
+// service named Xxx. Both transforms are pure string trims on the call's own
+// selector name, requiring no lookup into the target package.
+func deriveServerService(importPath, registerFunction string) (serverService, bool) {
+	const prefix, suffix = "Register", "Server"
+	if importPath == "" || !strings.HasPrefix(registerFunction, prefix) || !strings.HasSuffix(registerFunction, suffix) {
+		return serverService{}, false
 	}
-	out := make([]string, 0, len(seen))
-	for path := range seen {
-		out = append(out, path)
+	serverInterface := strings.TrimPrefix(registerFunction, prefix)
+	service := strings.TrimSuffix(serverInterface, suffix)
+	if serverInterface == "" || service == "" {
+		return serverService{}, false
 	}
-	sort.Strings(out)
-	return out
+	return serverService{GoPackage: importPath, RegisterFunction: registerFunction, ServerInterface: serverInterface, Service: service}, true
 }
 
 // ExtractServerProviders binds generated RegisterXxxServer calls to concrete
 // project methods. It never guesses between multiple implementation types:
-// a registration whose implementation is unresolved or ambiguous still
-// produces provider facts for its methods (without a resolved
-// ImplementationType/HandlerSymbol) plus a ServerBindingIssue explaining why,
-// so one problematic registration never affects any other registration in
-// the same project.
-func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *ServerCatalog) ([]facts.GrpcProviderFact, []ServerBindingIssue) {
+// a registration whose implementation is unresolved or ambiguous produces no
+// provider facts (there is no independent method list to fall back on) plus
+// a ServerBindingIssue explaining why, so one problematic registration never
+// affects any other registration in the same project.
+func ExtractServerProviders(p *project.Project, idx *astindex.Index) ([]facts.GrpcOperationFact, []facts.GrpcProviderFact, []ServerBindingIssue) {
+	operations := map[string]facts.GrpcOperationFact{}
 	var providers []facts.GrpcProviderFact
 	var issues []ServerBindingIssue
 	concreteReturns := concreteCallableReturnTypes(p, idx)
@@ -102,43 +101,45 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 					if !ok {
 						return true
 					}
-					importPath := file.Imports[alias.Name]
-					service, ok := catalog.Lookup(ServerRegistrationKey{GoPackage: importPath, RegisterFunction: selector.Sel.Name})
+					service, ok := deriveServerService(file.Imports[alias.Name], selector.Sel.Name)
 					if !ok {
 						return true
 					}
 					span := serverCallSpan(p.Root, file, call)
 					candidates := implementationTypes(file, fn, idx, concreteReturns, call.Args[1])
-					candidates = append(candidates, containerProvidedImplementationTypes(file, containerProviders, service, call.Args[1])...)
-					candidates = matchingImplementationTypes(idx, candidates, service)
+					candidates = append(candidates, containerProvidedImplementationTypes(file, containerProviders, service.GoPackage, service.ServerInterface, call.Args[1])...)
+					candidates = matchingImplementationTypes(p, candidates)
 					var implementation astindex.ValueType
+					var methods []string
 					switch len(candidates) {
 					case 1:
 						implementation = candidates[0]
+						methods = discoverProvidedMethods(p, implementation)
 					case 0:
 						issues = append(issues, ServerBindingIssue{Kind: ServerBindingUnresolved, RegisterFunction: service.RegisterFunction, ServerInterface: service.ServerInterface, Span: span})
 					default:
 						issues = append(issues, ServerBindingIssue{Kind: ServerBindingAmbiguous, RegisterFunction: service.RegisterFunction, ServerInterface: service.ServerInterface, Span: span})
 					}
-					for _, method := range service.Methods {
+					registrationEvidence := facts.EvidenceFact{Kind: "grpc_server_registration", Raw: service.GoPackage + "." + service.RegisterFunction, Span: span}
+					for _, goMethod := range methods {
+						identity := facts.GrpcIdentity(service.GoPackage, service.Service, goMethod)
+						operationID := facts.GrpcOperationID(identity)
+						operation := operations[operationID]
+						if operation.ID == "" {
+							operation = facts.GrpcOperationFact{ID: operationID, Identity: identity, GoPackage: service.GoPackage, Service: service.Service, GoMethod: goMethod}
+						}
+						operation.Evidence = appendEvidenceOnce(operation.Evidence, registrationEvidence)
+						operations[operationID] = operation
+
 						provider := facts.GrpcProviderFact{
-							OperationID:        method.Operation.ID,
-							GeneratedGoPackage: service.GoPackage,
-							RegisterFunction:   service.RegisterFunction,
-							ServerInterface:    service.ServerInterface,
-							RegistrationSymbol: registrationSymbol,
-							Span:               span,
-							Evidence: []facts.EvidenceFact{{
-								Kind: "grpc_server_registration",
-								Raw:  service.GoPackage + "." + service.RegisterFunction,
-								Span: span,
-							}},
+							OperationID: operationID, GeneratedGoPackage: service.GoPackage, RegisterFunction: service.RegisterFunction,
+							ServerInterface: service.ServerInterface, RegistrationSymbol: registrationSymbol, Span: span,
+							Evidence:                []facts.EvidenceFact{registrationEvidence},
+							ImplementationGoPackage: implementation.PackagePath, ImplementationType: implementation.TypeName,
 						}
 						if implementation.TypeName != "" {
-							provider.ImplementationGoPackage = implementation.PackagePath
-							provider.ImplementationType = implementation.TypeName
 							provider.ImplementationSymbol = astindex.TypeSymbolID(implementation.PackagePath, implementation.TypeName)
-							handler := astindex.MethodSymbolID(implementation.PackagePath, implementation.TypeName, method.GoMethod)
+							handler := astindex.MethodSymbolID(implementation.PackagePath, implementation.TypeName, goMethod)
 							if _, exists := idx.Symbols[handler]; exists {
 								provider.HandlerSymbol = handler
 							}
@@ -158,7 +159,94 @@ func ExtractServerProviders(p *project.Project, idx *astindex.Index, catalog *Se
 		}
 		return issues[i].Span.StartLine < issues[j].Span.StartLine
 	})
-	return providers, issues
+	return sortedOperations(operations), providers, issues
+}
+
+// matchingImplementationTypes narrows candidate concrete types to those that
+// expose at least one method matching the gRPC unary handler shape. This
+// replaces matching against a pre-known method list (no longer available
+// without reading generated code) with a structural check on the candidate
+// itself — still a proof, just a shape-based one instead of a name-based one.
+func matchingImplementationTypes(p *project.Project, candidates []astindex.ValueType) []astindex.ValueType {
+	var matched []astindex.ValueType
+	for _, candidate := range uniqueValueTypes(candidates) {
+		if len(discoverProvidedMethods(p, candidate)) > 0 {
+			matched = append(matched, candidate)
+		}
+	}
+	return uniqueValueTypes(matched)
+}
+
+// discoverProvidedMethods lists candidate's own exported methods whose
+// signature matches a unary gRPC handler: func(ctx context.Context, req T)
+// (resp T, error). This is a structural proof from the analyzed repo's own
+// method declarations, not a lookup against a known interface — so it can
+// only see unary methods actually implemented in this repo. Streaming
+// methods are out of scope: telling client/server/bidirectional streaming
+// apart reliably requires the generated ServiceDesc this analyzer no longer
+// reads, and real-world usage across the analyzed projects is 100% unary.
+func discoverProvidedMethods(p *project.Project, implementation astindex.ValueType) []string {
+	pkg := p.Packages[implementation.PackagePath]
+	if pkg == nil || implementation.TypeName == "" {
+		return nil
+	}
+	var methods []string
+	for _, file := range pkg.Files {
+		for _, decl := range file.AST.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 || fn.Body == nil || !fn.Name.IsExported() {
+				continue
+			}
+			if astindex.ReceiverTypeName(fn.Recv.List[0].Type) != implementation.TypeName {
+				continue
+			}
+			if isUnaryGrpcHandlerShape(file, fn.Type) {
+				methods = append(methods, fn.Name.Name)
+			}
+		}
+	}
+	sort.Strings(methods)
+	return methods
+}
+
+func isUnaryGrpcHandlerShape(file *project.File, signature *ast.FuncType) bool {
+	params := flattenFieldTypes(signature.Params)
+	if len(params) != 2 || !isContextContextType(file, params[0]) {
+		return false
+	}
+	results := flattenFieldTypes(signature.Results)
+	return len(results) == 2 && isBuiltinErrorType(results[1])
+}
+
+func flattenFieldTypes(list *ast.FieldList) []ast.Expr {
+	if list == nil {
+		return nil
+	}
+	var out []ast.Expr
+	for _, field := range list.List {
+		if len(field.Names) == 0 {
+			out = append(out, field.Type)
+			continue
+		}
+		for range field.Names {
+			out = append(out, field.Type)
+		}
+	}
+	return out
+}
+
+func isContextContextType(file *project.File, expr ast.Expr) bool {
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Context" {
+		return false
+	}
+	ident, ok := selector.X.(*ast.Ident)
+	return ok && file.Imports[ident.Name] == "context"
+}
+
+func isBuiltinErrorType(expr ast.Expr) bool {
+	ident, ok := expr.(*ast.Ident)
+	return ok && ident.Name == "error"
 }
 
 func implementationTypes(file *project.File, fn *ast.FuncDecl, idx *astindex.Index, concreteReturns map[facts.SymbolID][]astindex.ValueType, expr ast.Expr) []astindex.ValueType {
@@ -410,19 +498,6 @@ func appendConcreteType(idx *astindex.Index, items []astindex.ValueType, item as
 		return items
 	}
 	return append(items, item)
-}
-
-func matchingImplementationTypes(idx *astindex.Index, candidates []astindex.ValueType, service ServerServiceEntry) []astindex.ValueType {
-	var matched []astindex.ValueType
-	for _, candidate := range uniqueValueTypes(candidates) {
-		for _, method := range service.Methods {
-			if _, exists := idx.Symbols[astindex.MethodSymbolID(candidate.PackagePath, candidate.TypeName, method.GoMethod)]; exists {
-				matched = append(matched, candidate)
-				break
-			}
-		}
-	}
-	return uniqueValueTypes(matched)
 }
 
 func uniqueValueTypes(items []astindex.ValueType) []astindex.ValueType {

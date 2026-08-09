@@ -163,7 +163,7 @@ func (a *analyzer) indexGrpcContracts(store *facts.Store) {
 			continue
 		}
 		contract := Contract{
-			ID: operation.ID, Kind: ContractGrpcOperation, Identity: operation.FullMethod, IdentityResolution: IdentityStatic,
+			ID: operation.ID, Kind: ContractGrpcOperation, Identity: operation.Identity, IdentityResolution: IdentityStatic,
 			Relation: "exposed_grpc_operation", Registration: provider.Span, GrpcOperation: operation,
 		}
 		for _, symbol := range []facts.SymbolID{provider.HandlerSymbol, provider.ImplementationSymbol, provider.RegistrationSymbol} {
@@ -348,8 +348,7 @@ func (a *analyzer) contractNode(contract Contract, level int) impact.Node {
 	}
 	switch contract.Kind {
 	case ContractGrpcOperation:
-		node.FullMethod = contract.GrpcOperation.FullMethod
-		node.Raw = contract.GrpcOperation.FullMethod
+		node.Raw = contract.GrpcOperation.Identity
 	case ContractHTTPEndpoint:
 		node.Method = contract.Route.Method
 		node.Path = contract.Route.ResolvedPath

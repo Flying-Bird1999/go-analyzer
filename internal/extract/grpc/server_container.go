@@ -109,9 +109,9 @@ func containerProviderFromCall(file *project.File, call *ast.CallExpr, strictCon
 // The target T must be exactly the generated server interface and every
 // factory must declare that same return interface; matching by method names
 // alone would be too weak for an IoC-style flow.
-func containerProvidedImplementationTypes(file *project.File, providers []containerProvider, service ServerServiceEntry, expr ast.Expr) []astindex.ValueType {
+func containerProvidedImplementationTypes(file *project.File, providers []containerProvider, goPackage, serverInterface string, expr ast.Expr) []astindex.ValueType {
 	containerKey, target, ok := getBeanRequest(file, expr)
-	if !ok || !sameValueType(target, astindex.ValueType{PackagePath: service.GoPackage, TypeName: service.ServerInterface}) {
+	if !ok || !sameValueType(target, astindex.ValueType{PackagePath: goPackage, TypeName: serverInterface}) {
 		return nil
 	}
 	var candidates []astindex.ValueType

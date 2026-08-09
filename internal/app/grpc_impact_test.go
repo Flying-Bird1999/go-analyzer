@@ -87,9 +87,9 @@ func TestGrpcImpactMapsBusinessChangeToRegisteredOperation(t *testing.T) {
 	if len(wantKinds) != 0 {
 		t.Fatalf("missing contract kinds = %#v\n%s", wantKinds, out)
 	}
-	const want = "/example.echo.v1.EchoService/ping"
+	const want = "example.com/grpcservice/api.EchoService/Ping"
 	if doc.Summary.Grpc[0].Identity != want {
-		t.Fatalf("full method = %q, want %q", doc.Summary.Grpc[0].Identity, want)
+		t.Fatalf("identity = %q, want %q", doc.Summary.Grpc[0].Identity, want)
 	}
 	if len(doc.FileSources) != 1 || doc.FileSources[0].SourceFile != "service/reply.go" || len(doc.FileSources[0].Symbols) == 0 {
 		t.Fatalf("file sources = %#v", doc.FileSources)
@@ -128,14 +128,14 @@ func TestGrpcImpactMapsGeneratedRequestChangeToOnlyUsingOperation(t *testing.T) 
 	var doc struct {
 		Summary struct {
 			Grpc []struct {
-				FullMethod string `json:"fullMethod"`
+				Identity string `json:"identity"`
 			} `json:"grpc"`
 		} `json:"summary"`
 	}
 	if err := json.Unmarshal(out, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Summary.Grpc) != 1 || doc.Summary.Grpc[0].FullMethod != "/example.echo.v1.EchoService/ping" {
+	if len(doc.Summary.Grpc) != 1 || doc.Summary.Grpc[0].Identity != "example.com/grpcservice/api.EchoService/Ping" {
 		t.Fatalf("operations = %#v\n%s", doc.Summary.Grpc, out)
 	}
 }

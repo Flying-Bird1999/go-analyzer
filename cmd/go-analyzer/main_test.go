@@ -269,10 +269,10 @@ func TestGrpcImpactCommandWritesCanonicalOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(out, []byte(`"fullMethod": "/example.echo.v1.EchoService/ping"`)) {
+	if !bytes.Contains(out, []byte(`"identity": "example.com/grpcservice/api.EchoService/Ping"`)) {
 		t.Fatalf("grpc-impact output = %s", out)
 	}
-	if bytes.Contains(out, []byte(`/example.echo.v1.EchoService/Health`)) {
+	if bytes.Contains(out, []byte(`example.com/grpcservice/api.EchoService/Health`)) {
 		t.Fatalf("grpc-impact should not include unaffected operation: %s", out)
 	}
 }

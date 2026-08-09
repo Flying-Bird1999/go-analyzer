@@ -1,4 +1,17 @@
-// extractor.go 从项目源码中抽取已精确匹配 generated client binding 的 gRPC 调用。
+// extractor.go 从项目源码中直接抽取 gRPC client 调用，不读取任何依赖包或生成代码。
+//
+// 识别规则是 protoc-gen-go-grpc 的命名契约（真实项目验证：366 个调用点，0 例外）：
+// generated 的 client 接口永远命名为 <Service>Client，且总是在调用方所在包之外的
+// 另一个包里声明。调用点形如 `x.M(...)`，若 x 的静态类型满足这条契约，就把
+// TypeName 去掉 Client 后缀得到 Service，PackagePath 就是生成包的 import 路径，
+// M 就是 GoMethod——三者拼成 canonical identity，不需要外部证据。
+//
+// 单靠命名后缀会把手写的 Redis/HTTP client 封装（同样以 Client 结尾、来自外部包）
+// 一并误判成 gRPC 调用——真实项目验证过这类误判，因此额外要求生成包 import 路径以
+// 公司内网域名 gopkg.inshopline.com/ 开头，且不属于被分析项目自己的 module（后者
+// 兜底属于自己 module 但恰好落在该域名下的手写包装类型，例如 sc1-server 内部的
+// ConversationOnlineClient）。两条都是从调用方自己的 import 路径/go.mod 就能证明
+// 的信息，不需要读取外部包内容。
 package grpc
 
 import (
@@ -7,13 +20,27 @@ import (
 	"go/token"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 
 	"gopkg.inshopline.com/bff/go-analyzer/internal/astindex"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/facts"
 	"gopkg.inshopline.com/bff/go-analyzer/internal/project"
 )
 
-// CallAmbiguityError 表示 receiver 有多个可证明的 generated operation 候选。
+// clientTypeSuffix 是 protoc-gen-go-grpc 对生成 client 接口的固定命名后缀。
+const clientTypeSuffix = "Client"
+
+// generatedPackageDomain 是公司内网 proto 生成包统一使用的 module 域名。真实项目
+// 验证：sl-sc1-admin-bff / sl-sc1-bff-service / sl-sc2-admin-bff / sc1-server /
+// sc2-server 五个仓库里，凡是真正的 gRPC 生成包（含 7 个跨团队服务：ai/chatbot、
+// sc/background、armor（两个）、member、product、billing）无一例外都在这个域名下；
+// 反之 Redis/HTTP client 封装（github.com/go-redis/redis、
+// gopkg.inshopline.com/commons/httpclientx/v2 等）以及项目自己手写的同名类型
+// （sc1-admin-bff/remote/oa 等）都不在其下。
+const generatedPackageDomain = "gopkg.inshopline.com/"
+
+// CallAmbiguityError 表示 receiver 有多个可证明的 gRPC client 候选。
 type CallAmbiguityError struct {
 	Caller facts.SymbolID
 	Span   facts.SourceSpan
@@ -23,11 +50,9 @@ func (e *CallAmbiguityError) Error() string {
 	return fmt.Sprintf("ambiguous generated gRPC call in %s at %s:%d", e.Caller, e.Span.File, e.Span.StartLine)
 }
 
-// Extract 遍历项目 non-test source，返回只由唯一 receiver binding 证明的调用事实。
-func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts.GrpcCallFact, error) {
-	if catalog == nil || len(catalog.ByBinding) == 0 {
-		return []facts.GrpcCallFact{}, nil
-	}
+// Extract 遍历项目 non-test source，直接从调用点推出 gRPC operation 与调用事实。
+func Extract(p *project.Project, idx *astindex.Index) ([]facts.GrpcOperationFact, []facts.GrpcCallFact, error) {
+	operations := map[string]facts.GrpcOperationFact{}
 	var calls []facts.GrpcCallFact
 	for _, pkg := range p.Packages {
 		for _, file := range pkg.Files {
@@ -55,20 +80,17 @@ func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts
 						return true
 					}
 					types := scope.resolve(selector.X, call.Pos())
-					// 防御性歧义处理：当 receiver 解析出多个候选类型且其中有 catalog 命中时，
-					// 报告 CallAmbiguityError 而非静默丢弃。
+					// 防御性歧义处理：receiver 解析出多个候选类型且其中有满足 gRPC client
+					// 命名契约的，报告 CallAmbiguityError 而非静默挑一个猜。
 					//
-					// 注意：当前 functionScope.resolve（见下方 resolve/valueTypes 实现）在
-					// 单一标识符上最多返回 1 个 ValueType（interface 多实现被
-					// resolveUniqueInterfaceBinding 拒绝，map 索引分发无 IndexExpr 分支），
-					// 故本分支在现有架构下不可达。保留它是为未来 resolve 能力扩展
-					// （如 map 值接口分发、多返回值 constructor）做防御；届时仅需保证
-					// 歧义被 surface 而非静默丢失。详见 TestCallAmbiguityErrorFormatting。
+					// 注意：当前 functionScope.resolve 在单一标识符上最多返回 1 个
+					// ValueType（interface 多实现被 resolveUniqueInterfaceBinding 拒绝，
+					// map 索引分发无 IndexExpr 分支），故本分支在现有架构下不可达，保留
+					// 用于未来 resolve 能力扩展时的防御。详见 TestCallAmbiguityErrorFormatting。
 					if len(types) > 1 {
 						matched := 0
 						for _, t := range types {
-							k := BindingKey{GoPackage: t.PackagePath, ClientType: t.TypeName, GoMethod: selector.Sel.Name}
-							if _, ok := catalog.Lookup(k); ok {
+							if _, ok := clientService(t, pkg.Path, p.ModulePath); ok {
 								matched++
 							}
 						}
@@ -82,27 +104,75 @@ func Extract(p *project.Project, idx *astindex.Index, catalog *Catalog) ([]facts
 					if len(types) == 0 {
 						return true
 					}
-					key := BindingKey{GoPackage: types[0].PackagePath, ClientType: types[0].TypeName, GoMethod: selector.Sel.Name}
-					entry, ok := catalog.Lookup(key)
+					service, ok := clientService(types[0], pkg.Path, p.ModulePath)
 					if !ok {
 						return true
 					}
 					span := relativeSpan(p.Root, file, call.Pos(), call.End())
+					identity := facts.GrpcIdentity(types[0].PackagePath, service, selector.Sel.Name)
+					operationID := facts.GrpcOperationID(identity)
+					evidence := facts.EvidenceFact{Kind: "grpc_call_expression", Raw: selector.Sel.Name, Span: span}
+					operation := operations[operationID]
+					if operation.ID == "" {
+						operation = facts.GrpcOperationFact{ID: operationID, Identity: identity, GoPackage: types[0].PackagePath, Service: service, GoMethod: selector.Sel.Name}
+					}
+					operation.Evidence = appendEvidenceOnce(operation.Evidence, evidence)
+					operations[operationID] = operation
 					calls = append(calls, facts.GrpcCallFact{
-						ID:           fmt.Sprintf("grpc_call:%s:%s:%d:%d", caller, entry.Operation.ID, span.StartLine, span.StartCol),
-						CallerSymbol: caller, OperationID: entry.Operation.ID, ClientBinding: entry.Binding, Span: span,
-						Evidence: []facts.EvidenceFact{{Kind: "grpc_call_expression", Raw: selector.Sel.Name, Span: span}, entry.Evidence},
+						ID:           fmt.Sprintf("grpc_call:%s:%s:%d:%d", caller, operationID, span.StartLine, span.StartCol),
+						CallerSymbol: caller, OperationID: operationID, Span: span,
+						Evidence: []facts.EvidenceFact{evidence},
 					})
 					return true
 				})
 				if extractErr != nil {
-					return nil, extractErr
+					return nil, nil, extractErr
 				}
 			}
 		}
 	}
+	return sortedOperations(operations), sortedCalls(calls), nil
+}
+
+// clientService 判断 t 是否满足 gRPC client 命名契约，满足则返回 Service 名。
+// 四个条件全部要求同时成立：
+//  1. 类型来自调用方所在包之外的另一个包——generated client 接口从不与消费它的
+//     业务代码同包声明；
+//  2. 类型名以 Client 结尾；
+//  3. 类型所在包的 import 路径以公司内网域名 gopkg.inshopline.com/ 开头——真实
+//     生成包统一挂在这个域名下，Redis/HTTP client 封装等手写类型不在其下；
+//  4. 类型所在包不属于被分析项目自己的 module——兜底排除"项目自己手写的包装类型
+//     恰好落在 gopkg.inshopline.com 域名下"这种情况（如 sc1-server 内部的
+//     ConversationOnlineClient）。
+func clientService(t astindex.ValueType, callerPackagePath, projectModulePath string) (string, bool) {
+	if t.PackagePath == "" || t.PackagePath == callerPackagePath || !strings.HasSuffix(t.TypeName, clientTypeSuffix) {
+		return "", false
+	}
+	if !strings.HasPrefix(t.PackagePath, generatedPackageDomain) {
+		return "", false
+	}
+	if projectModulePath != "" && (t.PackagePath == projectModulePath || strings.HasPrefix(t.PackagePath, projectModulePath+"/")) {
+		return "", false
+	}
+	service := strings.TrimSuffix(t.TypeName, clientTypeSuffix)
+	if service == "" {
+		return "", false
+	}
+	return service, true
+}
+
+func sortedOperations(operations map[string]facts.GrpcOperationFact) []facts.GrpcOperationFact {
+	out := make([]facts.GrpcOperationFact, 0, len(operations))
+	for _, operation := range operations {
+		sort.Slice(operation.Evidence, func(i, j int) bool { return evidenceKey(operation.Evidence[i]) < evidenceKey(operation.Evidence[j]) })
+		out = append(out, operation)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+func sortedCalls(calls []facts.GrpcCallFact) []facts.GrpcCallFact {
 	sort.Slice(calls, func(i, j int) bool { return calls[i].ID < calls[j].ID })
-	return dedupeCalls(calls), nil
+	return dedupeCalls(calls)
 }
 
 type functionScope struct {
@@ -344,4 +414,15 @@ func dedupeCalls(calls []facts.GrpcCallFact) []facts.GrpcCallFact {
 		}
 	}
 	return out
+}
+func appendEvidenceOnce(items []facts.EvidenceFact, item facts.EvidenceFact) []facts.EvidenceFact {
+	for _, existing := range items {
+		if evidenceKey(existing) == evidenceKey(item) {
+			return items
+		}
+	}
+	return append(items, item)
+}
+func evidenceKey(item facts.EvidenceFact) string {
+	return item.Kind + "\x00" + item.Raw + "\x00" + item.Span.File + "\x00" + strconv.Itoa(item.Span.StartLine) + "\x00" + strconv.Itoa(item.Span.StartCol)
 }

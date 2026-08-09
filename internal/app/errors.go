@@ -17,7 +17,6 @@ const (
 	ErrorDiffValidationFailed = "diff_snapshot_mismatch"
 	ErrorInputSecurity        = "input_security_violation"
 	ErrorConfigInvalid        = "impact_config_invalid"
-	ErrorDependencyLoadFailed = "dependency_load_failed"
 	ErrorGrpcCallAmbiguous    = "grpc_call_ambiguous"
 	ErrorEndpointNotFound     = "endpoint_not_found"
 	ErrorAnalysisBudget       = "analysis_budget_exceeded"
@@ -56,10 +55,6 @@ func classifyAnalysisError(err error, fallback string) error {
 	var existing *AnalysisError
 	if errors.As(err, &existing) {
 		return err
-	}
-	var dependencyErr *project.DependencyDiscoveryError
-	if errors.As(err, &dependencyErr) {
-		return &AnalysisError{Code: ErrorDependencyLoadFailed, Err: err}
 	}
 	if fallback == "" {
 		fallback = ErrorAnalysisFailed

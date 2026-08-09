@@ -15,10 +15,8 @@ func AddGrpcSourcesSnapshot(doc *ImpactDocument, snapshot facts.Snapshot, result
 	for _, result := range results {
 		source := GrpcSourceImpact{
 			Grpc: GrpcOperationSummary{
-				FullMethod:   result.Grpc.FullMethod,
-				ProtoPackage: result.Grpc.ProtoPackage,
-				Service:      result.Grpc.Service,
-				Method:       result.Grpc.Method,
+				Identity: result.Grpc.Identity,
+				GoMethod: result.Grpc.GoMethod,
 			},
 			Consumers:         []GrpcConsumerImpact{},
 			ImpactedEndpoints: []EndpointSummary{},
@@ -26,7 +24,7 @@ func AddGrpcSourcesSnapshot(doc *ImpactDocument, snapshot facts.Snapshot, result
 		for _, consumer := range result.Consumers {
 			source.Consumers = append(source.Consumers, GrpcConsumerImpact{
 				Endpoint: endpointForDependency(consumer.Endpoint), Routes: endpointsForDependency(consumer.Routes), Relation: "may_call",
-				Handlers: symbolsForDependency(&store, consumer.Handlers), Clients: clientsForDependency(consumer.Clients), Chains: chainsForDependency(&store, consumer.Chains),
+				Handlers: symbolsForDependency(&store, consumer.Handlers), Chains: chainsForDependency(&store, consumer.Chains),
 			})
 			summary := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: endpointsForDependency(consumer.Routes)}
 			source.ImpactedEndpoints = append(source.ImpactedEndpoints, summary)
@@ -51,7 +49,7 @@ func normalizeGrpcSource(source *GrpcSourceImpact) {
 }
 
 func addEndpointGrpcSource(builders map[string]*endpointSourceSummaryBuilder, source GrpcSourceImpact) {
-	metadata := endpointSourceMetadata{sourceType: "grpc", grpcFullMethod: source.Grpc.FullMethod}
+	metadata := endpointSourceMetadata{sourceType: "grpc", grpcIdentity: source.Grpc.Identity}
 	for _, consumer := range source.Consumers {
 		endpoint := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: consumer.Routes}
 		endpointID := endpointKey(endpoint)
@@ -67,21 +65,16 @@ func addEndpointGrpcSource(builders map[string]*endpointSourceSummaryBuilder, so
 		impactSource := builder.sources[sourceKey]
 		if impactSource.SourceType == "" {
 			impactSource = EndpointImpactSource{
-				SourceType:     "grpc",
-				GrpcFullMethod: source.Grpc.FullMethod,
-				RootSymbols:    []EndpointRootSymbolSummary{},
-				Chains:         [][]string{},
+				SourceType:   "grpc",
+				GrpcIdentity: source.Grpc.Identity,
+				RootSymbols:  []EndpointRootSymbolSummary{},
+				Chains:       [][]string{},
 			}
 		}
 		for _, chain := range consumer.Chains {
-			labels := []string{"grpc " + source.Grpc.FullMethod}
-			client := chain.client
-			if client.GoPackage == "" && client.ClientType == "" && client.GoMethod == "" && len(consumer.Clients) == 1 {
-				client = consumer.Clients[0]
-			}
-			if client.GoPackage != "" || client.ClientType != "" || client.GoMethod != "" {
-				labels = append(labels, strings.TrimSpace("generated_client "+client.GoPackage+" "+client.ClientType+"."+client.GoMethod))
-			}
+			// identity 本身已经是 <生成包 import 路径>.<Service>/<GoMethod>，不必再单独
+			// 拼一条 generated_client 标签重复同样的信息。
+			labels := []string{"grpc " + source.Grpc.Identity}
 			if chain.CallSite.File != "" {
 				labels = append(labels, fmt.Sprintf("call_site %s:%d:%d", chain.CallSite.File, chain.CallSite.Line, chain.CallSite.Column))
 			}

@@ -23,11 +23,6 @@ type dependencySymbol struct {
 	Name string `json:"name"`
 	File string `json:"file"`
 }
-type dependencyClient struct {
-	GoPackage  string `json:"goPackage"`
-	ClientType string `json:"clientType"`
-	GoMethod   string `json:"goMethod"`
-}
 type dependencyCallSite struct {
 	File   string `json:"file"`
 	Line   int    `json:"line"`
@@ -36,18 +31,11 @@ type dependencyCallSite struct {
 type dependencyChain struct {
 	Symbols  []dependencySymbol `json:"symbols"`
 	CallSite dependencyCallSite `json:"callSite"`
-	// client keeps the call-site-specific generated client binding for derived
-	// evidence such as endpointSourcesSummary. It is intentionally not part of
-	// the endpoint-assets JSON contract.
-	client dependencyClient
 }
 type dependencyGrpc struct {
-	FullMethod   string             `json:"fullMethod"`
-	ProtoPackage string             `json:"protoPackage"`
-	Service      string             `json:"service"`
-	Method       string             `json:"method"`
-	Clients      []dependencyClient `json:"clients"`
-	Chains       []dependencyChain  `json:"chains"`
+	Identity string            `json:"identity"`
+	GoMethod string            `json:"goMethod"`
+	Chains   []dependencyChain `json:"chains"`
 }
 type endpointAssetDocument struct {
 	Project        dependencyProject `json:"project"`
@@ -88,16 +76,10 @@ func normalizeEndpointAssetDocument(doc *endpointAssetDocument) {
 		})
 		item.Handlers = uniqueDependencySymbols(item.Handlers)
 		sort.Slice(item.Dependencies.Grpc, func(i, j int) bool {
-			return item.Dependencies.Grpc[i].FullMethod < item.Dependencies.Grpc[j].FullMethod
+			return item.Dependencies.Grpc[i].Identity < item.Dependencies.Grpc[j].Identity
 		})
 		for j := range item.Dependencies.Grpc {
 			grpc := &item.Dependencies.Grpc[j]
-			sort.Slice(grpc.Clients, func(i, j int) bool {
-				left, right := grpc.Clients[i], grpc.Clients[j]
-				return strings.Join([]string{left.GoPackage, left.ClientType, left.GoMethod}, "\x00") <
-					strings.Join([]string{right.GoPackage, right.ClientType, right.GoMethod}, "\x00")
-			})
-			grpc.Clients = uniqueDependencyClients(grpc.Clients)
 			sort.Slice(grpc.Chains, func(i, j int) bool {
 				left, right := grpc.Chains[i], grpc.Chains[j]
 				leftKey := fmtDependencyChain(left)
@@ -135,20 +117,6 @@ func uniqueDependencySymbols(values []dependencySymbol) []dependencySymbol {
 	return out
 }
 
-func uniqueDependencyClients(values []dependencyClient) []dependencyClient {
-	out := values[:0]
-	last := ""
-	for index, value := range values {
-		key := strings.Join([]string{value.GoPackage, value.ClientType, value.GoMethod}, "\x00")
-		if index > 0 && key == last {
-			continue
-		}
-		out = append(out, value)
-		last = key
-	}
-	return out
-}
-
 func uniqueDependencyChains(values []dependencyChain) []dependencyChain {
 	out := values[:0]
 	last := ""
@@ -176,14 +144,7 @@ func endpointsForDependency(values []dependency.Endpoint) []dependencyEndpoint {
 	return out
 }
 func grpcForDependency(store *facts.Store, value dependency.GrpcDependency) dependencyGrpc {
-	return dependencyGrpc{FullMethod: value.Operation.FullMethod, ProtoPackage: value.Operation.ProtoPackage, Service: value.Operation.Service, Method: value.Operation.Method, Clients: clientsForDependency(value.Clients), Chains: chainsForDependency(store, value.Chains)}
-}
-func clientsForDependency(values []facts.GrpcClientBinding) []dependencyClient {
-	out := make([]dependencyClient, 0, len(values))
-	for _, value := range values {
-		out = append(out, dependencyClient{GoPackage: value.GoPackage, ClientType: value.ClientType, GoMethod: value.GoMethod})
-	}
-	return out
+	return dependencyGrpc{Identity: value.Operation.Identity, GoMethod: value.Operation.GoMethod, Chains: chainsForDependency(store, value.Chains)}
 }
 func symbolsForDependency(store *facts.Store, ids []facts.SymbolID) []dependencySymbol {
 	byID := map[facts.SymbolID]facts.SymbolFact{}
@@ -203,11 +164,6 @@ func chainsForDependency(store *facts.Store, values []dependency.Chain) []depend
 		out = append(out, dependencyChain{
 			Symbols:  symbolsForDependency(store, value.Symbols),
 			CallSite: dependencyCallSite{File: value.Call.Span.File, Line: value.Call.Span.StartLine, Column: value.Call.Span.StartCol},
-			client: dependencyClient{
-				GoPackage:  value.Call.ClientBinding.GoPackage,
-				ClientType: value.Call.ClientBinding.ClientType,
-				GoMethod:   value.Call.ClientBinding.GoMethod,
-			},
 		})
 	}
 	return out

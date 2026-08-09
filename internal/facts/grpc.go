@@ -1,4 +1,11 @@
-// grpc.go 定义 generated gRPC operation 与项目内调用的原子事实。
+// grpc.go 定义 gRPC operation 与项目内调用/注册的原子事实。
+//
+// Identity 完全由分析项目自身的源码推出：<生成包 import 路径>.<Service>/<GoMethod>，
+// 不读取任何依赖包或生成代码的源码——既不解析 client stub 里的 Invoke 调用，也不解析
+// server 侧的 ServiceDesc。Service/GoMethod 依据 protoc-gen-go-grpc 的命名契约从本仓库
+// 代码里的标识符推导（client 侧：接收者类型名去掉 Client 后缀；server 侧：Register 函数名
+// 去掉 Register 前缀、Server 后缀）。两条链路各自只看自己仓库的代码，靠这套共享的命名
+// 契约在没有交换信息的情况下推出同一个 Identity 字符串，从而对得上。
 package facts
 
 import (
@@ -6,43 +13,28 @@ import (
 	"strings"
 )
 
-// GrpcStreamingMode 描述 gRPC method 的流模式。
-type GrpcStreamingMode string
-
-const (
-	GrpcStreamingUnary         GrpcStreamingMode = "unary"
-	GrpcStreamingClient        GrpcStreamingMode = "client_streaming"
-	GrpcStreamingServer        GrpcStreamingMode = "server_streaming"
-	GrpcStreamingBidirectional GrpcStreamingMode = "bidirectional_streaming"
-)
-
-// GrpcClientBinding 是 generated Go client method 到 canonical operation 的精确绑定键。
-type GrpcClientBinding struct {
-	GoPackage  string `json:"go_package"`
-	ClientType string `json:"client_type"`
-	GoMethod   string `json:"go_method"`
+// GrpcIdentity 拼出 canonical identity 字符串。
+func GrpcIdentity(goPackage, service, goMethod string) string {
+	return goPackage + "." + service + "/" + goMethod
 }
 
-// GrpcOperationFact 描述从当前依赖图中 generated client source 证明的 gRPC operation。
+// GrpcOperationFact 描述从当前项目源码证明存在的一个 gRPC 方法。
 type GrpcOperationFact struct {
-	ID             string              `json:"id"`
-	FullMethod     string              `json:"full_method"`
-	ProtoPackage   string              `json:"proto_package"`
-	Service        string              `json:"service"`
-	Method         string              `json:"method"`
-	StreamingMode  GrpcStreamingMode   `json:"streaming_mode"`
-	ClientBindings []GrpcClientBinding `json:"client_bindings,omitempty"`
-	Evidence       []EvidenceFact      `json:"evidence,omitempty"`
+	ID        string         `json:"id"`
+	Identity  string         `json:"identity"`
+	GoPackage string         `json:"go_package"`
+	Service   string         `json:"service"`
+	GoMethod  string         `json:"go_method"`
+	Evidence  []EvidenceFact `json:"evidence,omitempty"`
 }
 
-// GrpcCallFact 描述项目内一次已被精确证明的 generated client 调用。
+// GrpcCallFact 描述项目内一次已被精确证明的 gRPC client 调用。
 type GrpcCallFact struct {
-	ID            string            `json:"id"`
-	CallerSymbol  SymbolID          `json:"caller_symbol"`
-	OperationID   string            `json:"operation_id"`
-	ClientBinding GrpcClientBinding `json:"client_binding"`
-	Span          SourceSpan        `json:"span"`
-	Evidence      []EvidenceFact    `json:"evidence,omitempty"`
+	ID           string         `json:"id"`
+	CallerSymbol SymbolID       `json:"caller_symbol"`
+	OperationID  string         `json:"operation_id"`
+	Span         SourceSpan     `json:"span"`
+	Evidence     []EvidenceFact `json:"evidence,omitempty"`
 }
 
 // GrpcProviderFact describes one canonical operation exposed by a concrete
@@ -64,9 +56,9 @@ type GrpcProviderFact struct {
 	Evidence                []EvidenceFact `json:"evidence,omitempty"`
 }
 
-// GrpcOperationID 返回 canonical full method 的稳定事实 ID。
-func GrpcOperationID(fullMethod string) string {
-	return "grpc:" + strings.TrimSpace(fullMethod)
+// GrpcOperationID 返回 canonical identity 的稳定事实 ID。
+func GrpcOperationID(identity string) string {
+	return "grpc:" + strings.TrimSpace(identity)
 }
 
 // GrpcProviderID returns a stable ID for one operation registration site.

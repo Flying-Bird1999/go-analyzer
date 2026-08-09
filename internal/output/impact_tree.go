@@ -89,8 +89,6 @@ type ImpactNode struct {
 	Method string `json:"method,omitempty"`
 	// Path 是 endpoint 终端的 HTTP path。
 	Path string `json:"path,omitempty"`
-	// FullMethod is the canonical identity of a gRPC operation terminal.
-	FullMethod string `json:"fullMethod,omitempty"`
 }
 
 // EndpointSummary 是去重后的受影响 HTTP 端点摘要。
@@ -126,8 +124,8 @@ type EndpointImpactSource struct {
 	VersionBefore string `json:"versionBefore,omitempty"`
 	// VersionAfter 是 module 变更后版本。
 	VersionAfter string `json:"versionAfter,omitempty"`
-	// GrpcFullMethod 仅在 sourceType=grpc 时出现。
-	GrpcFullMethod string `json:"grpcFullMethod,omitempty"`
+	// GrpcIdentity 仅在 sourceType=grpc 时出现。
+	GrpcIdentity string `json:"grpcIdentity,omitempty"`
 	// RootSymbols 是该来源中能到达 endpoint 的 changed roots。
 	RootSymbols []EndpointRootSymbolSummary `json:"rootSymbols"`
 	// Chains 是每个 root 到 endpoint 的最短人读链路摘要。
@@ -143,10 +141,8 @@ type GrpcSourceImpact struct {
 
 // GrpcOperationSummary 是 canonical gRPC operation 的稳定身份。
 type GrpcOperationSummary struct {
-	FullMethod   string `json:"fullMethod"`
-	ProtoPackage string `json:"protoPackage"`
-	Service      string `json:"service"`
-	Method       string `json:"method"`
+	Identity string `json:"identity"`
+	GoMethod string `json:"goMethod"`
 }
 
 // GrpcConsumerImpact 是一个 BFF endpoint 对 gRPC source 的静态消费证据。
@@ -157,7 +153,6 @@ type GrpcConsumerImpact struct {
 	// Relation 固定为 may_call：静态分析证明调用可达，但不承诺每次请求必然执行该调用。
 	Relation string             `json:"relation"`
 	Handlers []dependencySymbol `json:"handlers"`
-	Clients  []dependencyClient `json:"clients"`
 	Chains   []dependencyChain  `json:"chains"`
 }
 
@@ -497,7 +492,6 @@ func projectImpactNode(node impact.Node) ImpactNode {
 		Cycle:      node.Cycle,
 		Method:     node.Method,
 		Path:       node.Path,
-		FullMethod: node.FullMethod,
 		Children:   make([]ImpactNode, 0, len(node.Children)),
 	}
 	for _, child := range node.Children {
@@ -635,13 +629,13 @@ type endpointSourceSummaryBuilder struct {
 }
 
 type endpointSourceMetadata struct {
-	sourceType     string
-	sourceFile     string
-	modulePath     string
-	changeType     facts.ModuleChangeKind
-	versionBefore  string
-	versionAfter   string
-	grpcFullMethod string
+	sourceType    string
+	sourceFile    string
+	modulePath    string
+	changeType    facts.ModuleChangeKind
+	versionBefore string
+	versionAfter  string
+	grpcIdentity  string
 }
 
 func addEndpointSourceFile(builders map[string]*endpointSourceSummaryBuilder, source FileSourceImpact, metadata endpointSourceMetadata) {
@@ -700,7 +694,7 @@ func endpointImpactSourceKey(metadata endpointSourceMetadata) string {
 		string(metadata.changeType),
 		metadata.versionBefore,
 		metadata.versionAfter,
-		metadata.grpcFullMethod,
+		metadata.grpcIdentity,
 	}, "\x00")
 }
 
@@ -848,7 +842,7 @@ func normalizeImpactDocument(doc ImpactDocument) ImpactDocument {
 		normalizeGrpcSource(&doc.GrpcSources[i])
 	}
 	sort.Slice(doc.GrpcSources, func(i, j int) bool {
-		return doc.GrpcSources[i].Grpc.FullMethod < doc.GrpcSources[j].Grpc.FullMethod
+		return doc.GrpcSources[i].Grpc.Identity < doc.GrpcSources[j].Grpc.Identity
 	})
 	for i := range doc.FileSources {
 		doc.FileSources[i] = normalizeFileSource(doc.FileSources[i])

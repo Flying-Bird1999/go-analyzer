@@ -15,10 +15,10 @@ import (
 
 type Endpoint = endpointcatalog.Key
 type GrpcMethod struct {
-	FullMethod   string
-	ProtoPackage string
-	Service      string
-	Method       string
+	Identity  string
+	GoPackage string
+	Service   string
+	GoMethod  string
 }
 type Chain struct {
 	Symbols []facts.SymbolID
@@ -26,7 +26,6 @@ type Chain struct {
 }
 type GrpcDependency struct {
 	Operation facts.GrpcOperationFact
-	Clients   []facts.GrpcClientBinding
 	Chains    []Chain
 }
 type EndpointAsset struct {
@@ -39,7 +38,6 @@ type GrpcImpactConsumer struct {
 	Endpoint Endpoint
 	Routes   []Endpoint
 	Handlers []facts.SymbolID
-	Clients  []facts.GrpcClientBinding
 	Chains   []Chain
 }
 type GrpcImpactSource struct {
@@ -54,19 +52,27 @@ func ParseEndpoint(raw string) (Endpoint, error) {
 	}
 	return Endpoint{Method: strings.ToUpper(fields[0]), Path: fields[1]}, nil
 }
+
+// ParseGrpcMethod 解析 `<生成包 import 路径>.<Service>/<GoMethod>` 形式的 identity。
+// 先按最后一个 "/" 切出 GoMethod，再在剩余前缀里按最后一个 "." 切出 Service——
+// import 路径和 Service/GoMethod 都不含会产生歧义的字符，这两刀总能切对地方。
 func ParseGrpcMethod(raw string) (GrpcMethod, error) {
-	if !strings.HasPrefix(raw, "/") {
-		return GrpcMethod{}, fmt.Errorf("invalid gRPC method %q", raw)
+	lastSlash := strings.LastIndex(raw, "/")
+	if lastSlash <= 0 || lastSlash == len(raw)-1 {
+		return GrpcMethod{}, fmt.Errorf("invalid gRPC identity %q", raw)
 	}
-	parts := strings.Split(strings.TrimPrefix(raw, "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return GrpcMethod{}, fmt.Errorf("invalid gRPC method %q", raw)
+	prefix, goMethod := raw[:lastSlash], raw[lastSlash+1:]
+	lastDot := strings.LastIndex(prefix, ".")
+	if lastDot <= 0 || lastDot == len(prefix)-1 {
+		return GrpcMethod{}, fmt.Errorf("invalid gRPC identity %q", raw)
 	}
-	service := strings.Split(parts[0], ".")
-	if len(service) < 2 {
-		return GrpcMethod{}, fmt.Errorf("invalid gRPC method %q", raw)
+	goPackage, service := prefix[:lastDot], prefix[lastDot+1:]
+	// Go import path 从不以 "/" 开头；这条检查同时拒绝了旧的 wire full-method 格式
+	// （"/pkg.Service/Method"），避免它被悄悄解析成一个看似合法但错误的 goPackage。
+	if strings.HasPrefix(goPackage, "/") {
+		return GrpcMethod{}, fmt.Errorf("invalid gRPC identity %q", raw)
 	}
-	return GrpcMethod{FullMethod: raw, ProtoPackage: strings.Join(service[:len(service)-1], "."), Service: service[len(service)-1], Method: parts[1]}, nil
+	return GrpcMethod{Identity: raw, GoPackage: goPackage, Service: service, GoMethod: goMethod}, nil
 }
 
 func FindEndpointAssets(ctx context.Context, snapshot facts.Snapshot, catalog *endpointcatalog.Catalog, limits analysis.Limits, inputs []Endpoint) ([]EndpointAsset, error) {
@@ -118,7 +124,6 @@ func FindEndpointAssets(ctx context.Context, snapshot facts.Snapshot, catalog *e
 					dependency = &GrpcDependency{Operation: operation}
 					byOperation[operation.ID] = dependency
 				}
-				dependency.Clients = appendBinding(dependency.Clients, chain.Call.ClientBinding)
 				dependency.Chains = append(dependency.Chains, chain)
 			}
 		}
@@ -126,7 +131,7 @@ func FindEndpointAssets(ctx context.Context, snapshot facts.Snapshot, catalog *e
 			sortDependency(dependency)
 			asset.Grpc = append(asset.Grpc, *dependency)
 		}
-		sort.Slice(asset.Grpc, func(i, j int) bool { return asset.Grpc[i].Operation.FullMethod < asset.Grpc[j].Operation.FullMethod })
+		sort.Slice(asset.Grpc, func(i, j int) bool { return asset.Grpc[i].Operation.Identity < asset.Grpc[j].Operation.Identity })
 		out = append(out, asset)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -156,8 +161,8 @@ func FindGrpcImpactSources(ctx context.Context, snapshot facts.Snapshot, catalog
 		result := GrpcImpactSource{Grpc: input}
 		for _, asset := range assets {
 			for _, dependency := range asset.Grpc {
-				if dependency.Operation.FullMethod == input.FullMethod {
-					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, Routes: asset.Routes, Handlers: asset.Handlers, Clients: dependency.Clients, Chains: dependency.Chains})
+				if dependency.Operation.Identity == input.Identity {
+					result.Consumers = append(result.Consumers, GrpcImpactConsumer{Endpoint: asset.Endpoint, Routes: asset.Routes, Handlers: asset.Handlers, Chains: dependency.Chains})
 				}
 			}
 		}
@@ -169,7 +174,7 @@ func FindGrpcImpactSources(ctx context.Context, snapshot facts.Snapshot, catalog
 		})
 		out = append(out, result)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Grpc.FullMethod < out[j].Grpc.FullMethod })
+	sort.Slice(out, func(i, j int) bool { return out[i].Grpc.Identity < out[j].Grpc.Identity })
 	return out, nil
 }
 
@@ -291,8 +296,8 @@ func uniqueGrpc(values []GrpcMethod) []GrpcMethod {
 	seen := map[string]bool{}
 	var out []GrpcMethod
 	for _, value := range values {
-		if !seen[value.FullMethod] {
-			seen[value.FullMethod] = true
+		if !seen[value.Identity] {
+			seen[value.Identity] = true
 			out = append(out, value)
 		}
 	}
@@ -306,27 +311,7 @@ func appendSymbol(values []facts.SymbolID, value facts.SymbolID) []facts.SymbolI
 	}
 	return append(values, value)
 }
-func appendBinding(values []facts.GrpcClientBinding, value facts.GrpcClientBinding) []facts.GrpcClientBinding {
-	for _, existing := range values {
-		if existing == value {
-			return values
-		}
-	}
-	return append(values, value)
-}
 func sortDependency(value *GrpcDependency) {
-	// 逐字段比较，避免无分隔符拼接导致的边界碰撞（如 {"ab","c",…} 与 {"a","bc",…}
-	// 拼成同一串 "abc" 而顺序不定）造成输出非确定。
-	sort.Slice(value.Clients, func(i, j int) bool {
-		a, b := value.Clients[i], value.Clients[j]
-		if a.GoPackage != b.GoPackage {
-			return a.GoPackage < b.GoPackage
-		}
-		if a.ClientType != b.ClientType {
-			return a.ClientType < b.ClientType
-		}
-		return a.GoMethod < b.GoMethod
-	})
 	sort.Slice(value.Chains, func(i, j int) bool {
 		if value.Chains[i].Call.ID != value.Chains[j].Call.ID {
 			return value.Chains[i].Call.ID < value.Chains[j].Call.ID

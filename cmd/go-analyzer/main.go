@@ -194,7 +194,7 @@ func runImpact(ctx context.Context, args []string) error {
 	timings := fs.Bool("timings", false, "write pipeline stage timings to stderr")
 	diagnosticsOutput := fs.String("diagnostics-output", "", "optional absolute diagnostic sidecar path")
 	var grpcMethods stringList
-	fs.Var(&grpcMethods, "grpc", "canonical changed gRPC full method; repeatable")
+	fs.Var(&grpcMethods, "grpc", "canonical changed gRPC identity, <generated-package-import-path>.<Service>/<GoMethod>; repeatable")
 	buildFlags := registerBuildContextFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -382,7 +382,7 @@ func usage(command string) string {
 `
 	case "impact":
 		return `用法:
-  go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "/package.Service/Method"] [--impact-config /absolute/path/to/go-impact.config.json] [--diagnostics-output /absolute/path/to/diagnostics.json] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
+  go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "example.com/gen/pkg.Service/GoMethod"] [--impact-config /absolute/path/to/go-impact.config.json] [--diagnostics-output /absolute/path/to/diagnostics.json] [--format json] [--goos linux] [--goarch amd64] [--tags tag1,tag2] [--cgo false] [--timings]
 
 基于已经应用到变更后源码的 unified diff 和/或上游 gRPC operation，分析受影响的 HTTP 接口和出站 IM event。
 --diff 与 --grpc 至少提供一个；两者可组合，--grpc 可重复。
@@ -418,7 +418,7 @@ Go build context flag 会影响源码文件加载和 build constraint 过滤。
  go-analyzer help impact
  go-analyzer help grpc-impact
  go-analyzer help endpoint-assets
- go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "/package.Service/Method"] [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
+ go-analyzer impact --project /absolute/path/to/project [--diff /absolute/path/to/change.diff] [--grpc "example.com/gen/pkg.Service/GoMethod"] [--impact-config /absolute/path/to/go-impact.config.json] [--format json]
 
 对外接入命令:
   impact  从 unified diff 和/或上游 gRPC operation 分析受影响 HTTP 接口和 IM event。

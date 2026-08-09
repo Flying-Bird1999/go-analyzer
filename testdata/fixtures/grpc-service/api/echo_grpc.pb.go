@@ -2,30 +2,19 @@
 
 package api
 
+import "context"
+
 type Registrar interface{}
 
-type MethodDesc struct {
-	MethodName string
-}
+type HealthRequest struct{}
 
-type ServiceDesc struct {
-	ServiceName string
-	HandlerType any
-	Methods     []MethodDesc
+type HealthResponse struct {
+	Status string
 }
 
 type EchoServiceServer interface {
-	Ping(*PingRequest) *PingResponse
-	Health() string
+	Ping(ctx context.Context, req *PingRequest) (*PingResponse, error)
+	Health(ctx context.Context, req *HealthRequest) (*HealthResponse, error)
 }
 
 func RegisterEchoServiceServer(_ Registrar, _ EchoServiceServer) {}
-
-var EchoService_ServiceDesc = ServiceDesc{
-	ServiceName: "example.echo.v1.EchoService",
-	HandlerType: (*EchoServiceServer)(nil),
-	Methods: []MethodDesc{
-		{MethodName: "ping"},
-		{MethodName: "Health"},
-	},
-}
