@@ -151,9 +151,9 @@ type GrpcConsumerImpact struct {
 	// Routes 是从 route registration 静态解析出的辅助路径，不改变 annotation endpoint 的正式身份。
 	Routes []dependencyEndpoint `json:"routes"`
 	// Relation 固定为 may_call：静态分析证明调用可达，但不承诺每次请求必然执行该调用。
-	Relation string             `json:"relation"`
-	Handlers []dependencySymbol `json:"handlers"`
-	Chains   []dependencyChain  `json:"chains"`
+	Relation   string             `json:"relation"`
+	Controller []dependencySymbol `json:"controller"`
+	Chains     []dependencyChain  `json:"chains"`
 }
 
 // EndpointRootSymbolSummary 是 endpoint source 中 changed root 的轻量信息。

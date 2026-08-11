@@ -24,7 +24,7 @@ func AddGrpcSourcesSnapshot(doc *ImpactDocument, snapshot facts.Snapshot, result
 		for _, consumer := range result.Consumers {
 			source.Consumers = append(source.Consumers, GrpcConsumerImpact{
 				Endpoint: endpointForDependency(consumer.Endpoint), Routes: endpointsForDependency(consumer.Routes), Relation: "may_call",
-				Handlers: symbolsForDependency(&store, consumer.Handlers), Chains: chainsForDependency(&store, consumer.Chains),
+				Controller: symbolsForDependency(&store, consumer.Handlers), Chains: chainsForDependency(&store, consumer.Chains),
 			})
 			summary := EndpointSummary{Method: consumer.Endpoint.Method, Path: consumer.Endpoint.Path, Routes: endpointsForDependency(consumer.Routes)}
 			source.ImpactedEndpoints = append(source.ImpactedEndpoints, summary)

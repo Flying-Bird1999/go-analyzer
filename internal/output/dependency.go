@@ -44,7 +44,7 @@ type endpointAssetDocument struct {
 type endpointAsset struct {
 	Endpoint     dependencyEndpoint   `json:"endpoint"`
 	Routes       []dependencyEndpoint `json:"routes"`
-	Handlers     []dependencySymbol   `json:"handlers"`
+	Controller   []dependencySymbol   `json:"controller"`
 	Dependencies struct {
 		Grpc []dependencyGrpc `json:"grpc"`
 	} `json:"dependencies"`
@@ -54,7 +54,7 @@ func RenderEndpointAssetsSnapshot(snapshot facts.Snapshot, assets []dependency.E
 	store := snapshot.Store()
 	doc := endpointAssetDocument{Project: projectForDependency(&store), EndpointAssets: []endpointAsset{}}
 	for _, asset := range assets {
-		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), Routes: endpointsForDependency(asset.Routes), Handlers: symbolsForDependency(&store, asset.Handlers)}
+		item := endpointAsset{Endpoint: endpointForDependency(asset.Endpoint), Routes: endpointsForDependency(asset.Routes), Controller: symbolsForDependency(&store, asset.Handlers)}
 		item.Dependencies.Grpc = []dependencyGrpc{}
 		for _, grpc := range asset.Grpc {
 			item.Dependencies.Grpc = append(item.Dependencies.Grpc, grpcForDependency(&store, grpc))
@@ -69,12 +69,12 @@ func normalizeEndpointAssetDocument(doc *endpointAssetDocument) {
 	for i := range doc.EndpointAssets {
 		item := &doc.EndpointAssets[i]
 		item.Routes = uniqueDependencyEndpoints(item.Routes)
-		sort.Slice(item.Handlers, func(i, j int) bool {
-			left, right := item.Handlers[i], item.Handlers[j]
+		sort.Slice(item.Controller, func(i, j int) bool {
+			left, right := item.Controller[i], item.Controller[j]
 			return strings.Join([]string{left.ID, left.Kind, left.Name, left.File}, "\x00") <
 				strings.Join([]string{right.ID, right.Kind, right.Name, right.File}, "\x00")
 		})
-		item.Handlers = uniqueDependencySymbols(item.Handlers)
+		item.Controller = uniqueDependencySymbols(item.Controller)
 		sort.Slice(item.Dependencies.Grpc, func(i, j int) bool {
 			return item.Dependencies.Grpc[i].Identity < item.Dependencies.Grpc[j].Identity
 		})
